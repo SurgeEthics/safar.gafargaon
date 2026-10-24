@@ -14,7 +14,9 @@ import {
   Layers,
   MapPin,
   CheckCircle2,
-  Car
+  Car,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import { Stand, Driver, VehicleCategory } from '../types';
 import { LiveDriverLocation, LivePassengerLocation } from '../services/liveLocationService';
@@ -32,6 +34,7 @@ interface GafargaonMapProps {
   latencyMs: number;
   serverType: 'cloudflare' | 'local';
   onOpenServerSettings: () => void;
+  isAdmin?: boolean;
 
   // Real device GPS
   userGps: {
@@ -69,6 +72,7 @@ interface GafargaonMapProps {
   } | null;
 
   onSelectPickupPlace?: (placeName: string) => void;
+  onSelectDestPlace?: (placeName: string) => void;
 }
 
 export const GafargaonMap: React.FC<GafargaonMapProps> = ({
@@ -80,6 +84,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   latencyMs,
   serverType,
   onOpenServerSettings,
+  isAdmin = false,
   userGps,
   onStartGpsTracking,
   userRole,
@@ -92,7 +97,8 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   calculatedDistance,
   calculatedDurationMinutes,
   activeBooking,
-  onSelectPickupPlace
+  onSelectPickupPlace,
+  onSelectDestPlace
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -103,6 +109,16 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [filterMode, setFilterMode] = useState<'all' | 'drivers' | 'passengers'>('all');
+  
+  // Mobile Scroll Lock: Default true on mobile (< 768px) to prevent scroll hijack
+  const [isScrollLocked, setIsScrollLocked] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 768;
+    }
+    return false;
+  });
+  const [showLockNotification, setShowLockNotification] = useState<boolean>(false);
+  const lockNotificationTimerRef = useRef<any>(null);
 
   // Gafargaon Center Coordinates
   const DEFAULT_CENTER: [number, number] = [24.5535, 90.5518];
@@ -121,9 +137,9 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
         zoomControl: true,
-        scrollWheelZoom: true,
-        touchZoom: true,
-        dragging: true
+        scrollWheelZoom: !isScrollLocked,
+        touchZoom: !isScrollLocked,
+        dragging: !isScrollLocked
       });
 
       // Clear OpenStreetMap Standard Tiles
@@ -150,6 +166,28 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       }
     };
   }, []);
+
+  // Dynamically Toggle Leaflet Touch & Scroll Dragging
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (isScrollLocked) {
+      map.dragging.disable();
+      map.touchZoom.disable();
+      map.scrollWheelZoom.disable();
+      map.boxZoom.disable();
+      map.keyboard.disable();
+      if ((map as any).tapHold) (map as any).tapHold.disable();
+    } else {
+      map.dragging.enable();
+      map.touchZoom.enable();
+      map.scrollWheelZoom.enable();
+      map.boxZoom.enable();
+      map.keyboard.enable();
+      if ((map as any).tapHold) (map as any).tapHold.enable();
+    }
+  }, [isScrollLocked]);
 
   // Handle Resize on fullscreen toggle
   useEffect(() => {
@@ -216,13 +254,19 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       const count = stand.driverCount || (stand as any).activeDrivers || 5;
 
       marker.bindPopup(`
-        <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 170px;">
+        <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 175px;">
           <h4 style="font-weight: 800; color: #065f46; margin: 0 0 4px 0; font-size: 13.5px;">${standBn}</h4>
-          <p style="font-size: 11px; color: #334155; margin: 0 0 5px 0;">সক্রিয় যানবাহন: <b>${toBengaliNumber(count)} জন</b></p>
-          <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${standBn}')" 
-                  style="width: 100%; background: #059669; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
-            🚖 এই স্ট্যান্ড পিকআপ করুন
-          </button>
+          <p style="font-size: 11px; color: #334155; margin: 0 0 6px 0;">সক্রিয় যানবাহন: <b>${toBengaliNumber(count)} জন</b></p>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${standBn}')" 
+                    style="width: 100%; background: #059669; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
+              🚖 এই স্ট্যান্ড পিকআপ করুন
+            </button>
+            <button onclick="window.__selectDestPlace && window.__selectDestPlace('${standBn}')" 
+                    style="width: 100%; background: #dc2626; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
+              🎯 এখানে যাব (গন্তব্য করুন)
+            </button>
+          </div>
         </div>
       `);
       markersGroup.addLayer(marker);
@@ -336,8 +380,12 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                 📞 সরাসরি কল করুন (${driver.phone})
               </a>
               <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${driver.standName}')"
-                      style="display: block; width: 100%; text-align: center; background-color: #f1f5f9; color: #0f172a; padding: 4px 8px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 10.5px; font-weight: 700; cursor: pointer;">
+                      style="display: block; width: 100%; text-align: center; background-color: #ecfdf5; color: #047857; padding: 4px 8px; border-radius: 6px; border: 1px solid #a7f3d0; font-size: 10.5px; font-weight: 700; cursor: pointer;">
                 🚖 এই স্ট্যান্ড পিকআপ করুন
+              </button>
+              <button onclick="window.__selectDestPlace && window.__selectDestPlace('${driver.standName}')"
+                      style="display: block; width: 100%; text-align: center; background-color: #fef2f2; color: #b91c1c; padding: 4px 8px; border-radius: 6px; border: 1px solid #fecaca; font-size: 10.5px; font-weight: 700; cursor: pointer;">
+                🎯 এই স্ট্যান্ডে যাব (গন্তব্য)
               </button>
             </div>
           </div>
@@ -555,17 +603,23 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
     userRole
   ]);
 
-  // Expose global window pickup selector for popups
+  // Expose global window pickup and destination selector for popups
   useEffect(() => {
     (window as any).__selectPickupPlace = (placeName: string) => {
       if (onSelectPickupPlace) {
         onSelectPickupPlace(placeName);
       }
     };
+    (window as any).__selectDestPlace = (placeName: string) => {
+      if (onSelectDestPlace) {
+        onSelectDestPlace(placeName);
+      }
+    };
     return () => {
       delete (window as any).__selectPickupPlace;
+      delete (window as any).__selectDestPlace;
     };
-  }, [onSelectPickupPlace]);
+  }, [onSelectPickupPlace, onSelectDestPlace]);
 
   // Center on user device GPS
   const handleLocateMe = () => {
@@ -598,33 +652,35 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
             <span>গফরগাঁও লাইভ ম্যাপ</span>
           </div>
 
-          {/* Cloudflare Server Status Badge with Click to Config */}
-          <button
-            type="button"
-            onClick={onOpenServerSettings}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors cursor-pointer ${
-              connectionStatus === 'connected'
-                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
-                : connectionStatus === 'connecting'
-                ? 'bg-amber-100 text-amber-800 border-amber-300'
-                : 'bg-red-100 text-red-800 border-red-300'
-            }`}
-            title="ক্লাউডফ্লেয়ার লাইভ সার্ভার সেটিংস"
-          >
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
+          {/* Cloudflare Server Status Badge (Admin Only) */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onOpenServerSettings}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors cursor-pointer ${
                 connectionStatus === 'connected'
-                  ? 'bg-emerald-600 animate-ping'
+                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
                   : connectionStatus === 'connecting'
-                  ? 'bg-amber-500 animate-ping'
-                  : 'bg-red-500'
+                  ? 'bg-amber-100 text-amber-800 border-amber-300'
+                  : 'bg-red-100 text-red-800 border-red-300'
               }`}
-            />
-            <Cloud className="w-3 h-3" />
-            <span>
-              {serverType === 'cloudflare' ? 'ক্লাউডফ্লেয়ার এজ' : 'লাইভ সার্ভার'} • {latencyMs}ms
-            </span>
-          </button>
+              title="ক্লাউডফ্লেয়ার লাইভ সার্ভার সেটিংস (অ্যাডমিন)"
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  connectionStatus === 'connected'
+                    ? 'bg-emerald-600 animate-ping'
+                    : connectionStatus === 'connecting'
+                    ? 'bg-amber-500 animate-ping'
+                    : 'bg-red-500'
+                }`}
+              />
+              <Cloud className="w-3 h-3" />
+              <span>
+                {serverType === 'cloudflare' ? 'ক্লাউডফ্লেয়ার এজ' : 'লাইভ সার্ভার'} • {latencyMs}ms
+              </span>
+            </button>
+          )}
 
           {/* Filter Pills */}
           <div className="flex items-center bg-slate-200/80 p-0.5 rounded-lg text-[10px] font-bold">
@@ -658,8 +714,29 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
           </div>
         </div>
 
-        {/* Action Buttons: Locate Me, Reset, Fullscreen */}
-        <div className="flex items-center gap-1.5">
+        {/* Action Buttons: Scroll Lock, Locate Me, Reset, Fullscreen */}
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {/* Scroll Lock Toggle Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const nextState = !isScrollLocked;
+              setIsScrollLocked(nextState);
+              setShowLockNotification(true);
+              if (lockNotificationTimerRef.current) clearTimeout(lockNotificationTimerRef.current);
+              lockNotificationTimerRef.current = setTimeout(() => setShowLockNotification(false), 3000);
+            }}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
+              isScrollLocked
+                ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300'
+                : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border-emerald-300'
+            }`}
+            title={isScrollLocked ? 'ম্যাপ আনলক করুন (ম্যাপ ঘুরানো ও জুম করা যাবে)' : 'স্ক্রল লক করুন (মোবাইলে পেজ সহজে স্ক্রল হবে)'}
+          >
+            {isScrollLocked ? <Lock className="w-3.5 h-3.5 text-amber-700" /> : <Unlock className="w-3.5 h-3.5 text-emerald-700" />}
+            <span>{isScrollLocked ? 'স্ক্রল লক: চালু' : 'ম্যাপ আনলক'}</span>
+          </button>
+
           <button
             type="button"
             onClick={handleLocateMe}
@@ -697,8 +774,107 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       </div>
 
       {/* Main Map Canvas Area */}
-      <div className="relative w-full h-[360px] sm:h-[420px] lg:h-[480px] bg-slate-100">
+      <div 
+        className="relative w-full h-[360px] sm:h-[420px] lg:h-[480px] bg-slate-100"
+        onClick={() => {
+          if (isScrollLocked) {
+            setShowLockNotification(true);
+            if (lockNotificationTimerRef.current) clearTimeout(lockNotificationTimerRef.current);
+            lockNotificationTimerRef.current = setTimeout(() => setShowLockNotification(false), 3000);
+          }
+        }}
+      >
         <div ref={mapContainerRef} className="w-full h-full z-0" />
+
+        {/* Floating Scroll Lock / Unlock Button directly on Map */}
+        <div className="absolute top-2.5 right-2.5 z-[400] flex flex-col items-end gap-1">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const nextState = !isScrollLocked;
+              setIsScrollLocked(nextState);
+              setShowLockNotification(true);
+              if (lockNotificationTimerRef.current) clearTimeout(lockNotificationTimerRef.current);
+              lockNotificationTimerRef.current = setTimeout(() => setShowLockNotification(false), 3000);
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black border flex items-center gap-1.5 shadow-lg transition-all cursor-pointer backdrop-blur-md active:scale-95 ${
+              isScrollLocked
+                ? 'bg-slate-900/90 text-amber-300 border-amber-400/50 hover:bg-slate-900'
+                : 'bg-emerald-700/95 text-white border-emerald-400/60 hover:bg-emerald-800'
+            }`}
+            title={isScrollLocked ? 'ম্যাপ আনলক করতে ট্যাপ করুন' : 'ম্যাপ লক করতে ট্যাপ করুন'}
+          >
+            {isScrollLocked ? (
+              <>
+                <Lock className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                <span>🔒 স্ক্রল লক (পেজ টানুন)</span>
+              </>
+            ) : (
+              <>
+                <Unlock className="w-3.5 h-3.5 text-emerald-200 shrink-0" />
+                <span>🔓 ম্যাপ সক্রিয় (ঘুরানো যাবে)</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Floating helper note when scroll is locked */}
+        {isScrollLocked && (
+          <div 
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsScrollLocked(false);
+              setShowLockNotification(true);
+              if (lockNotificationTimerRef.current) clearTimeout(lockNotificationTimerRef.current);
+              lockNotificationTimerRef.current = setTimeout(() => setShowLockNotification(false), 3000);
+            }}
+            className="absolute bottom-2.5 left-2.5 z-[400] bg-slate-900/90 text-white px-2.5 py-1.5 rounded-xl border border-slate-700/80 shadow-md backdrop-blur-xs flex items-center gap-2 cursor-pointer hover:bg-slate-950 transition max-w-[280px]"
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0 animate-ping" />
+            <span className="text-[10px] sm:text-[11px] font-semibold text-slate-200 leading-tight">
+              মোবাইলে পেজ আটকাবে না • ম্যাপ সরাতে <span className="text-amber-300 underline font-bold">আনলক</span> করুন
+            </span>
+          </div>
+        )}
+
+        {/* Temporary Notification Toast for lock state */}
+        {showLockNotification && (
+          <div className="absolute top-12 left-1/2 -translate-x-1/2 z-[410] bg-slate-900/95 text-white text-[11px] sm:text-xs font-bold px-3 py-2 rounded-xl border border-slate-700 shadow-2xl backdrop-blur-md flex items-center gap-2 animate-in fade-in max-w-[90%] text-center">
+            {isScrollLocked ? (
+              <>
+                <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>🔒 স্ক্রল লক চালু: মোবাইলে ম্যাপ না আটকে পেজ সহজে স্ক্রল হবে।</span>
+              </>
+            ) : (
+              <>
+                <Unlock className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>🔓 ম্যাপ আনলক: এখন যেকোনো দিকে ম্যাপ টানতে ও জুম করতে পারবেন।</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Floating Route Distance & Live Stats Overlay when pickup & dest are set */}
+        {pickupCoords && destCoords && calculatedDistance != null && (
+          <div className="absolute top-2.5 left-2.5 z-[400] bg-slate-900/90 text-white backdrop-blur-sm rounded-xl p-2.5 shadow-xl border border-emerald-500/40 max-w-[280px] animate-in fade-in">
+            <div className="flex items-center gap-1.5 text-emerald-400 font-extrabold text-[11px] mb-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>রুট প্ল্যান ও নির্ভুল দূরত্ব</span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-base sm:text-lg font-black text-white">
+                {toBengaliNumber(calculatedDistance)} কিমি
+              </span>
+              <span className="text-[11px] text-emerald-300 font-bold">
+                (~{toBengaliNumber(calculatedDurationMinutes || 5)} মিনিট)
+              </span>
+            </div>
+            <div className="text-[10px] text-slate-300 truncate mt-1 border-t border-slate-700/60 pt-1">
+              <span className="text-emerald-400 font-bold">A:</span> {pickupTitle?.slice(0, 18) || 'পিকআপ'} ➔ <span className="text-red-400 font-bold">B:</span> {destTitle?.slice(0, 18) || 'গন্তব্য'}
+            </div>
+          </div>
+        )}
 
         {/* Floating live legend at bottom-right */}
         <div className="absolute bottom-2 right-2 z-[400] bg-white/95 backdrop-blur-xs rounded-xl p-2 shadow-md border border-slate-200 text-[10px] font-semibold space-y-1 hidden xs:block">

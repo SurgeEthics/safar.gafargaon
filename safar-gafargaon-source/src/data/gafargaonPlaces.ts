@@ -392,6 +392,9 @@ export function resolveLocationCoordinates(
   if (partial) return { lat: partial.lat, lng: partial.lng, matchedPlace: partial };
 
   // 3. Keyword matching for common Gafargaon locations
+  if (clean.includes('gps') || clean.includes('লাইভ') || clean.includes('আমার অবস্থান') || clean.includes('বর্তমান অবস্থান')) {
+    return { lat: 24.5518, lng: 90.5512 };
+  }
   if (clean.includes('পাগলা')) return { lat: 24.4530, lng: 90.5050 };
   if (clean.includes('হাসপাতাল') || clean.includes('স্বাস্থ্য')) return { lat: 24.5585, lng: 90.5482 };
   if (clean.includes('রেলওয়ে') || clean.includes('স্টেশন')) return { lat: 24.5518, lng: 90.5512 };

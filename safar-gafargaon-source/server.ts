@@ -70,7 +70,7 @@ server.on('upgrade', (request, socket, head) => {
   const host = request.headers.host || 'localhost';
   const url = new URL(request.url || '', `http://${host}`);
   if (url.pathname === '/ws' || url.pathname === '/api/live/ws') {
-    wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
       wss.emit('connection', ws, request);
     });
   } else {
@@ -82,7 +82,7 @@ server.on('upgrade', (request, socket, head) => {
 // Broadcast helper
 function broadcast(data: any, excludeWs?: WebSocket) {
   const message = JSON.stringify(data);
-  wss.clients.forEach((client) => {
+  wss.clients.forEach((client: WebSocket) => {
     if (client !== excludeWs && client.readyState === WebSocket.OPEN) {
       try {
         client.send(message);

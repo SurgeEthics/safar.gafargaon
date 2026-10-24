@@ -55,8 +55,8 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
           light: '#ffffff',
         },
       })
-        .then((url) => setQrDataUrl(url))
-        .catch((err) => console.error('Failed to generate QR:', err));
+        .then((url: string) => setQrDataUrl(url))
+        .catch((err: unknown) => console.error('Failed to generate QR:', err));
     }
   }, [currentUrl]);
 

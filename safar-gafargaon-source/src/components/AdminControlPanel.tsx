@@ -76,11 +76,13 @@ export interface AdminControlPanelProps {
   };
   onSaveHotlines: (hotlines: { hospital: string; fire: string; police: string; national: string }) => void;
   showToast: (msg: string) => void;
+  onOpenCloudflareSettings?: () => void;
 }
 
 export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   isOpen,
   onClose,
+  onOpenCloudflareSettings,
   stands,
   onSaveStand,
   onDeleteStand,
@@ -329,14 +331,26 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 hover:bg-slate-700 cursor-pointer transition"
-            title="বন্ধ করুন"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenCloudflareSettings && (
+              <button
+                type="button"
+                onClick={onOpenCloudflareSettings}
+                className="px-2.5 py-1.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl flex items-center gap-1.5 transition cursor-pointer border border-slate-700"
+                title="লাইভ সার্ভার কনফিগারেশন"
+              >
+                <span>☁️ লাইভ সার্ভার</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 hover:bg-slate-700 cursor-pointer transition"
+              title="বন্ধ করুন"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -1257,6 +1271,41 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
           {/* ========================================================== */}
           {activeTab === 'backup' && (
             <div className="space-y-6 max-w-3xl">
+              {/* Full Project Source Code ZIP for GitHub & Cloudflare */}
+              <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-950 p-5 rounded-2xl border border-emerald-500/30 text-white shadow-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-sm sm:text-base text-amber-300 flex items-center gap-2">
+                    <Download className="w-5 h-5 text-emerald-400" />
+                    ফুল সোর্স কোড জিপ ডাউনলোড (GitHub & Cloudflare Ready)
+                  </h3>
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    স্বচ্ছ ও ক্লিন জিপ
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  এই জিপ ফাইলে সম্পূর্ণ প্রজেক্টের নিট-অ্যান্ড-ক্লিন সোর্স কোড (BRTA ভেরিফিকেশন, ক্লাউডফ্লেয়ার লাইভ ট্র্যাকিং, ম্যাপ স্ক্রল লক ও সকল ফিচারসহ) দেওয়া আছে। কোনো অপ্রয়োজনীয় বা ভারী ক্যাশ ফাইল নেই। এটি এক্সট্রাক্ট করে আপনার GitHub রিপোজিটরিতে আপলোড করলে ক্লাউডফ্লেয়ার পেজেস (Cloudflare Pages) স্বয়ংক্রিয়ভাবে অটো-আপডেট হয়ে যাবে।
+                </p>
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <a
+                    href="/safar-gafargaon-source.zip"
+                    download="safar-gafargaon-source.zip"
+                    className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition active:scale-95"
+                  >
+                    <Download className="w-4 h-4 text-slate-950" />
+                    <span>ডাউনলোড safar-gafargaon-source.zip</span>
+                  </a>
+                  <span className="text-[11px] text-slate-400">
+                    ফাইল সাইজ: ~1 MB • সম্পূর্ণ রেডি
+                  </span>
+                </div>
+                <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-700/60 text-[11px] text-slate-300 space-y-1">
+                  <p className="font-bold text-amber-300">🚀 ক্লাউডফ্লেয়ার অটো-ডিপ্লয় সেটিংস:</p>
+                  <p>• Framework preset: <code className="text-emerald-300 font-mono">Vite</code></p>
+                  <p>• Build command: <code className="text-emerald-300 font-mono">npm run build</code></p>
+                  <p>• Build output directory: <code className="text-emerald-300 font-mono">dist</code></p>
+                </div>
+              </div>
+
               {/* Export Backup Card */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
                 <h3 className="font-extrabold text-sm sm:text-base text-slate-900 flex items-center gap-2">

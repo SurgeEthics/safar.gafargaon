@@ -49,7 +49,8 @@ import {
   Key,
   ArrowUpDown,
   Sparkles,
-  Camera
+  Camera,
+  Download
 } from 'lucide-react';
 import L from 'leaflet';
 import { SafarLogo } from './components/SafarLogo';
@@ -59,6 +60,7 @@ import { FullVerificationGuidedModal } from './components/FullVerificationGuided
 import { PWAInstallBanner } from './components/PWAInstallBanner';
 import confetti from 'canvas-confetti';
 import { sounds } from './utils/audio';
+import { toBengaliNumber } from './utils/calculator';
 import { PassengerRideCockpit } from './components/PassengerRideCockpit';
 import { DriverIncomingAlert } from './components/DriverIncomingAlert';
 import { AdminControlPanel, AppCustomSettings } from './components/AdminControlPanel';
@@ -71,6 +73,7 @@ import { GAFARGAON_PLACES, resolveLocationCoordinates } from './data/gafargaonPl
 import { GafargaonMap } from './components/GafargaonMap';
 import { CloudflareSettingsModal } from './components/CloudflareSettingsModal';
 import { useLiveTracking } from './hooks/useLiveTracking';
+import { liveLocationService } from './services/liveLocationService';
 
 export type VehicleCategory = string;
 export type AppUserRole = 'passenger' | 'driver';
@@ -1094,11 +1097,14 @@ export default function App() {
     });
   });
 
-  // Automatically persist drivers
+  // Automatically persist drivers & sync to live location edge service
   useEffect(() => {
     try {
       localStorage.setItem('safar_drivers_v4', JSON.stringify(drivers));
     } catch {}
+    if (drivers && drivers.length > 0) {
+      liveLocationService.syncDriversFromCatalog(drivers);
+    }
   }, [drivers]);
 
   // Real-time Firestore Sync for Drivers
@@ -1675,12 +1681,6 @@ export default function App() {
     } catch (e) {}
   }, [passengerRequests]);
 
-  // Helper to extract or resolve coordinates for any stand or custom name in Gafargaon
-  const getCoordinatesForLocation = (locName: string, isDest = false): { lat: number; lng: number } => {
-    if (!locName) return isDest ? { lat: 24.5585, lng: 90.5482 } : { lat: 24.5518, lng: 90.5512 };
-    return resolveLocationCoordinates(locName, isDest);
-  };
-
   // Passenger Ride Booking Hub State (Dynamic Pickup, Destination & Fare Calculation)
   const [passengerPickup, setPassengerPickup] = useState<string>('গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড');
   const [passengerDestination, setPassengerDestination] = useState<string>('উপজেলা স্বাস্থ্য কমপ্লেক্স (হাসপাতাল) স্ট্যান্ড');
@@ -1688,19 +1688,6 @@ export default function App() {
   const [destCoords, setDestCoords] = useState<{ lat: number; lng: number }>({ lat: 24.5585, lng: 90.5482 });
   const [passengerSelectedVehicle, setPassengerSelectedVehicle] = useState<VehicleCategory>('cng');
   const [isRidePlannerCollapsed, setIsRidePlannerCollapsed] = useState<boolean>(false);
-
-  // Sync coordinates when locations change
-  useEffect(() => {
-    if (passengerPickup.includes('GPS') && passengerLocation.lat) {
-      setPickupCoords({ lat: passengerLocation.lat, lng: passengerLocation.lng });
-    } else {
-      setPickupCoords(getCoordinatesForLocation(passengerPickup, false));
-    }
-  }, [passengerPickup, passengerLocation]);
-
-  useEffect(() => {
-    setDestCoords(getCoordinatesForLocation(passengerDestination, true));
-  }, [passengerDestination]);
 
   // Active Pending Request submitted by this passenger
   const [passengerPendingRequest, setPassengerPendingRequest] = useState<PassengerRideRequest | null>(() => {
@@ -1721,6 +1708,96 @@ export default function App() {
     } catch (e) {}
   }, [passengerPendingRequest]);
 
+  // Real-Time Live Tracking Hook (Cloudflare Worker Edge + Native GPS Sync)
+  const {
+    gps: liveGps,
+    serverState,
+    startGpsTracking,
+    stopGpsTracking
+  } = useLiveTracking({
+    role: userRole,
+    userId: userRole === 'driver' ? (driverProfile.id || 'driver-me') : (passengerProfile.phone || 'passenger-me'),
+    userName: userRole === 'driver' ? driverProfile.name : passengerProfile.name,
+    userPhone: userRole === 'driver' ? driverProfile.phone : passengerProfile.phone,
+    driverDetails: userRole === 'driver' ? {
+      category: driverProfile.category,
+      categoryBengali: categories.find(c => c.id === driverProfile.category)?.nameBengali || 'যানবাহন',
+      vehicleModel: driverProfile.vehicleModel,
+      plateNumber: driverProfile.plateNumber,
+      standName: driverProfile.standName,
+      rating: driverProfile.rating,
+      isOnline: isDriverOnline
+    } : undefined,
+    passengerDetails: userRole === 'passenger' ? {
+      pickupPoint: passengerPickup,
+      destination: passengerDestination,
+      status: activeBooking ? 'on_trip' : passengerPendingRequest ? 'seeking_ride' : 'idle'
+    } : undefined
+  });
+
+  // Helper: check if a location title implies real device live GPS
+  const isLiveLocationQuery = (text: string): boolean => {
+    if (!text) return false;
+    const lower = text.toLowerCase().trim();
+    return (
+      lower.includes('gps') ||
+      lower.includes('লাইভ') ||
+      lower.includes('বর্তমান') ||
+      lower.includes('আমার অবস্থান') ||
+      lower.includes('আমার লোকেশন') ||
+      lower.includes('live') ||
+      lower === 'আমার অবস্থান' ||
+      lower === 'বর্তমান অবস্থান'
+    );
+  };
+
+  // Helper to extract or resolve coordinates for any stand or custom name in Gafargaon
+  const getCoordinatesForLocation = (locName: string, isDest = false): { lat: number; lng: number } => {
+    if (!locName) return isDest ? { lat: 24.5585, lng: 90.5482 } : { lat: 24.5518, lng: 90.5512 };
+    if (!isDest && isLiveLocationQuery(locName)) {
+      if (liveGps.lat && liveGps.lng) {
+        return { lat: liveGps.lat, lng: liveGps.lng };
+      }
+      if (passengerLocation.lat && passengerLocation.lng && passengerLocation.isLiveGps) {
+        return { lat: passengerLocation.lat, lng: passengerLocation.lng };
+      }
+    }
+    return resolveLocationCoordinates(locName, isDest);
+  };
+
+  // Sync coordinates when locations or GPS change
+  useEffect(() => {
+    if (isLiveLocationQuery(passengerPickup)) {
+      if (liveGps.lat && liveGps.lng) {
+        setPickupCoords({ lat: liveGps.lat, lng: liveGps.lng });
+      } else if (passengerLocation.lat && passengerLocation.lng && passengerLocation.isLiveGps) {
+        setPickupCoords({ lat: passengerLocation.lat, lng: passengerLocation.lng });
+      } else {
+        startGpsTracking();
+      }
+    } else {
+      setPickupCoords(getCoordinatesForLocation(passengerPickup, false));
+    }
+  }, [passengerPickup, passengerLocation, liveGps.lat, liveGps.lng]);
+
+  useEffect(() => {
+    setDestCoords(getCoordinatesForLocation(passengerDestination, true));
+  }, [passengerDestination]);
+
+  // When live GPS coordinates stream in, if pickup is live location, keep it locked to live position
+  useEffect(() => {
+    if (liveGps.lat && liveGps.lng && liveGps.isTracking) {
+      setPassengerLocation({
+        lat: liveGps.lat,
+        lng: liveGps.lng,
+        isLiveGps: true
+      });
+      if (isLiveLocationQuery(passengerPickup)) {
+        setPickupCoords({ lat: liveGps.lat, lng: liveGps.lng });
+      }
+    }
+  }, [liveGps.lat, liveGps.lng, liveGps.isTracking, passengerPickup]);
+
   // Vehicle-specific realistic speed in km/h
   const getVehicleSpeedKmh = (catId: string): number => {
     switch (catId) {
@@ -1735,19 +1812,16 @@ export default function App() {
     }
   };
 
-  // Dynamic Distance & Duration calculation with realistic road curvature factor (1.35x)
-  const currentPickupCoords = pickupCoords;
-  const currentDestCoords = destCoords;
-
-  const directDistance = calculateDistanceKm(pickupCoords.lat, pickupCoords.lng, destCoords.lat, destCoords.lng);
-  const calculatedDistance = (pickupCoords.lat === destCoords.lat && pickupCoords.lng === destCoords.lng)
-    ? 0.5
-    : Number(Math.max(0.6, directDistance * 1.35).toFixed(1));
+  // Dynamic Distance & Duration calculation with realistic road curvature factor (1.25x)
+  const isSamePoint = Math.abs(pickupCoords.lat - destCoords.lat) < 0.0001 && Math.abs(pickupCoords.lng - destCoords.lng) < 0.0001;
+  const directDistance = isSamePoint ? 0 : calculateDistanceKm(pickupCoords.lat, pickupCoords.lng, destCoords.lat, destCoords.lng);
+  const roadCurvatureFactor = 1.25;
+  const calculatedDistance = isSamePoint ? 0.3 : Number(Math.max(0.3, directDistance * roadCurvatureFactor).toFixed(1));
 
   const currentVehicleSpeed = getVehicleSpeedKmh(passengerSelectedVehicle);
   const calculatedDurationMinutes = Math.max(
-    3,
-    Math.round((calculatedDistance / currentVehicleSpeed) * 60 + 2)
+    2,
+    Math.round((calculatedDistance / currentVehicleSpeed) * 60 + 1)
   );
 
   // Dynamic Fair Fare Calculator: Base fare covers first 1.5 km!
@@ -1839,7 +1913,7 @@ export default function App() {
         const matchedDriver = drivers.find(d => d.category === newRequest.category && d.isOnline) ||
           drivers.find(d => d.isOnline) || drivers[0];
 
-        const pCoords = currentPickupCoords;
+        const pCoords = pickupCoords;
         const dist = calculatedDistance;
         const eta = Math.max(2, Math.round(dist * 2.5));
         const otpCode = String(Math.floor(1000 + Math.random() * 9000));
@@ -1956,47 +2030,6 @@ export default function App() {
 
   // Cloudflare Live Server Settings Modal
   const [showCloudflareModal, setShowCloudflareModal] = useState(false);
-
-  // Real-Time Live Tracking Hook (Cloudflare Worker Edge + Native GPS Sync)
-  const {
-    gps: liveGps,
-    serverState,
-    startGpsTracking,
-    stopGpsTracking
-  } = useLiveTracking({
-    role: userRole,
-    userId: userRole === 'driver' ? (driverProfile.id || 'driver-me') : 'passenger-me',
-    userName: userRole === 'driver' ? driverProfile.name : passengerProfile.name,
-    userPhone: userRole === 'driver' ? driverProfile.phone : passengerProfile.phone,
-    driverDetails: userRole === 'driver' ? {
-      category: driverProfile.category,
-      categoryBengali: categories.find(c => c.id === driverProfile.category)?.nameBengali || 'যানবাহন',
-      vehicleModel: driverProfile.vehicleModel,
-      plateNumber: driverProfile.plateNumber,
-      standName: driverProfile.standName,
-      rating: driverProfile.rating,
-      isOnline: isDriverOnline
-    } : undefined,
-    passengerDetails: userRole === 'passenger' ? {
-      pickupPoint: passengerPickup,
-      destination: passengerDestination,
-      status: activeBooking ? 'on_trip' : passengerPendingRequest ? 'seeking_ride' : 'idle'
-    } : undefined
-  });
-
-  // Automatically start device GPS or sync when live coordinates change
-  useEffect(() => {
-    if (liveGps.lat && liveGps.lng && liveGps.isTracking) {
-      setPassengerLocation({
-        lat: liveGps.lat,
-        lng: liveGps.lng,
-        isLiveGps: true
-      });
-      if (passengerPickup.includes('GPS') || passengerPickup === 'আমার লাইভ অবস্থান') {
-        setPickupCoords({ lat: liveGps.lat, lng: liveGps.lng });
-      }
-    }
-  }, [liveGps.lat, liveGps.lng, liveGps.isTracking]);
 
   // Secret Admin Access via URL hash (#admin or ?admin=1), Keyboard (Ctrl+Shift+A)
   useEffect(() => {
@@ -2409,7 +2442,7 @@ export default function App() {
     }
   }, [serverState.drivers]);
 
-  // Global window pickup selector from map popup
+  // Global window pickup & destination selector from map popup
   useEffect(() => {
     (window as any).__selectPickupPlace = (placeName: string) => {
       setPassengerPickup(placeName);
@@ -2417,8 +2450,15 @@ export default function App() {
       setPickupCoords(coords);
       showAdminToastMessage(`পিকআপ হিসেবে নির্বাচিত: ${placeName}`);
     };
+    (window as any).__selectDestPlace = (placeName: string) => {
+      setPassengerDestination(placeName);
+      const coords = resolveLocationCoordinates(placeName, true);
+      setDestCoords(coords);
+      showAdminToastMessage(`গন্তব্য হিসেবে নির্বাচিত: ${placeName}`);
+    };
     return () => {
       delete (window as any).__selectPickupPlace;
+      delete (window as any).__selectDestPlace;
     };
   }, []);
 
@@ -3482,20 +3522,29 @@ export default function App() {
                       label="শুরুর অবস্থান (পিকআপ):"
                       isPickup={true}
                       value={passengerPickup}
-                      isGpsActive={passengerPickup.includes('GPS')}
+                      isGpsActive={liveGps.isTracking || isLiveLocationQuery(passengerPickup)}
+                      userGps={liveGps}
                       onLocateGps={() => {
+                        startGpsTracking();
+                        if (liveGps.lat && liveGps.lng) {
+                          const lat = liveGps.lat;
+                          const lng = liveGps.lng;
+                          setPassengerLocation({ lat, lng, isLiveGps: true });
+                          setPassengerPickup('আমার বর্তমান অবস্থান (লাইভ GPS)');
+                          setPickupCoords({ lat, lng });
+                          showAdminToastMessage(`📍 লাইভ GPS অবস্থান চিহ্নিত (সঠিকতা: ±${Math.round(liveGps.accuracy || 10)} মি.)`);
+                          return;
+                        }
                         if ('geolocation' in navigator) {
                           navigator.geolocation.getCurrentPosition(
                             (pos) => {
                               const lat = pos.coords.latitude;
                               const lng = pos.coords.longitude;
+                              const accuracy = pos.coords.accuracy || 10;
                               setPassengerLocation({ lat, lng, isLiveGps: true });
-                              setPassengerPickup('আমার বর্তমান অবস্থান (GPS লাইভ)');
+                              setPassengerPickup('আমার বর্তমান অবস্থান (লাইভ GPS)');
                               setPickupCoords({ lat, lng });
-                              showAdminToastMessage('বর্তমান লাইভ GPS অবস্থান নির্বাচিত');
-                              if (mapInstanceRef.current) {
-                                mapInstanceRef.current.setView([lat, lng], 16, { animate: true });
-                              }
+                              showAdminToastMessage(`📍 লাইভ GPS অবস্থান চিহ্নিত (সঠিকতা: ±${Math.round(accuracy)} মি.)`);
                             },
                             () => {
                               showAdminToastMessage('GPS লোকেশন পাওয়া যায়নি, ম্যানুয়ালি বাছুন');
@@ -3507,6 +3556,9 @@ export default function App() {
                       onChangeLocation={(name, coords) => {
                         setPassengerPickup(name);
                         setPickupCoords(coords);
+                        if (isLiveLocationQuery(name)) {
+                          startGpsTracking();
+                        }
                       }}
                       placeholder="পিকআপ স্ট্যান্ড বা এলাকা খুঁজুন..."
                     />
@@ -3528,6 +3580,7 @@ export default function App() {
                       label="কোথায় যাবেন (গন্তব্য স্থল):"
                       isPickup={false}
                       value={passengerDestination}
+                      userGps={liveGps}
                       onChangeLocation={(name, coords) => {
                         setPassengerDestination(name);
                         setDestCoords(coords);
@@ -3614,18 +3667,21 @@ export default function App() {
                     <div className="flex items-center gap-3 flex-wrap">
                       <div className="flex items-center gap-1.5 text-xs text-emerald-100">
                         <Navigation className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>দূরত্ব: <b className="text-white">{calculatedDistance} কিমি</b></span>
+                        <span>
+                          দূরত্ব: <b className="text-white font-extrabold">{toBengaliNumber(calculatedDistance)} কিমি</b>
+                          <span className="text-[10px] text-emerald-300 ml-1 font-semibold">({calculatedDistance} km)</span>
+                        </span>
                       </div>
                       <span className="text-slate-500 hidden sm:inline">•</span>
                       <div className="flex items-center gap-1.5 text-xs text-emerald-100">
                         <Clock className="w-3.5 h-3.5 text-amber-300" />
-                        <span>আনুমানিক সময়: <b className="text-yellow-300">{calculatedDurationMinutes} মিনিট</b></span>
+                        <span>আনুমানিক সময়: <b className="text-yellow-300 font-extrabold">~{toBengaliNumber(calculatedDurationMinutes)} মিনিট</b></span>
                       </div>
                       <span className="text-slate-500 hidden sm:inline">•</span>
                       <div className="flex items-center gap-1 text-xs">
                         <span className="text-emerald-200">নির্ধারিত ভাড়া:</span>
                         <span className="text-base sm:text-lg font-black text-amber-300">
-                          ৳ {calculatedFare}
+                          ৳ {toBengaliNumber(calculatedFare)}
                         </span>
                       </div>
                     </div>
@@ -4036,6 +4092,7 @@ export default function App() {
                 latencyMs={serverState.latencyMs}
                 serverType={serverState.serverType}
                 onOpenServerSettings={() => setShowCloudflareModal(true)}
+                isAdmin={isAdminLoggedIn}
                 userGps={liveGps}
                 onStartGpsTracking={startGpsTracking}
                 userRole={userRole}
@@ -4067,6 +4124,12 @@ export default function App() {
                   const coords = resolveLocationCoordinates(standName, false);
                   setPickupCoords(coords);
                   showAdminToastMessage(`পিকআপ স্থান সেট করা হয়েছে: ${standName}`);
+                }}
+                onSelectDestPlace={(standName: string) => {
+                  setPassengerDestination(standName);
+                  const coords = resolveLocationCoordinates(standName, true);
+                  setDestCoords(coords);
+                  showAdminToastMessage(`গন্তব্য স্থান সেট করা হয়েছে: ${standName}`);
                 }}
               />
             </div>
@@ -5810,7 +5873,7 @@ export default function App() {
           {/* Admin Control Bar: STRICTLY visible only when admin is already authenticated */}
           {isAdminLoggedIn && (
             <div className="mt-3 pt-2.5 border-t border-emerald-900/60 flex items-center justify-center gap-3 text-xs animate-in fade-in">
-              <div className="inline-flex items-center gap-2 bg-emerald-900/90 px-3 py-1.5 rounded-lg border border-emerald-500/50 shadow-xs">
+              <div className="inline-flex items-center gap-2 bg-emerald-900/90 px-3 py-1.5 rounded-lg border border-emerald-500/50 shadow-xs flex-wrap justify-center">
                 <button
                   type="button"
                   onClick={() => setShowAdminDashboard(true)}
@@ -5819,6 +5882,16 @@ export default function App() {
                   <Shield className="w-3.5 h-3.5 text-amber-400" />
                   <span>কন্ট্রোল প্যানেল খুলুন</span>
                 </button>
+                <span className="text-emerald-500">|</span>
+                <a
+                  href="/safar-gafargaon-source.zip"
+                  download="safar-gafargaon-source.zip"
+                  className="inline-flex items-center gap-1.5 text-emerald-300 hover:text-white text-xs font-bold transition-colors cursor-pointer"
+                  title="সম্পূর্ণ প্রজেক্ট সোর্স কোড জিপ (GitHub ও Cloudflare রেডি)"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>সোর্স জিপ (.zip)</span>
+                </a>
                 <span className="text-emerald-500">|</span>
                 <button
                   type="button"
@@ -5920,6 +5993,7 @@ export default function App() {
       <AdminControlPanel
         isOpen={showAdminDashboard}
         onClose={() => setShowAdminDashboard(false)}
+        onOpenCloudflareSettings={() => setShowCloudflareModal(true)}
         stands={stands}
         onSaveStand={(stand, isEdit) => {
           if (isEdit) {
@@ -7155,7 +7229,7 @@ export default function App() {
         status={serverState.status}
         latencyMs={serverState.latencyMs}
         serverType={serverState.serverType}
-        activeDriversCount={serverState.drivers.length}
+        activeDriversCount={serverState.drivers.length > 0 ? serverState.drivers.length : drivers.filter(d => d.isOnline).length}
         activePassengersCount={serverState.passengers.length}
       />
 

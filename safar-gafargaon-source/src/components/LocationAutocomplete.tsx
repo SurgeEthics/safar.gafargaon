@@ -9,6 +9,12 @@ interface LocationAutocompleteProps {
   onChangeLocation: (name: string, coords: { lat: number; lng: number }) => void;
   onLocateGps?: () => void;
   isGpsActive?: boolean;
+  userGps?: {
+    lat: number | null;
+    lng: number | null;
+    accuracy?: number | null;
+    isTracking?: boolean;
+  };
   placeholder?: string;
 }
 
@@ -19,6 +25,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
   onChangeLocation,
   onLocateGps,
   isGpsActive = false,
+  userGps,
   placeholder = 'স্ট্যান্ড বা ঠিকানা খুঁজুন বা লিখুন...'
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -54,10 +61,51 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
     setIsOpen(false);
   };
 
+  const handleSelectLiveLocation = () => {
+    if (onLocateGps) {
+      onLocateGps();
+    }
+    if (userGps?.lat && userGps?.lng) {
+      const locName = 'আমার বর্তমান অবস্থান (লাইভ GPS)';
+      setInputValue(locName);
+      onChangeLocation(locName, { lat: userGps.lat, lng: userGps.lng });
+      setIsOpen(false);
+      return;
+    }
+    if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const locName = 'আমার বর্তমান অবস্থান (লাইভ GPS)';
+          setInputValue(locName);
+          onChangeLocation(locName, { lat, lng });
+          setIsOpen(false);
+        },
+        () => {
+          // Fallback if denied
+          const fallbackLat = 24.5518;
+          const fallbackLng = 90.5512;
+          const locName = 'আমার বর্তমান অবস্থান (গফরগাঁও)';
+          setInputValue(locName);
+          onChangeLocation(locName, { lat: fallbackLat, lng: fallbackLng });
+          setIsOpen(false);
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
+  };
+
   const handleCustomConfirm = () => {
     if (!inputValue.trim()) return;
-    const coords = resolveLocationCoordinates(inputValue, !isPickup);
-    onChangeLocation(inputValue.trim(), coords);
+    const lower = inputValue.trim().toLowerCase();
+    const isLiveReq = lower.includes('লাইভ') || lower.includes('অবস্থান') || lower.includes('gps') || lower.includes('বর্তমান') || lower.includes('আমার');
+    if (isPickup && isLiveReq && userGps?.lat && userGps?.lng) {
+      onChangeLocation('আমার বর্তমান অবস্থান (লাইভ GPS)', { lat: userGps.lat, lng: userGps.lng });
+    } else {
+      const coords = resolveLocationCoordinates(inputValue, !isPickup);
+      onChangeLocation(inputValue.trim(), coords);
+    }
     setIsOpen(false);
   };
 
@@ -140,7 +188,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
 
       {/* Floating Autocomplete Dropdown */}
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-[1200] max-h-64 overflow-y-auto divide-y divide-slate-100 animate-in fade-in slide-in-from-top-1 duration-150">
+        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-[1200] max-h-72 overflow-y-auto divide-y divide-slate-100 animate-in fade-in slide-in-from-top-1 duration-150">
           {/* Header Note */}
           <div className="px-3 py-1.5 bg-slate-50 text-[10px] font-bold text-slate-500 flex items-center justify-between sticky top-0 z-10 border-b border-slate-100">
             <span className="flex items-center gap-1">
@@ -149,6 +197,36 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
             </span>
             <span className="text-slate-400">ট্যাপ করে বাছুন</span>
           </div>
+
+          {/* Quick Real Device GPS Selection Item for Pickup */}
+          {isPickup && (
+            <button
+              type="button"
+              onClick={handleSelectLiveLocation}
+              className="w-full px-3 py-2.5 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 hover:from-emerald-100 hover:to-sky-100 text-left flex items-center justify-between gap-2 border-b border-emerald-200/80 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="relative flex items-center justify-center w-7 h-7 rounded-full bg-emerald-600 text-white shrink-0 shadow-xs">
+                  <Navigation className="w-4 h-4 animate-pulse" />
+                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-300 rounded-full border-2 border-white animate-ping"></span>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-black text-emerald-950 flex items-center gap-1.5 flex-wrap">
+                    <span>🎯 আমার বর্তমান অবস্থান (লাইভ GPS)</span>
+                    <span className="text-[9px] bg-emerald-600 text-white px-1.5 py-0.2 rounded-full font-bold">
+                      {userGps?.isTracking ? 'জিপিএস ট্র্যাকিং সক্রিয়' : 'রিয়েল-টাইম GPS'}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-emerald-700 font-semibold truncate mt-0.5">
+                    {userGps?.accuracy ? `সঠিকতা: প্রায় ±${Math.round(userGps.accuracy)} মিটার` : 'ডিভাইসের রিয়েল-টাইম জিপিএস লোকেশন ব্যবহার করুন'}
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] font-black text-emerald-800 bg-white border border-emerald-300 px-2 py-1 rounded-md shrink-0 shadow-2xs group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                সেট করুন
+              </span>
+            </button>
+          )}
 
           {/* Matching Suggestion Items */}
           {suggestions.length > 0 ? (

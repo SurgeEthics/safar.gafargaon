@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "driver": {
+      "title": "Driver",
+      "description": "Transport driver profile for Gafargaon",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nameBn": { "type": "string", "maxLength": 100 },
+        "nameEn": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "altPhone": { "type": "string", "maxLength": 20 },
+        "category": { "type": "string", "enum": ["ambulance", "cng", "auto", "car", "maxi", "bike", "fire_service"] },
+        "vehicleName": { "type": "string", "maxLength": 100 },
+        "licensePlate": { "type": "string", "maxLength": 50 },
+        "standId": { "type": "string", "maxLength": 50 },
+        "standName": { "type": "string", "maxLength": 100 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "number" },
+        "isAvailable": { "type": "boolean" },
+        "isVerified": { "type": "boolean" },
+        "nidVerified": { "type": "boolean" },
+        "experienceYears": { "type": "number" },
+        "baseFare": { "type": "number" },
+        "photoUrl": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["nameBn", "phone", "category", "standName"]
+    },
+    "rideRequest": {
+      "title": "Ride Request",
+      "description": "Passenger ride booking request",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "passengerName": { "type": "string", "maxLength": 100 },
+        "passengerPhone": { "type": "string", "maxLength": 20 },
+        "pickupLocation": { "type": "string", "maxLength": 150 },
+        "destinationLocation": { "type": "string", "maxLength": 150 },
+        "vehicleCategory": { "type": "string", "enum": ["ambulance", "cng", "auto", "car", "maxi", "bike", "fire_service"] },
+        "notes": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "completed", "cancelled"] },
+        "estimatedFare": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["passengerName", "passengerPhone", "pickupLocation", "destinationLocation", "vehicleCategory", "status"]
+    }
+  },
+  "firestore": {
+    "/drivers/{driverId}": {
+      "schema": "driver",
+      "description": "Collection of local drivers registered in Safar Gafargaon"
+    },
+    "/ride_requests/{requestId}": {
+      "schema": "rideRequest",
+      "description": "Collection of ride requests submitted by passengers"
+    }
+  }
+}

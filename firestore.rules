@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.email == 'akmmusharrofhossain@gmail.com' ||
+        request.auth.token.email == 'safar.gafargaon@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidDriver(data) {
+      return data.nameBn is string && data.nameBn.size() <= 100 &&
+             data.phone is string && data.phone.size() <= 20 &&
+             data.category is string &&
+             data.standName is string && data.standName.size() <= 100;
+    }
+
+    function isValidRideRequest(data) {
+      return data.passengerName is string && data.passengerName.size() <= 100 &&
+             data.passengerPhone is string && data.passengerPhone.size() <= 20 &&
+             data.pickupLocation is string && data.pickupLocation.size() <= 150 &&
+             data.destinationLocation is string && data.destinationLocation.size() <= 150 &&
+             data.vehicleCategory is string &&
+             data.status in ['pending', 'accepted', 'completed', 'cancelled'];
+    }
+
+    // Drivers collection
+    match /drivers/{driverId} {
+      // Anyone can view drivers list to book rides/call
+      allow read: if true;
+      // Anyone can register as a driver with unverified status
+      allow create: if isValidDriver(request.resource.data) &&
+                       (request.resource.data.isVerified == false || isAdmin());
+      // Admin can update any field (including verifying), or unverified updates
+      allow update: if isAdmin() || (
+        isValidDriver(request.resource.data) &&
+        request.resource.data.isVerified == resource.data.isVerified
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Ride Requests collection
+    match /ride_requests/{requestId} {
+      allow read: if true;
+      allow create: if isValidRideRequest(request.resource.data) &&
+                       request.resource.data.status == 'pending';
+      allow update: if isAdmin() || (
+        isValidRideRequest(request.resource.data) &&
+        request.resource.data.passengerPhone == resource.data.passengerPhone
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Admins collection
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

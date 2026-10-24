@@ -427,9 +427,8 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
       {/* 3. TRIP COMPLETED & 5-STAR RATING REVIEW MODAL                 */}
       {/* ============================================================== */}
       {showReviewModal && activeBooking && (
-        <div className="fixed inset-0 z-50 overflow-y-auto overscroll-contain p-2 sm:p-4 bg-slate-950/80 backdrop-blur-xs modal-scroll-overlay animate-in fade-in">
-          <div className="min-h-full flex items-start sm:items-center justify-center py-2 sm:py-6">
-            <div className="bg-white rounded-3xl max-w-md w-full p-4 sm:p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900 my-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900">
             {/* Header */}
             <div className="text-center pb-3 border-b border-slate-100">
               <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 mx-auto flex items-center justify-center font-bold text-2xl shadow-inner mb-2">
@@ -556,7 +555,6 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
             </div>
           </div>
         </div>
-      </div>
       )}
     </>
   );

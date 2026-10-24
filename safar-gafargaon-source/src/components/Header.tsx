@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, Car, Database, UserPlus, PhoneCall, ShieldAlert } from 'lucide-react';
+import { User, Car, Database, UserPlus, PhoneCall, ShieldAlert, Download } from 'lucide-react';
 
 interface HeaderProps {
   mode: 'passenger' | 'driver';
@@ -68,6 +68,17 @@ export const Header: React.FC<HeaderProps> = ({
               <span>চালক</span>
             </button>
           </div>
+
+          {/* Direct Download Zip Button (GitHub Ready) */}
+          <a
+            href="/safar-gafargaon-final.zip"
+            download="safar-gafargaon-final.zip"
+            title="সম্পূর্ণ প্রজেক্টের জিপ ফাইল ডাউনলোড করুন (GitHub ও Cloudflare-এর জন্য প্রস্তুত)"
+            className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-500 text-slate-900 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-300 transition shadow-sm"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">কোড ডাউনলোড</span>
+          </a>
 
           {/* Data Manager & Backup (Answers user's prompt on managing AI Studio project data) */}
           <button

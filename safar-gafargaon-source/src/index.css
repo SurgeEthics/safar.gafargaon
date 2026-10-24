@@ -79,7 +79,7 @@ html, body {
 .animate-bulletin-marquee {
   display: inline-flex;
   white-space: nowrap;
-  animation: bulletinMarquee 14s linear infinite;
+  animation: bulletinMarquee 12s linear infinite;
   will-change: transform;
 }
 
@@ -93,11 +93,4 @@ html, body {
     animation: none;
     transform: none;
   }
-}
-
-/* Modal Smooth Mobile Scrolling & Touch Support */
-.modal-scroll-overlay {
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
 }

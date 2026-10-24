@@ -1,264 +1,694 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { Maximize2, Minimize2, Navigation, Layers, RotateCcw } from 'lucide-react';
-import { Driver, Stand, VehicleCategory } from '../types';
+import { 
+  Navigation, 
+  RotateCcw, 
+  Maximize2, 
+  Minimize2, 
+  LocateFixed, 
+  Cloud, 
+  Users, 
+  PhoneCall, 
+  Clock, 
+  Sparkles,
+  Layers,
+  MapPin,
+  CheckCircle2,
+  Car
+} from 'lucide-react';
+import { Stand, Driver, VehicleCategory } from '../types';
+import { LiveDriverLocation, LivePassengerLocation } from '../services/liveLocationService';
 import { toBengaliNumber } from '../utils/calculator';
 
 interface GafargaonMapProps {
+  // Static/Fallback drivers & stands
   drivers: Driver[];
   stands: Stand[];
-  selectedDriver: Driver | null;
-  onSelectDriver: (driver: Driver) => void;
-  pickupStandId: string;
-  destinationStandId: string;
+  
+  // Real-time server state
+  liveDrivers: LiveDriverLocation[];
+  livePassengers: LivePassengerLocation[];
+  connectionStatus: 'connected' | 'connecting' | 'disconnected';
+  latencyMs: number;
+  serverType: 'cloudflare' | 'local';
+  onOpenServerSettings: () => void;
+
+  // Real device GPS
+  userGps: {
+    lat: number | null;
+    lng: number | null;
+    accuracy: number | null;
+    speed: number | null;
+    heading: number | null;
+    isTracking: boolean;
+  };
+  onStartGpsTracking: () => void;
+  userRole: 'passenger' | 'driver';
+
+  // Selection & Route planning
+  selectedDriver?: any;
+  onSelectDriver: (driver: any) => void;
+  pickupCoords?: { lat: number; lng: number } | null;
+  destCoords?: { lat: number; lng: number } | null;
+  pickupTitle?: string;
+  destTitle?: string;
+  calculatedDistance?: number;
+  calculatedDurationMinutes?: number;
+
+  // Active mutual booking
+  activeBooking?: {
+    driverName: string;
+    driverPhone: string;
+    driverCategory: string;
+    currentDriverLat: number;
+    currentDriverLng: number;
+    passengerLat: number;
+    passengerLng: number;
+    distanceKm: number;
+    etaMinutes: number;
+  } | null;
+
+  onSelectPickupPlace?: (placeName: string) => void;
 }
 
 export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   drivers,
   stands,
+  liveDrivers,
+  livePassengers,
+  connectionStatus,
+  latencyMs,
+  serverType,
+  onOpenServerSettings,
+  userGps,
+  onStartGpsTracking,
+  userRole,
   selectedDriver,
   onSelectDriver,
-  pickupStandId,
-  destinationStandId
+  pickupCoords,
+  destCoords,
+  pickupTitle,
+  destTitle,
+  calculatedDistance,
+  calculatedDurationMinutes,
+  activeBooking,
+  onSelectPickupPlace
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
-  const routeLayerRef = useRef<L.LayerGroup | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const userAccuracyCircleRef = useRef<L.Circle | null>(null);
+  const userMarkerRef = useRef<L.Marker | null>(null);
+  const routePolylineRef = useRef<L.Polyline | null>(null);
 
-  // Gafargaon default center
-  const DEFAULT_CENTER: [number, number] = [24.4347, 90.5516];
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [filterMode, setFilterMode] = useState<'all' | 'drivers' | 'passengers'>('all');
+
+  // Gafargaon Center Coordinates
+  const DEFAULT_CENTER: [number, number] = [24.5535, 90.5518];
   const DEFAULT_ZOOM = 14;
 
-  // Initialize Map
+  // 1. Initialize Leaflet Map
   useEffect(() => {
-    if (!mapContainerRef.current || mapInstanceRef.current) return;
+    if (!mapContainerRef.current) return;
 
-    const map = L.map(mapContainerRef.current, {
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-      zoomControl: true,
-      scrollWheelZoom: true
-    });
+    if (!mapInstanceRef.current) {
+      if ((mapContainerRef.current as any)._leaflet_id != null) {
+        (mapContainerRef.current as any)._leaflet_id = null;
+      }
 
-    // OpenStreetMap tiles
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: 'Leaflet | © OpenStreetMap contributors | গফরগাঁও',
-      maxZoom: 18,
-      minZoom: 11
-    }).addTo(map);
+      const map = L.map(mapContainerRef.current, {
+        center: DEFAULT_CENTER,
+        zoom: DEFAULT_ZOOM,
+        zoomControl: true,
+        scrollWheelZoom: true,
+        touchZoom: true,
+        dragging: true
+      });
 
-    const markersGroup = L.layerGroup().addTo(map);
-    const routeGroup = L.layerGroup().addTo(map);
+      // Clear OpenStreetMap Standard Tiles
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap | সফর গফরগাঁও লাইভ',
+        maxZoom: 19,
+        minZoom: 11
+      }).addTo(map);
 
-    markersLayerRef.current = markersGroup;
-    routeLayerRef.current = routeGroup;
-    mapInstanceRef.current = map;
+      const markersGroup = L.layerGroup().addTo(map);
+      markersLayerRef.current = markersGroup;
+      mapInstanceRef.current = map;
+
+      // Invalidate map size after short delay to prevent any gray-tile artifacts
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 250);
+    }
 
     return () => {
-      map.remove();
-      mapInstanceRef.current = null;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
     };
   }, []);
 
-  // Update Markers
+  // Handle Resize on fullscreen toggle
+  useEffect(() => {
+    if (mapInstanceRef.current) {
+      setTimeout(() => {
+        mapInstanceRef.current?.invalidateSize();
+      }, 200);
+    }
+  }, [isFullscreen]);
+
+  // 2. Render Markers, Routes & Real-time Live Coordinates
   useEffect(() => {
     const map = mapInstanceRef.current;
     const markersGroup = markersLayerRef.current;
-    const routeGroup = routeLayerRef.current;
-    if (!map || !markersGroup || !routeGroup) return;
+    if (!map || !markersGroup) return;
 
     markersGroup.clearLayers();
-    routeGroup.clearLayers();
 
-    // Helper icon creator
-    const createCustomIcon = (
-      label: string,
-      colorBg: string,
-      borderColor: string,
-      textColor: string,
-      isSelected = false
-    ) => {
-      const size = isSelected ? 38 : 30;
-      return L.divIcon({
-        className: 'custom-leaflet-marker',
-        html: `
-          <div style="
-            width: ${size}px;
-            height: ${size}px;
-            background: ${colorBg};
-            border: 2.5px solid ${borderColor};
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: ${isSelected ? '16px' : '13px'};
-            color: ${textColor};
-            box-shadow: 0 4px 10px rgba(0,0,0,0.25);
-            font-weight: bold;
-          ">
-            ${label}
-          </div>
-        `,
-        iconSize: [size, size],
-        iconAnchor: [size / 2, size / 2],
-        popupAnchor: [0, -size / 2]
-      });
-    };
+    if (routePolylineRef.current) {
+      routePolylineRef.current.remove();
+      routePolylineRef.current = null;
+    }
+    if (userAccuracyCircleRef.current) {
+      userAccuracyCircleRef.current.remove();
+      userAccuracyCircleRef.current = null;
+    }
+    if (userMarkerRef.current) {
+      userMarkerRef.current.remove();
+      userMarkerRef.current = null;
+    }
 
-    // Category emoji / symbol
-    const getCategorySymbol = (cat: VehicleCategory) => {
+    // Helper: Category badge styling
+    const getCategoryDetails = (cat: string) => {
       switch (cat) {
-        case 'ambulance': return '🚑';
-        case 'fire_service': return '🚒';
-        case 'cng': return '🛺';
-        case 'auto': return '🛺';
-        case 'car': return '🚗';
-        case 'maxi': return '🚐';
-        case 'bike': return '🏍️';
-        default: return '📍';
+        case 'ambulance': return { symbol: '✚', color: '#dc2626', name: 'এম্বুলেন্স' };
+        case 'fire':
+        case 'fire_service': return { symbol: '🚒', color: '#ea580c', name: 'ফায়ার সার্ভিস' };
+        case 'cng': return { symbol: '🛺', color: '#059669', name: 'সিএনজি' };
+        case 'auto': return { symbol: '🔋', color: '#0d9488', name: 'অটো রিকশা' };
+        case 'car': return { symbol: '🚗', color: '#2563eb', name: 'কার' };
+        case 'microbus':
+        case 'maxi': return { symbol: '🚐', color: '#4f46e5', name: 'মাইক্রোবাস' };
+        case 'bike': return { symbol: '🏍️', color: '#d97706', name: 'মোটরসাইকেল' };
+        default: return { symbol: '🚖', color: '#059669', name: 'যানবাহন' };
       }
     };
 
-    // 1. Plot Drivers
-    drivers.forEach((driver) => {
-      const isSelected = selectedDriver?.id === driver.id;
-      const bg = driver.category === 'ambulance' ? '#ef4444' : (driver.category === 'fire_service' ? '#f97316' : '#10b981');
-      const border = isSelected ? '#facc15' : '#ffffff';
-      const icon = createCustomIcon(getCategorySymbol(driver.category), bg, border, '#ffffff', isSelected);
-
-      const marker = L.marker([driver.lat, driver.lng], { icon });
-
-      const popupContent = `
-        <div style="font-family: 'Hind Siliguri', sans-serif; min-width: 190px; padding: 2px;">
-          <div style="font-weight: 700; font-size: 13px; color: #1e293b; margin-bottom: 2px;">
-            ${driver.nameBn}
+    // A. Render Gafargaon Registered Stands
+    stands.forEach((stand) => {
+      const standIcon = L.divIcon({
+        className: 'custom-stand-marker',
+        html: `
+          <div style="background-color: #065f46; color: white; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.35); border: 2.5px solid #ffffff; cursor: pointer;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
           </div>
-          <div style="font-size: 11px; color: #047857; font-weight: 600; margin-bottom: 4px;">
-            ${driver.vehicleName}
-          </div>
-          <div style="font-size: 11px; color: #475569; margin-bottom: 6px;">
-            📍 ${driver.standName}
-          </div>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span style="font-size: 10px; background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: 600;">
-              ${driver.licensePlate}
-            </span>
-            <span style="font-size: 11px; color: #eab308; font-weight: 700;">
-              ★ ${toBengaliNumber(driver.rating)}
-            </span>
-          </div>
-          <a href="tel:${driver.phone.replace(/[^0-9]/g, '')}" 
-             style="display: block; text-align: center; background: #059669; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 11px; text-decoration: none;">
-            📞 সরাসরি কল করুন
-          </a>
-        </div>
-      `;
-
-      marker.bindPopup(popupContent);
-      marker.on('click', () => {
-        onSelectDriver(driver);
+        `,
+        iconSize: [34, 34],
+        iconAnchor: [17, 34],
+        popupAnchor: [0, -34]
       });
 
+      const marker = L.marker([stand.lat, stand.lng], { icon: standIcon });
+      const standBn = (stand as any).bengaliName || stand.nameBn;
+      const count = stand.driverCount || (stand as any).activeDrivers || 5;
+
+      marker.bindPopup(`
+        <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 170px;">
+          <h4 style="font-weight: 800; color: #065f46; margin: 0 0 4px 0; font-size: 13.5px;">${standBn}</h4>
+          <p style="font-size: 11px; color: #334155; margin: 0 0 5px 0;">সক্রিয় যানবাহন: <b>${toBengaliNumber(count)} জন</b></p>
+          <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${standBn}')" 
+                  style="width: 100%; background: #059669; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
+            🚖 এই স্ট্যান্ড পিকআপ করুন
+          </button>
+        </div>
+      `);
       markersGroup.addLayer(marker);
     });
 
-    // 2. Draw route line between pickup and destination if stands selected
-    const pickupStand = stands.find((s) => s.id === pickupStandId);
-    const destStand = stands.find((s) => s.id === destinationStandId);
+    // B. Combine Server Live Drivers with Seed Drivers for maximum coverage
+    const displayedDriversMap = new Map<string, {
+      id: string;
+      name: string;
+      phone: string;
+      category: string;
+      vehicleModel: string;
+      plateNumber: string;
+      standName: string;
+      lat: number;
+      lng: number;
+      speed: number;
+      rating: number;
+      isLiveEdge: boolean;
+    }>();
 
-    if (pickupStand && destStand && pickupStand.id !== destStand.id) {
-      const latlngs: [number, number][] = [
-        [pickupStand.lat, pickupStand.lng],
-        [destStand.lat, destStand.lng]
+    // First populate fallback seed drivers
+    drivers.forEach((d) => {
+      displayedDriversMap.set(d.id, {
+        id: d.id,
+        name: d.nameBn || (d as any).name || 'চালক',
+        phone: d.phone,
+        category: d.category,
+        vehicleModel: d.vehicleName || (d as any).vehicleModel || 'গাড়ি',
+        plateNumber: d.licensePlate || (d as any).plateNumber || 'নথিভুক্ত',
+        standName: d.standName || 'গফরগাঁও স্ট্যান্ড',
+        lat: d.lat,
+        lng: d.lng,
+        speed: (d as any).approxSpeedKmh || 25,
+        rating: d.rating || 4.8,
+        isLiveEdge: false
+      });
+    });
+
+    // Then overwrite or add real-time Cloudflare/Server live drivers
+    liveDrivers.forEach((ld) => {
+      displayedDriversMap.set(ld.id, {
+        id: ld.id,
+        name: ld.name,
+        phone: ld.phone,
+        category: ld.category,
+        vehicleModel: ld.vehicleModel,
+        plateNumber: ld.plateNumber,
+        standName: ld.standName,
+        lat: ld.lat,
+        lng: ld.lng,
+        speed: ld.speed || 0,
+        rating: ld.rating || 4.9,
+        isLiveEdge: true
+      });
+    });
+
+    // Plot Drivers if filter permits
+    if (filterMode === 'all' || filterMode === 'drivers') {
+      displayedDriversMap.forEach((driver) => {
+        const catInfo = getCategoryDetails(driver.category);
+        const isSelected = selectedDriver?.id === driver.id;
+
+        const driverIcon = L.divIcon({
+          className: 'custom-driver-marker',
+          html: `
+            <div style="position: relative; cursor: pointer;">
+              ${driver.isLiveEdge ? `
+                <div style="position: absolute; width: 44px; height: 44px; border-radius: 50%; background: ${catInfo.color}45; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; top: -4px; left: -4px;"></div>
+              ` : ''}
+              <div style="
+                background-color: ${catInfo.color};
+                color: #ffffff;
+                width: ${isSelected ? '40px' : '36px'};
+                height: ${isSelected ? '40px' : '36px'};
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.38);
+                border: 2.5px solid ${isSelected ? '#facc15' : '#ffffff'};
+                font-size: ${driver.category === 'ambulance' ? '18px' : '15px'};
+                font-weight: bold;
+                transition: transform 0.15s ease;
+              ">
+                ${catInfo.symbol}
+              </div>
+            </div>
+          `,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+          popupAnchor: [0, -20]
+        });
+
+        const marker = L.marker([driver.lat, driver.lng], { icon: driverIcon });
+
+        marker.bindPopup(`
+          <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 195px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px;">
+              <span style="font-size: 10px; background: #ecfdf5; color: #047857; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">
+                ${driver.isLiveEdge ? '⚡ ক্লাউডফ্লেয়ার লাইভ' : '📍 সফর ভেরিফাইড'}
+              </span>
+              <span style="font-size: 11px; color: #d97706; font-weight: 800;">★ ${toBengaliNumber(driver.rating)}</span>
+            </div>
+            <h4 style="font-weight: 800; color: #0f172a; margin: 2px 0 2px 0; font-size: 13px;">${driver.name}</h4>
+            <div style="font-size: 11px; color: #0284c7; font-weight: 700; margin-bottom: 2px;">${driver.vehicleModel}</div>
+            <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">স্ট্যান্ড: ${driver.standName} • গতি: ${toBengaliNumber(driver.speed)} কিমি/ঘণ্টা</div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <a href="tel:${driver.phone.replace(/[^0-9]/g, '')}" 
+                 style="display: block; text-align: center; background: #059669; color: white; padding: 5px 8px; border-radius: 6px; font-weight: 700; font-size: 11px; text-decoration: none;">
+                📞 সরাসরি কল করুন (${driver.phone})
+              </a>
+              <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${driver.standName}')"
+                      style="display: block; width: 100%; text-align: center; background-color: #f1f5f9; color: #0f172a; padding: 4px 8px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 10.5px; font-weight: 700; cursor: pointer;">
+                🚖 এই স্ট্যান্ড পিকআপ করুন
+              </button>
+            </div>
+          </div>
+        `);
+
+        marker.on('click', () => {
+          const matched = drivers.find(d => d.id === driver.id);
+          if (matched) onSelectDriver(matched);
+        });
+
+        markersGroup.addLayer(marker);
+      });
+    }
+
+    // C. Plot Live Passengers (from Cloudflare / Server)
+    if (filterMode === 'all' || filterMode === 'passengers') {
+      livePassengers.forEach((passenger) => {
+        const passIcon = L.divIcon({
+          className: 'custom-live-passenger-marker',
+          html: `
+            <div style="position: relative;">
+              <div style="position: absolute; width: 38px; height: 38px; border-radius: 50%; background: rgba(37, 99, 235, 0.4); animation: ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite; top: -5px; left: -5px;"></div>
+              <div style="background-color: #2563eb; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.35); border: 2.5px solid #ffffff; font-weight: bold; font-size: 12px;">
+                👤
+              </div>
+            </div>
+          `,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
+          popupAnchor: [0, -14]
+        });
+
+        const pMarker = L.marker([passenger.lat, passenger.lng], { icon: passIcon });
+        pMarker.bindPopup(`
+          <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 175px;">
+            <span style="font-size: 10px; background: #dbeafe; color: #1e40af; font-weight: 700; padding: 1px 6px; border-radius: 4px;">
+              লাইভ যাত্রী (অনলাইন)
+            </span>
+            <h4 style="font-weight: 800; color: #1e3a8a; margin: 4px 0 2px 0; font-size: 13px;">${passenger.name}</h4>
+            <p style="font-size: 11px; color: #475569; margin: 0 0 2px 0;">পিকআপ: <b>${passenger.pickupPoint}</b></p>
+            ${passenger.destination ? `<p style="font-size: 11px; color: #dc2626; margin: 0 0 4px 0;">গন্তব্য: <b>${passenger.destination}</b></p>` : ''}
+            <span style="font-size: 10px; color: #059669; font-weight: 700;">🟢 রাইডের অপেক্ষায় আছেন</span>
+          </div>
+        `);
+        markersGroup.addLayer(pMarker);
+      });
+    }
+
+    // D. Current User's Real Device GPS Beacon & Accuracy Circle
+    if (userGps.lat && userGps.lng) {
+      // Accuracy circle
+      const accCircle = L.circle([userGps.lat, userGps.lng], {
+        radius: Math.max(15, userGps.accuracy || 20),
+        color: '#0284c7',
+        fillColor: '#38bdf8',
+        fillOpacity: 0.15,
+        weight: 1.5
+      }).addTo(map);
+      userAccuracyCircleRef.current = accCircle;
+
+      // Pulse pin
+      const myBeaconIcon = L.divIcon({
+        className: 'custom-my-gps-marker',
+        html: `
+          <div style="position: relative;">
+            <div style="position: absolute; width: 44px; height: 44px; border-radius: 50%; background: rgba(14, 165, 233, 0.45); animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite; top: -6px; left: -6px;"></div>
+            <div style="background-color: #0284c7; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(2, 132, 199, 0.6); border: 3px solid #ffffff; font-weight: 900; font-size: 14px;">
+              ${userRole === 'driver' ? '🚗' : '🎯'}
+            </div>
+          </div>
+        `,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        popupAnchor: [0, -16]
+      });
+
+      const myMarker = L.marker([userGps.lat, userGps.lng], { icon: myBeaconIcon });
+      myMarker.bindPopup(`
+        <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px;">
+          <span style="font-size: 10px; background: #e0f2fe; color: #0369a1; font-weight: 800; padding: 2px 6px; border-radius: 4px;">
+            আমার বর্তমান ডিভাইস অবস্থান
+          </span>
+          <h4 style="font-weight: 800; color: #0284c7; margin: 4px 0 2px 0; font-size: 13px;">আপনি এখানে আছেন</h4>
+          <p style="font-size: 11px; color: #475569; margin: 0;">সঠিকতা: প্রায় ${Math.round(userGps.accuracy || 15)} মিটার</p>
+        </div>
+      `);
+      markersGroup.addLayer(myMarker);
+      userMarkerRef.current = myMarker;
+    }
+
+    // E. Mutual Live Booking Tracking Line
+    if (activeBooking) {
+      const routePoints: [number, number][] = [
+        [activeBooking.currentDriverLat, activeBooking.currentDriverLng],
+        [
+          (activeBooking.currentDriverLat + activeBooking.passengerLat) / 2 + 0.0006,
+          (activeBooking.currentDriverLng + activeBooking.passengerLng) / 2 - 0.0005
+        ],
+        [activeBooking.passengerLat, activeBooking.passengerLng]
       ];
 
-      // Route dashed line
-      const polyline = L.polyline(latlngs, {
-        color: '#059669',
-        weight: 4,
+      const polyline = L.polyline(routePoints, {
+        color: '#2563eb',
+        weight: 5,
+        opacity: 0.9,
         dashArray: '8, 8',
-        opacity: 0.85
-      });
-      routeGroup.addLayer(polyline);
+        lineCap: 'round'
+      }).addTo(map);
 
-      // Pickup pin
+      polyline.bindTooltip(`দূরত্ব: ${toBengaliNumber(activeBooking.distanceKm)} কিমি • পৌঁছাতে বাকি: ${toBengaliNumber(activeBooking.etaMinutes)} মিনিট`, {
+        permanent: true,
+        direction: 'center',
+        className: 'route-distance-tooltip'
+      });
+
+      routePolylineRef.current = polyline;
+
+      const bounds = L.latLngBounds([
+        [activeBooking.currentDriverLat, activeBooking.currentDriverLng],
+        [activeBooking.passengerLat, activeBooking.passengerLng]
+      ]);
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+    // F. Route Planning Preview (A to B)
+    else if (pickupCoords && destCoords && (pickupCoords.lat !== destCoords.lat || pickupCoords.lng !== destCoords.lng)) {
+      // Pickup Pin (A)
       const pickupIcon = L.divIcon({
-        className: 'custom-leaflet-marker',
+        className: 'custom-pickup-marker',
         html: `
-          <div style="background: #10b981; border: 2.5px solid #ffffff; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); color: white; font-size: 11px; font-weight: bold;">
-            A
+          <div style="position: relative;">
+            <div style="position: absolute; width: 42px; height: 42px; border-radius: 50%; background: rgba(5, 150, 105, 0.4); animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; top: -5px; left: -5px;"></div>
+            <div style="background-color: #059669; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.4); border: 2.5px solid #ffffff; font-weight: 900; font-size: 14px;">
+              A
+            </div>
           </div>
         `,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14]
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        popupAnchor: [0, -16]
       });
-      const pickupMarker = L.marker([pickupStand.lat, pickupStand.lng], { icon: pickupIcon })
-        .bindTooltip(`পিকআপ: ${pickupStand.nameBn}`);
-      routeGroup.addLayer(pickupMarker);
 
-      // Dest pin
+      const pMarker = L.marker([pickupCoords.lat, pickupCoords.lng], { icon: pickupIcon })
+        .bindTooltip(`পিকআপ (A): ${pickupTitle || 'যাত্রা শুরুর স্থান'}`);
+      markersGroup.addLayer(pMarker);
+
+      // Destination Pin (B)
       const destIcon = L.divIcon({
-        className: 'custom-leaflet-marker',
+        className: 'custom-dest-marker',
         html: `
-          <div style="background: #ef4444; border: 2.5px solid #ffffff; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); color: white; font-size: 11px; font-weight: bold;">
-            B
+          <div style="position: relative;">
+            <div style="position: absolute; width: 42px; height: 42px; border-radius: 50%; background: rgba(220, 38, 38, 0.4); animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; top: -5px; left: -5px;"></div>
+            <div style="background-color: #dc2626; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.4); border: 2.5px solid #ffffff; font-weight: 900; font-size: 14px;">
+              B
+            </div>
           </div>
         `,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14]
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        popupAnchor: [0, -16]
       });
-      const destMarker = L.marker([destStand.lat, destStand.lng], { icon: destIcon })
-        .bindTooltip(`গন্তব্য: ${destStand.nameBn}`);
-      routeGroup.addLayer(destMarker);
-    }
 
-    // Pan to selected driver if set
-    if (selectedDriver) {
-      map.setView([selectedDriver.lat, selectedDriver.lng], 15, { animate: true });
-    }
-  }, [drivers, stands, selectedDriver, pickupStandId, destinationStandId, onSelectDriver]);
+      const dMarker = L.marker([destCoords.lat, destCoords.lng], { icon: destIcon })
+        .bindTooltip(`গন্তব্য (B): ${destTitle || 'পৌঁছানোর স্থান'}`);
+      markersGroup.addLayer(dMarker);
 
-  // Zoom preset helper
+      // Curved road connecting route
+      const midLat = (pickupCoords.lat + destCoords.lat) / 2 + 0.0004;
+      const midLng = (pickupCoords.lng + destCoords.lng) / 2 - 0.0004;
+      const routePoints: [number, number][] = [
+        [pickupCoords.lat, pickupCoords.lng],
+        [midLat, midLng],
+        [destCoords.lat, destCoords.lng]
+      ];
+
+      const polyline = L.polyline(routePoints, {
+        color: '#059669',
+        weight: 5,
+        opacity: 0.9,
+        dashArray: '8, 8',
+        lineCap: 'round'
+      }).addTo(map);
+
+      if (calculatedDistance != null && calculatedDurationMinutes != null) {
+        polyline.bindTooltip(`দূরত্ব: ${toBengaliNumber(calculatedDistance)} কিমি • সময়: ${toBengaliNumber(calculatedDurationMinutes)} মিনিট`, {
+          permanent: true,
+          direction: 'center',
+          className: 'route-distance-tooltip'
+        });
+      }
+
+      routePolylineRef.current = polyline;
+
+      const bounds = L.latLngBounds([
+        [pickupCoords.lat, pickupCoords.lng],
+        [destCoords.lat, destCoords.lng]
+      ]);
+      map.fitBounds(bounds, { padding: [55, 55], maxZoom: 16 });
+    }
+  }, [
+    drivers,
+    stands,
+    liveDrivers,
+    livePassengers,
+    userGps,
+    filterMode,
+    selectedDriver,
+    pickupCoords,
+    destCoords,
+    pickupTitle,
+    destTitle,
+    calculatedDistance,
+    calculatedDurationMinutes,
+    activeBooking,
+    onSelectDriver,
+    userRole
+  ]);
+
+  // Expose global window pickup selector for popups
+  useEffect(() => {
+    (window as any).__selectPickupPlace = (placeName: string) => {
+      if (onSelectPickupPlace) {
+        onSelectPickupPlace(placeName);
+      }
+    };
+    return () => {
+      delete (window as any).__selectPickupPlace;
+    };
+  }, [onSelectPickupPlace]);
+
+  // Center on user device GPS
+  const handleLocateMe = () => {
+    if (userGps.lat && userGps.lng && mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo([userGps.lat, userGps.lng], 16, { duration: 1.2 });
+    } else {
+      onStartGpsTracking();
+    }
+  };
+
+  const handleResetCenter = () => {
+    mapInstanceRef.current?.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { duration: 1 });
+  };
+
   const handleFlyTo = (lat: number, lng: number, zoom = 15) => {
     mapInstanceRef.current?.flyTo([lat, lng], zoom, { duration: 1.2 });
   };
 
-  const handleResetMap = () => {
-    mapInstanceRef.current?.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { duration: 1 });
-  };
-
   return (
-    <div className={`bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex flex-col transition-all ${
-      isFullscreen ? 'fixed inset-4 z-50 shadow-2xl' : 'relative h-[430px]'
-    }`}>
-      {/* Map header */}
-      <div className="bg-slate-50/90 px-3.5 py-2 border-b border-slate-200 flex items-center justify-between z-10">
-        <div className="flex items-center gap-2">
-          <Navigation className="w-4 h-4 text-emerald-700" />
-          <h3 className="text-xs sm:text-sm font-bold text-slate-800">
-            গফরগাঁও লাইভ ম্যাপ
-          </h3>
-          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded-full">
-            {toBengaliNumber(drivers.length)} চালক দৃশ্যমান
-          </span>
+    <div
+      className={`bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col transition-all ${
+        isFullscreen ? 'fixed inset-3 z-[9999] shadow-2xl' : 'relative w-full'
+      }`}
+    >
+      {/* Top Header Bar */}
+      <div className="bg-slate-50/95 px-3 py-2 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 z-10">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-emerald-900 font-extrabold text-xs sm:text-sm">
+            <Navigation className="w-4 h-4 text-emerald-600" />
+            <span>গফরগাঁও লাইভ ম্যাপ</span>
+          </div>
+
+          {/* Cloudflare Server Status Badge with Click to Config */}
+          <button
+            type="button"
+            onClick={onOpenServerSettings}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors cursor-pointer ${
+              connectionStatus === 'connected'
+                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
+                : connectionStatus === 'connecting'
+                ? 'bg-amber-100 text-amber-800 border-amber-300'
+                : 'bg-red-100 text-red-800 border-red-300'
+            }`}
+            title="ক্লাউডফ্লেয়ার লাইভ সার্ভার সেটিংস"
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                connectionStatus === 'connected'
+                  ? 'bg-emerald-600 animate-ping'
+                  : connectionStatus === 'connecting'
+                  ? 'bg-amber-500 animate-ping'
+                  : 'bg-red-500'
+              }`}
+            />
+            <Cloud className="w-3 h-3" />
+            <span>
+              {serverType === 'cloudflare' ? 'ক্লাউডফ্লেয়ার এজ' : 'লাইভ সার্ভার'} • {latencyMs}ms
+            </span>
+          </button>
+
+          {/* Filter Pills */}
+          <div className="flex items-center bg-slate-200/80 p-0.5 rounded-lg text-[10px] font-bold">
+            <button
+              type="button"
+              onClick={() => setFilterMode('all')}
+              className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                filterMode === 'all' ? 'bg-white text-slate-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              সবাই ({toBengaliNumber(drivers.length + livePassengers.length)})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode('drivers')}
+              className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                filterMode === 'drivers' ? 'bg-white text-emerald-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              চালক ({toBengaliNumber(drivers.length)})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode('passengers')}
+              className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                filterMode === 'passengers' ? 'bg-white text-blue-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              যাত্রী ({toBengaliNumber(livePassengers.length)})
+            </button>
+          </div>
         </div>
 
+        {/* Action Buttons: Locate Me, Reset, Fullscreen */}
         <div className="flex items-center gap-1.5">
           <button
-            onClick={handleResetMap}
-            title="ম্যাপ রিসেট করুন"
-            className="p-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-medium flex items-center gap-1 transition"
+            type="button"
+            onClick={handleLocateMe}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
+              userGps.isTracking
+                ? 'bg-sky-600 text-white border-sky-700 shadow-xs'
+                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+            }`}
+            title="আমার লাইভ অবস্থান দেখুন"
+          >
+            <LocateFixed className={`w-3.5 h-3.5 ${userGps.isTracking ? 'animate-spin' : ''}`} />
+            <span>{userGps.isTracking ? 'আমার অবস্থান' : '+ GPS ট্র্যাকিং'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleResetCenter}
+            className="p-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
+            title="গফরগাঁও কেন্দ্রে ম্যাপ রিসেট করুন"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span className="hidden sm:inline text-[11px]">রিসেট</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setIsFullscreen(!isFullscreen)}
+            className="p-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
             title={isFullscreen ? 'ম্যাপ স্বাভাবিক করুন' : 'ম্যাপ বড় করুন'}
-            className="p-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-medium flex items-center gap-1 transition"
           >
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline text-[11px]">{isFullscreen ? 'ছোট করুন' : 'ফুল ভিউ'}</span>
@@ -266,55 +696,83 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
         </div>
       </div>
 
-      {/* Map Container */}
-      <div
-        ref={mapContainerRef}
-        className="w-full flex-1 z-0 relative min-h-[320px]"
-        id="leaflet-gafargaon-map"
-      />
+      {/* Main Map Canvas Area */}
+      <div className="relative w-full h-[360px] sm:h-[420px] lg:h-[480px] bg-slate-100">
+        <div ref={mapContainerRef} className="w-full h-full z-0" />
 
-      {/* Map Footer Preset buttons */}
-      <div className="bg-white/95 border-t border-slate-200 px-3 py-1.5 flex items-center justify-between text-xs flex-wrap gap-1.5 z-10">
-        <div className="text-[11px] text-slate-600 font-medium hidden sm:block">
-          যেকোনো আইকনে ট্যাপ করে চালক ও স্ট্যান্ডের বিস্তারিত তথ্য দেখুন
+        {/* Floating live legend at bottom-right */}
+        <div className="absolute bottom-2 right-2 z-[400] bg-white/95 backdrop-blur-xs rounded-xl p-2 shadow-md border border-slate-200 text-[10px] font-semibold space-y-1 hidden xs:block">
+          <div className="flex items-center gap-1.5 text-slate-700">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-700 inline-block border border-white"></span>
+            <span>স্ট্যান্ড পয়েন্ট</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-slate-700">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block border border-white animate-pulse"></span>
+            <span>লাইভ চালক (চলমান)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-blue-700">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block border border-white animate-pulse"></span>
+            <span>লাইভ যাত্রী</span>
+          </div>
+          {userGps.lat && (
+            <div className="flex items-center gap-1.5 text-sky-700 font-bold">
+              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block border border-white animate-ping"></span>
+              <span>আমার অবস্থান</span>
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-1 overflow-x-auto text-[11px]">
-          <span className="text-slate-500 font-semibold text-[10px]">দ্রুত ভিউ:</span>
+      </div>
+
+      {/* Bottom Quick Hub Presets */}
+      <div className="bg-white/95 border-t border-slate-200 px-3 py-1.5 flex items-center justify-between text-xs flex-wrap gap-1.5 z-10">
+        <div className="flex items-center gap-1 overflow-x-auto text-[11px] w-full sm:w-auto">
+          <span className="text-slate-500 font-bold text-[10px] shrink-0">দ্রুত ভিউ:</span>
           <button
             type="button"
-            onClick={() => handleFlyTo(24.4347, 90.5516, 16)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-medium transition"
+            onClick={() => handleFlyTo(24.5535, 90.5518, 15)}
+            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer"
           >
             গফরগাঁও
           </button>
           <button
             type="button"
-            onClick={() => handleFlyTo(24.4370, 90.5480, 16)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-medium transition"
+            onClick={() => handleFlyTo(24.5562, 90.5539, 16)}
+            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer"
           >
             পৌরসভা
           </button>
           <button
             type="button"
-            onClick={() => handleFlyTo(24.4420, 90.5620, 16)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-medium transition"
+            onClick={() => handleFlyTo(24.5518, 90.5512, 16)}
+            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer"
           >
-            শিবগঞ্জ
+            রেলওয়ে স্টেশন
           </button>
           <button
             type="button"
-            onClick={() => handleFlyTo(24.3670, 90.5280, 15)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-medium transition"
+            onClick={() => handleFlyTo(24.5585, 90.5482, 16)}
+            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer"
+          >
+            হাসপাতাল
+          </button>
+          <button
+            type="button"
+            onClick={() => handleFlyTo(24.4530, 90.5050, 15)}
+            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer"
           >
             পাগলা
           </button>
           <button
             type="button"
-            onClick={() => handleFlyTo(24.4285, 90.5560, 16)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-medium transition"
+            onClick={() => handleFlyTo(24.5630, 90.5620, 16)}
+            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer"
           >
-            হাসপাতাল
+            শিবগঞ্জ
           </button>
+        </div>
+
+        <div className="text-[10px] text-slate-500 font-medium hidden md:block">
+          ম্যাপের যেকোনো যানবাহনে ট্যাপ করে সরাসরি কল করুন
         </div>
       </div>
     </div>

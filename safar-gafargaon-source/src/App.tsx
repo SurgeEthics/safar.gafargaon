@@ -63,6 +63,14 @@ import { PassengerRideCockpit } from './components/PassengerRideCockpit';
 import { DriverIncomingAlert } from './components/DriverIncomingAlert';
 import { AdminControlPanel, AppCustomSettings } from './components/AdminControlPanel';
 import { AutoMarqueeText } from './components/AutoMarqueeText';
+import { collection, doc, setDoc, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from './lib/firebase';
+
+import { LocationAutocomplete } from './components/LocationAutocomplete';
+import { GAFARGAON_PLACES, resolveLocationCoordinates } from './data/gafargaonPlaces';
+import { GafargaonMap } from './components/GafargaonMap';
+import { CloudflareSettingsModal } from './components/CloudflareSettingsModal';
+import { useLiveTracking } from './hooks/useLiveTracking';
 
 export type VehicleCategory = string;
 export type AppUserRole = 'passenger' | 'driver';
@@ -1093,6 +1101,67 @@ export default function App() {
     } catch {}
   }, [drivers]);
 
+  // Real-time Firestore Sync for Drivers
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'drivers'), (snapshot) => {
+      if (!snapshot.empty) {
+        const firestoreDrivers: Driver[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          firestoreDrivers.push({
+            id: docSnap.id,
+            name: data.name || data.nameBn || 'চালক',
+            phone: data.phone || '',
+            category: data.category || 'cng',
+            categoryBengali: data.categoryBengali || 'যানবাহন',
+            vehicleModel: data.vehicleModel || 'বাহন',
+            plateNumber: data.plateNumber || data.licensePlate || '',
+            licenseNumber: data.licenseNumber || '',
+            firstIssueDate: data.firstIssueDate || '15/04/2021',
+            licenseType: data.licenseType || 'পেশাদার (Professional)',
+            regLastFour: data.regLastFour || '5206',
+            manufacturingYear: data.manufacturingYear || '2021',
+            chassisNumber: data.chassisNumber || '',
+            engineNumber: data.engineNumber || '',
+            taxTokenReceiptPhoto: data.taxTokenReceiptPhoto || '',
+            driverPhoto: data.driverPhoto || data.photoUrl || '',
+            nidFrontPhoto: data.nidFrontPhoto || '',
+            nidBackPhoto: data.nidBackPhoto || '',
+            nidNumber: data.nidNumber || '',
+            nidVerified: data.nidVerified ?? false,
+            licenseVerified: data.licenseVerified ?? false,
+            phoneVerified: data.phoneVerified ?? false,
+            verificationStatus: data.verificationStatus || (data.isVerified ? 'verified' : 'pending'),
+            regAppId: data.regAppId || `SAFAR-REG-${docSnap.id.slice(-4)}`,
+            registeredAt: data.registeredAt || 'অনলাইন',
+            standName: data.standName || 'গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড',
+            lat: typeof data.lat === 'number' ? data.lat : 24.5518,
+            lng: typeof data.lng === 'number' ? data.lng : 90.5512,
+            rating: typeof data.rating === 'number' ? data.rating : 5.0,
+            totalTrips: typeof data.totalTrips === 'number' ? data.totalTrips : 0,
+            avatarBg: data.avatarBg || 'bg-emerald-700',
+            isOnline: data.isOnline ?? true,
+            approxSpeedKmh: data.approxSpeedKmh || 30
+          });
+        });
+
+        setDrivers(prev => {
+          const merged = [...firestoreDrivers];
+          for (const initD of INITIAL_DRIVERS) {
+            if (!merged.some(m => m.id === initD.id || m.phone === initD.phone)) {
+              merged.push(initD);
+            }
+          }
+          return merged;
+        });
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'drivers');
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   // Dynamic Stand Driver Count Calculation (Matches total count and categories seamlessly)
   const getStandDriverCount = (standBengaliName: string): number => {
     const cleanStand = standBengaliName.replace(' স্ট্যান্ড', '').trim().toLowerCase();
@@ -1607,35 +1676,31 @@ export default function App() {
   }, [passengerRequests]);
 
   // Helper to extract or resolve coordinates for any stand or custom name in Gafargaon
-  const getCoordinatesForLocation = (locName: string): { lat: number; lng: number } => {
-    if (!locName) return { lat: 24.5535, lng: 90.5518 };
-    const stand = stands.find(s => 
-      s.bengaliName.toLowerCase() === locName.toLowerCase() || 
-      locName.includes(s.bengaliName.replace(' স্ট্যান্ড', '')) || 
-      s.bengaliName.includes(locName)
-    );
-    if (stand) return { lat: stand.lat, lng: stand.lng };
-    if (locName.includes('পাগলা')) return { lat: 24.4682, lng: 90.5284 };
-    if (locName.includes('হাসপাতাল')) return { lat: 24.5580, lng: 90.5510 };
-    if (locName.includes('রেলওয়ে') || locName.includes('স্টেশন')) return { lat: 24.5518, lng: 90.5512 };
-    if (locName.includes('পৌরসভা')) return { lat: 24.5562, lng: 90.5539 };
-    if (locName.includes('শিবগঞ্জ')) return { lat: 24.5630, lng: 90.5620 };
-    if (locName.includes('রওনা')) return { lat: 24.5300, lng: 90.5400 };
-    if (locName.includes('বালিপাড়া')) return { lat: 24.5590, lng: 90.5590 };
-    if (locName.includes('দত্তপাড়া')) return { lat: 24.5440, lng: 90.5480 };
-    if (locName.includes('কান্দার')) return { lat: 24.5710, lng: 90.5420 };
-    return { lat: 24.5535, lng: 90.5518 };
+  const getCoordinatesForLocation = (locName: string, isDest = false): { lat: number; lng: number } => {
+    if (!locName) return isDest ? { lat: 24.5585, lng: 90.5482 } : { lat: 24.5518, lng: 90.5512 };
+    return resolveLocationCoordinates(locName, isDest);
   };
 
   // Passenger Ride Booking Hub State (Dynamic Pickup, Destination & Fare Calculation)
   const [passengerPickup, setPassengerPickup] = useState<string>('গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড');
   const [passengerDestination, setPassengerDestination] = useState<string>('উপজেলা স্বাস্থ্য কমপ্লেক্স (হাসপাতাল) স্ট্যান্ড');
-  const [isCustomPickup, setIsCustomPickup] = useState<boolean>(false);
-  const [isCustomDestination, setIsCustomDestination] = useState<boolean>(false);
-  const [passengerCustomPickup, setPassengerCustomPickup] = useState<string>('');
-  const [passengerCustomDestination, setPassengerCustomDestination] = useState<string>('');
+  const [pickupCoords, setPickupCoords] = useState<{ lat: number; lng: number }>({ lat: 24.5518, lng: 90.5512 });
+  const [destCoords, setDestCoords] = useState<{ lat: number; lng: number }>({ lat: 24.5585, lng: 90.5482 });
   const [passengerSelectedVehicle, setPassengerSelectedVehicle] = useState<VehicleCategory>('cng');
   const [isRidePlannerCollapsed, setIsRidePlannerCollapsed] = useState<boolean>(false);
+
+  // Sync coordinates when locations change
+  useEffect(() => {
+    if (passengerPickup.includes('GPS') && passengerLocation.lat) {
+      setPickupCoords({ lat: passengerLocation.lat, lng: passengerLocation.lng });
+    } else {
+      setPickupCoords(getCoordinatesForLocation(passengerPickup, false));
+    }
+  }, [passengerPickup, passengerLocation]);
+
+  useEffect(() => {
+    setDestCoords(getCoordinatesForLocation(passengerDestination, true));
+  }, [passengerDestination]);
 
   // Active Pending Request submitted by this passenger
   const [passengerPendingRequest, setPassengerPendingRequest] = useState<PassengerRideRequest | null>(() => {
@@ -1656,16 +1721,50 @@ export default function App() {
     } catch (e) {}
   }, [passengerPendingRequest]);
 
-  // Dynamic Fare Calculator using live Admin Categories & Custom Settings
+  // Vehicle-specific realistic speed in km/h
+  const getVehicleSpeedKmh = (catId: string): number => {
+    switch (catId) {
+      case 'ambulance': return 35;
+      case 'fire': return 35;
+      case 'bike': return 32;
+      case 'car': return 28;
+      case 'cng': return 24;
+      case 'microbus': return 22;
+      case 'auto': return 18;
+      default: return 20;
+    }
+  };
+
+  // Dynamic Distance & Duration calculation with realistic road curvature factor (1.35x)
+  const currentPickupCoords = pickupCoords;
+  const currentDestCoords = destCoords;
+
+  const directDistance = calculateDistanceKm(pickupCoords.lat, pickupCoords.lng, destCoords.lat, destCoords.lng);
+  const calculatedDistance = (pickupCoords.lat === destCoords.lat && pickupCoords.lng === destCoords.lng)
+    ? 0.5
+    : Number(Math.max(0.6, directDistance * 1.35).toFixed(1));
+
+  const currentVehicleSpeed = getVehicleSpeedKmh(passengerSelectedVehicle);
+  const calculatedDurationMinutes = Math.max(
+    3,
+    Math.round((calculatedDistance / currentVehicleSpeed) * 60 + 2)
+  );
+
+  // Dynamic Fair Fare Calculator: Base fare covers first 1.5 km!
   const calculateFareForCategory = (catId: string, distKm: number): number => {
     const cat = categories.find(c => c.id === catId);
     if (cat?.isFree) return 0;
-    const d = Math.max(0.5, distKm);
     const base = cat?.baseFare ?? 20;
     const perKm = cat?.perKmFare ?? 12;
     const min = cat?.minFare ?? (appCustomSettings.baseFareMinimum || 20);
     const multiplier = appCustomSettings.perKmMultiplier || 1.0;
-    let fare = Math.round((base + d * perKm) * multiplier);
+
+    let fare = base;
+    if (distKm > 1.5) {
+      const extraKm = distKm - 1.5;
+      fare = base + Math.round(extraKm * perKm);
+    }
+    fare = Math.round(fare * multiplier);
     if (fare < min) fare = min;
     if (appCustomSettings.roundFareToNearest5 && fare > 0) {
       fare = Math.ceil(fare / 5) * 5;
@@ -1673,57 +1772,27 @@ export default function App() {
     return fare;
   };
 
-  // Current Pickup & Destination Coordinates
-  const currentPickupCoords = isCustomPickup
-    ? getCoordinatesForLocation(passengerCustomPickup)
-    : (passengerPickup === 'current_gps' ? passengerLocation : getCoordinatesForLocation(passengerPickup));
-
-  const currentDestCoords = isCustomDestination
-    ? getCoordinatesForLocation(passengerCustomDestination)
-    : getCoordinatesForLocation(passengerDestination);
-
-  // Dynamic Distance & Duration calculation
-  const calculatedDistance = Math.max(
-    0.8,
-    Number(calculateDistanceKm(currentPickupCoords.lat, currentPickupCoords.lng, currentDestCoords.lat, currentDestCoords.lng).toFixed(1))
-  );
-
   const calculatedFare = calculateFareForCategory(passengerSelectedVehicle, calculatedDistance);
-  const calculatedDurationMinutes = Math.max(3, Math.round(calculatedDistance * 3.2));
 
   // Swap pickup & destination
   const handleSwapLocations = () => {
-    const prevPickup = isCustomPickup ? passengerCustomPickup : passengerPickup;
-    const prevIsCustomPickup = isCustomPickup;
-    const prevDest = isCustomDestination ? passengerCustomDestination : passengerDestination;
-    const prevIsCustomDest = isCustomDestination;
+    const prevPickup = passengerPickup;
+    const prevPickupCoords = pickupCoords;
+    const prevDest = passengerDestination;
+    const prevDestCoords = destCoords;
 
-    setIsCustomPickup(prevIsCustomDest);
-    if (prevIsCustomDest) {
-      setPassengerCustomPickup(prevDest);
-    } else {
-      setPassengerPickup(prevDest);
-    }
-
-    setIsCustomDestination(prevIsCustomPickup);
-    if (prevIsCustomPickup) {
-      setPassengerCustomDestination(prevPickup);
-    } else {
-      setPassengerDestination(prevPickup === 'current_gps' ? (stands[0]?.bengaliName || 'গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড') : prevPickup);
-    }
+    setPassengerPickup(prevDest);
+    setPickupCoords(prevDestCoords);
+    setPassengerDestination(prevPickup);
+    setDestCoords(prevPickupCoords);
 
     showAdminToastMessage('পিকআপ ও গন্তব্য অদল-বদল করা হয়েছে');
   };
 
   // Submit Passenger Ride Request (with real-time automatic driver search & matching)
   const handlePassengerCreateRideRequest = () => {
-    const pickupTitle = isCustomPickup
-      ? (passengerCustomPickup.trim() || 'যাত্রীর লাইভ অবস্থান')
-      : (passengerPickup === 'current_gps' ? 'যাত্রীর লাইভ জিপিএস অবস্থান' : passengerPickup);
-
-    const destTitle = isCustomDestination
-      ? (passengerCustomDestination.trim() || 'উপজেলা স্বাস্থ্য কমপ্লেক্স')
-      : passengerDestination;
+    const pickupTitle = passengerPickup.trim() || 'যাত্রীর লাইভ অবস্থান';
+    const destTitle = passengerDestination.trim() || 'উপজেলা স্বাস্থ্য কমপ্লেক্স';
 
     if (pickupTitle.trim() === destTitle.trim()) {
       showAdminToastMessage('শুরুর স্থান ও গন্তব্য একই হতে পারে না!');
@@ -1745,6 +1814,20 @@ export default function App() {
 
     setPassengerRequests(prev => [newRequest, ...prev]);
     setPassengerPendingRequest(newRequest);
+
+    // Sync to Firestore
+    setDoc(doc(db, 'ride_requests', newRequest.id), {
+      passengerName: newRequest.passengerName,
+      passengerPhone: newRequest.passengerPhone,
+      pickupLocation: newRequest.pickupPoint,
+      destinationLocation: newRequest.destination,
+      vehicleCategory: newRequest.category,
+      status: 'pending',
+      estimatedFare: newRequest.estFare,
+      createdAt: new Date().toISOString()
+    }).catch(err => {
+      console.warn('Firestore offline fallback for ride request:', err);
+    });
     showAdminToastMessage(`নিকটস্থ চালকদের কাছে সিগন্যাল পাঠানো হয়েছে... চালক অনুসন্ধান চলছে`);
 
     // Automatic Realistic Driver Matching Simulation (after 3.2 seconds)
@@ -1871,24 +1954,49 @@ export default function App() {
   const passengerMarkerRef = useRef<L.Marker | null>(null);
   const driverLiveMarkerRef = useRef<L.Marker | null>(null);
 
-  // Get User Live Location via HTML5 Geolocation API
+  // Cloudflare Live Server Settings Modal
+  const [showCloudflareModal, setShowCloudflareModal] = useState(false);
+
+  // Real-Time Live Tracking Hook (Cloudflare Worker Edge + Native GPS Sync)
+  const {
+    gps: liveGps,
+    serverState,
+    startGpsTracking,
+    stopGpsTracking
+  } = useLiveTracking({
+    role: userRole,
+    userId: userRole === 'driver' ? (driverProfile.id || 'driver-me') : 'passenger-me',
+    userName: userRole === 'driver' ? driverProfile.name : passengerProfile.name,
+    userPhone: userRole === 'driver' ? driverProfile.phone : passengerProfile.phone,
+    driverDetails: userRole === 'driver' ? {
+      category: driverProfile.category,
+      categoryBengali: categories.find(c => c.id === driverProfile.category)?.nameBengali || 'যানবাহন',
+      vehicleModel: driverProfile.vehicleModel,
+      plateNumber: driverProfile.plateNumber,
+      standName: driverProfile.standName,
+      rating: driverProfile.rating,
+      isOnline: isDriverOnline
+    } : undefined,
+    passengerDetails: userRole === 'passenger' ? {
+      pickupPoint: passengerPickup,
+      destination: passengerDestination,
+      status: activeBooking ? 'on_trip' : passengerPendingRequest ? 'seeking_ride' : 'idle'
+    } : undefined
+  });
+
+  // Automatically start device GPS or sync when live coordinates change
   useEffect(() => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setPassengerLocation({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            isLiveGps: true
-          });
-        },
-        () => {
-          // Silent fallback to Gafargaon Pouroshova center without console warnings
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
-      );
+    if (liveGps.lat && liveGps.lng && liveGps.isTracking) {
+      setPassengerLocation({
+        lat: liveGps.lat,
+        lng: liveGps.lng,
+        isLiveGps: true
+      });
+      if (passengerPickup.includes('GPS') || passengerPickup === 'আমার লাইভ অবস্থান') {
+        setPickupCoords({ lat: liveGps.lat, lng: liveGps.lng });
+      }
     }
-  }, []);
+  }, [liveGps.lat, liveGps.lng, liveGps.isTracking]);
 
   // Secret Admin Access via URL hash (#admin or ?admin=1), Keyboard (Ctrl+Shift+A)
   useEffect(() => {
@@ -2046,7 +2154,7 @@ export default function App() {
       markersRef.current?.addLayer(marker);
     });
 
-    // 2. Add Active Drivers Markers
+    // 2. Add Active Drivers Markers with Live Pulsing Radar Beacon
     const activeDriversToDisplay = drivers.filter(d => 
       selectedCategory === d.category &&
       (selectedStand === 'all' || d.standName.includes(selectedStand))
@@ -2065,15 +2173,18 @@ export default function App() {
       const driverIcon = L.divIcon({
         className: 'custom-driver-marker',
         html: `
-          <div style="background-color: ${categoryColor}; color: white; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.38); border: 3px solid #ffffff; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.15)'" onmouseout="this.style.transform='scale(1)'">
-            <span style="font-size: ${isAmbulance ? '20px; font-weight: 900;' : '18px;'}">${
-              driver.category === 'ambulance' ? '✚' :
-              driver.category === 'cng' ? '🛺' :
-              driver.category === 'auto' ? '🔋' :
-              driver.category === 'car' ? '🚗' :
-              driver.category === 'microbus' ? '🚐' :
-              driver.category === 'bike' ? '🏍️' : '🚒'
-            }</span>
+          <div style="position: relative;">
+            <div style="position: absolute; width: 44px; height: 44px; border-radius: 50%; background: ${categoryColor}40; animation: ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite; top: -3px; left: -3px;"></div>
+            <div style="background-color: ${categoryColor}; color: white; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.38); border: 3px solid #ffffff; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.15)'" onmouseout="this.style.transform='scale(1)'">
+              <span style="font-size: ${isAmbulance ? '20px; font-weight: 900;' : '18px;'}">${
+                driver.category === 'ambulance' ? '✚' :
+                driver.category === 'cng' ? '🛺' :
+                driver.category === 'auto' ? '🔋' :
+                driver.category === 'car' ? '🚗' :
+                driver.category === 'microbus' ? '🚐' :
+                driver.category === 'bike' ? '🏍️' : '🚒'
+              }</span>
+            </div>
           </div>
         `,
         iconSize: [38, 38],
@@ -2082,22 +2193,24 @@ export default function App() {
       });
 
       const marker = L.marker([driver.lat, driver.lng], { icon: driverIcon });
-      
-      // Driver call button in map popup: Non-red for ambulance!
-      const callBtnBg = isAmbulance ? '#059669' : '#059669';
+      const callBtnBg = '#059669';
 
       marker.bindPopup(`
-        <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 185px;">
+        <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 195px;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
             <span style="font-size: 11px; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-weight: 600; color: #475569;">${driver.categoryBengali}</span>
             <span style="font-size: 11px; color: #d97706; font-weight: 700;">★ ${driver.rating.toFixed(1)}</span>
           </div>
           <h4 style="font-weight: 700; color: #0f172a; margin: 0 0 2px 0; font-size: 13.5px;">${driver.name}</h4>
           <p style="font-size: 12px; color: #0284c7; font-weight: 600; margin: 0 0 2px 0;">${driver.vehicleModel}</p>
-          <p style="font-size: 11px; color: #16a34a; font-weight: 600; margin: 0 0 3px 0;">লাইসেন্স: ${driver.licenseNumber}</p>
-          <p style="font-size: 11px; color: #64748b; margin: 0 0 8px 0;">স্ট্যান্ড: ${driver.standName}</p>
-          <div style="display: flex; gap: 4px;">
-            <a href="tel:${driver.phone}" style="flex: 1; text-align: center; background-color: ${callBtnBg}; color: white; padding: 5px 8px; border-radius: 6px; text-decoration: none; font-size: 12px; font-weight: 700;">📞 কল করুন</a>
+          <div style="font-size: 10px; color: #059669; font-weight: 700; margin-bottom: 3px; display: flex; align-items: center; gap: 4px;">
+            <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #10b981;"></span>
+            <span>লাইভ জিপিএস সক্রিয় • গতি: ${driver.approxSpeedKmh || 25} কিমি/ঘণ্টা</span>
+          </div>
+          <p style="font-size: 11px; color: #64748b; margin: 0 0 6px 0;">স্ট্যান্ড: ${driver.standName}</p>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <a href="tel:${driver.phone}" style="display: block; text-align: center; background-color: ${callBtnBg}; color: white; padding: 5px 8px; border-radius: 6px; text-decoration: none; font-size: 12px; font-weight: 700;">📞 সরাসরি কল করুন</a>
+            <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${driver.standName}')" style="display: block; width: 100%; text-align: center; background-color: #f1f5f9; hover:background-color: #e2e8f0; color: #0f172a; padding: 4px 8px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 11px; font-weight: 700; cursor: pointer;">🚖 এই স্ট্যান্ড পিকআপ করুন</button>
           </div>
         </div>
       `);
@@ -2183,8 +2296,131 @@ export default function App() {
         [activeBooking.passengerLat, activeBooking.passengerLng]
       ]);
       mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40] });
+    } else if (mapInstanceRef.current && pickupCoords && destCoords) {
+      // 4. Live Ride Planning Preview: Render Pickup Pin (A), Destination Pin (B) & Connecting Route!
+      
+      // Pickup Pin (A)
+      const pickupIcon = L.divIcon({
+        className: 'custom-pickup-marker',
+        html: `
+          <div style="position: relative;">
+            <div style="position: absolute; width: 44px; height: 44px; border-radius: 50%; background: rgba(5, 150, 105, 0.4); animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite; top: -5px; left: -5px;"></div>
+            <div style="background-color: #059669; color: white; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.45); border: 3px solid #ffffff; font-weight: 900; font-size: 14px; cursor: pointer;">
+              A
+            </div>
+          </div>
+        `,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+        popupAnchor: [0, -17]
+      });
+
+      const pMarker = L.marker([pickupCoords.lat, pickupCoords.lng], { icon: pickupIcon });
+      pMarker.bindPopup(`
+        <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px;">
+          <span style="font-size: 10px; background: #dcfce7; color: #166534; font-weight: 800; padding: 2px 6px; border-radius: 4px;">পিকআপ স্থান (A)</span>
+          <h4 style="font-weight: 800; color: #065f46; margin: 4px 0 2px 0; font-size: 13px;">${passengerPickup}</h4>
+          <p style="font-size: 11px; color: #475569; margin: 0;">যাত্রা শুরুর পয়েন্ট</p>
+        </div>
+      `);
+      markersRef.current.addLayer(pMarker);
+
+      // Destination Pin (B)
+      const destIcon = L.divIcon({
+        className: 'custom-dest-marker',
+        html: `
+          <div style="position: relative;">
+            <div style="position: absolute; width: 44px; height: 44px; border-radius: 50%; background: rgba(220, 38, 38, 0.4); animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite; top: -5px; left: -5px;"></div>
+            <div style="background-color: #dc2626; color: white; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.45); border: 3px solid #ffffff; font-weight: 900; font-size: 14px; cursor: pointer;">
+              B
+            </div>
+          </div>
+        `,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+        popupAnchor: [0, -17]
+      });
+
+      const dMarker = L.marker([destCoords.lat, destCoords.lng], { icon: destIcon });
+      dMarker.bindPopup(`
+        <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px;">
+          <span style="font-size: 10px; background: #fee2e2; color: #991b1b; font-weight: 800; padding: 2px 6px; border-radius: 4px;">গন্তব্য স্থান (B)</span>
+          <h4 style="font-weight: 800; color: #991b1b; margin: 4px 0 2px 0; font-size: 13px;">${passengerDestination}</h4>
+          <p style="font-size: 11px; color: #475569; margin: 0;">পৌঁছানোর পয়েন্ট</p>
+        </div>
+      `);
+      markersRef.current.addLayer(dMarker);
+
+      // Connecting Polyline Route
+      if (pickupCoords.lat !== destCoords.lat || pickupCoords.lng !== destCoords.lng) {
+        const midLat = (pickupCoords.lat + destCoords.lat) / 2 + 0.0004;
+        const midLng = (pickupCoords.lng + destCoords.lng) / 2 - 0.0004;
+        const routePoints: [number, number][] = [
+          [pickupCoords.lat, pickupCoords.lng],
+          [midLat, midLng],
+          [destCoords.lat, destCoords.lng]
+        ];
+
+        const polyline = L.polyline(routePoints, {
+          color: '#059669',
+          weight: 5,
+          opacity: 0.9,
+          dashArray: '8, 8',
+          lineCap: 'round'
+        }).addTo(mapInstanceRef.current);
+
+        polyline.bindTooltip(`দূরত্ব: ${calculatedDistance} কিমি • সময়: ${calculatedDurationMinutes} মিনিট`, {
+          permanent: true,
+          direction: 'center',
+          className: 'route-distance-tooltip'
+        });
+
+        routeLayerRef.current = polyline;
+
+        // Fit bounds comfortably
+        const bounds = L.latLngBounds([
+          [pickupCoords.lat, pickupCoords.lng],
+          [destCoords.lat, destCoords.lng]
+        ]);
+        mapInstanceRef.current.fitBounds(bounds, { padding: [55, 55], maxZoom: 16 });
+      }
     }
-  }, [selectedCategory, selectedStand, drivers, stands, activeBooking]);
+  }, [selectedCategory, selectedStand, drivers, stands, activeBooking, pickupCoords, destCoords, passengerPickup, passengerDestination, calculatedDistance, calculatedDurationMinutes]);
+
+  // Real-Time Driver Sync from Cloudflare Worker / Real-time Engine
+  useEffect(() => {
+    if (serverState.drivers && serverState.drivers.length > 0) {
+      setDrivers(prevDrivers => {
+        const updated = [...prevDrivers];
+        serverState.drivers.forEach(sd => {
+          const idx = updated.findIndex(d => d.id === sd.id);
+          if (idx >= 0) {
+            updated[idx] = {
+              ...updated[idx],
+              lat: sd.lat,
+              lng: sd.lng,
+              approxSpeedKmh: sd.speed || updated[idx].approxSpeedKmh,
+              isOnline: sd.isOnline
+            };
+          }
+        });
+        return updated;
+      });
+    }
+  }, [serverState.drivers]);
+
+  // Global window pickup selector from map popup
+  useEffect(() => {
+    (window as any).__selectPickupPlace = (placeName: string) => {
+      setPassengerPickup(placeName);
+      const coords = resolveLocationCoordinates(placeName, false);
+      setPickupCoords(coords);
+      showAdminToastMessage(`পিকআপ হিসেবে নির্বাচিত: ${placeName}`);
+    };
+    return () => {
+      delete (window as any).__selectPickupPlace;
+    };
+  }, []);
 
   // Live driver simulation interval when booking is active
   useEffect(() => {
@@ -2331,6 +2567,33 @@ export default function App() {
     setRegisterModalTab('status_check');
     setStatusCheckResult(newDriver);
     showAdminToastMessage(`আবেদন রেফারেন্স: ${newRegAppId} - যাচাইকরণ পেন্ডিং রয়েছে`);
+
+    // Sync newly registered driver to Firebase Firestore
+    setDoc(doc(db, 'drivers', newDriver.id), {
+      name: newDriver.name,
+      nameBn: newDriver.name,
+      phone: newDriver.phone,
+      category: newDriver.category,
+      categoryBengali: newDriver.categoryBengali,
+      vehicleModel: newDriver.vehicleModel,
+      plateNumber: newDriver.plateNumber,
+      licensePlate: newDriver.plateNumber,
+      licenseNumber: newDriver.licenseNumber,
+      nidNumber: newDriver.nidNumber,
+      standName: newDriver.standName,
+      isVerified: false,
+      verificationStatus: 'pending',
+      lat: newDriver.lat,
+      lng: newDriver.lng,
+      rating: 5.0,
+      totalTrips: 0,
+      isAvailable: true,
+      isOnline: true,
+      registeredAt: new Date().toISOString(),
+      regAppId: newDriver.regAppId
+    }).catch(err => {
+      console.warn('Firestore offline fallback for driver register:', err);
+    });
 
     // Reset form fields
     setRegisterForm({
@@ -2713,6 +2976,15 @@ export default function App() {
     if (targetDrv) {
       setSuccessModalDriver(targetDrv);
       showAdminToastMessage('৩-স্তরের পূর্ণ যাচাইকরণ সম্পন্ন ও চালকের ফোনে নোটিফিকেশন পাঠানো হয়েছে!');
+
+      // Firestore update
+      updateDoc(doc(db, 'drivers', driverId), {
+        isVerified: true,
+        verificationStatus: 'verified',
+        licenseVerified: true,
+        nidVerified: true,
+        phoneVerified: true
+      }).catch(err => console.warn('Firestore update error:', err));
     }
   };
 
@@ -2732,6 +3004,15 @@ export default function App() {
         : d
     ));
     showAdminToastMessage('চালকের সকল অনুমোদন পেন্ডিং করা হয়েছে');
+
+    // Firestore revoke
+    updateDoc(doc(db, 'drivers', driverId), {
+      isVerified: false,
+      verificationStatus: 'pending',
+      licenseVerified: false,
+      nidVerified: false,
+      phoneVerified: false
+    }).catch(err => console.warn('Firestore revoke error:', err));
   };
 
   // Toggle Driver Online Status
@@ -2746,6 +3027,9 @@ export default function App() {
   const handleDeleteDriver = (driverId: string, driverName: string) => {
     setDrivers(prev => prev.filter(d => d.id !== driverId));
     showAdminToastMessage(`চালক '${driverName}' রিমুভ করা হয়েছে`);
+
+    // Firestore delete
+    deleteDoc(doc(db, 'drivers', driverId)).catch(err => console.warn('Firestore delete error:', err));
   };
 
   // Direct Driver Add by Admin (Supports custom initial verification state)
@@ -3190,78 +3474,42 @@ export default function App() {
 
               {!isRidePlannerCollapsed && (
                 <div className="space-y-3">
-                  {/* Route Selector: Pickup & Destination with Swap Button */}
+                  {/* Route Selector: Pickup & Destination with Autocomplete & Swap Button */}
                   <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-2 bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-200">
                     
-                    {/* PICKUP POINT */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-extrabold text-slate-700 flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 ring-2 ring-emerald-200 inline-block"></span>
-                          <span>শুরুর অবস্থান (পিকআপ):</span>
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsCustomPickup(false);
-                            setPassengerPickup('current_gps');
-                            showAdminToastMessage('বর্তমান লাইভ GPS অবস্থান নির্বাচিত');
-                          }}
-                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 cursor-pointer ${
-                            passengerPickup === 'current_gps' && !isCustomPickup
-                              ? 'bg-emerald-600 text-white'
-                              : 'text-emerald-700 hover:bg-emerald-100/60'
-                          }`}
-                        >
-                          <LocateFixed className="w-3 h-3" />
-                          <span>আমার GPS লোকেশন</span>
-                        </button>
-                      </div>
-
-                      {isCustomPickup ? (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={passengerCustomPickup}
-                            onChange={(e) => setPassengerCustomPickup(e.target.value)}
-                            placeholder="যেমন: আলতাফ গোলন্দাজ মোড়"
-                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                            autoFocus
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setIsCustomPickup(false)}
-                            className="p-1.5 text-slate-400 hover:text-slate-600 bg-white border border-slate-300 rounded-lg text-xs cursor-pointer"
-                            title="তালিকা থেকে বাছুন"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <select
-                            value={passengerPickup}
-                            onChange={(e) => {
-                              if (e.target.value === '__custom__') {
-                                setIsCustomPickup(true);
-                                setPassengerCustomPickup('');
-                              } else {
-                                setPassengerPickup(e.target.value);
+                    {/* PICKUP POINT WITH AUTOCOMPLETE */}
+                    <LocationAutocomplete
+                      label="শুরুর অবস্থান (পিকআপ):"
+                      isPickup={true}
+                      value={passengerPickup}
+                      isGpsActive={passengerPickup.includes('GPS')}
+                      onLocateGps={() => {
+                        if ('geolocation' in navigator) {
+                          navigator.geolocation.getCurrentPosition(
+                            (pos) => {
+                              const lat = pos.coords.latitude;
+                              const lng = pos.coords.longitude;
+                              setPassengerLocation({ lat, lng, isLiveGps: true });
+                              setPassengerPickup('আমার বর্তমান অবস্থান (GPS লাইভ)');
+                              setPickupCoords({ lat, lng });
+                              showAdminToastMessage('বর্তমান লাইভ GPS অবস্থান নির্বাচিত');
+                              if (mapInstanceRef.current) {
+                                mapInstanceRef.current.setView([lat, lng], 16, { animate: true });
                               }
-                            }}
-                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer truncate"
-                          >
-                            <option value="current_gps">📍 আমার বর্তমান অবস্থান (GPS লাইভ)</option>
-                            <optgroup label="গফরগাঁও এর স্ট্যান্ডসমূহ:">
-                              {stands.map(s => (
-                                <option key={s.id} value={s.bengaliName}>{s.bengaliName}</option>
-                              ))}
-                            </optgroup>
-                            <option value="__custom__">✍️ অন্য কোনো নির্দিষ্ট ঠিকানা লিখুন...</option>
-                          </select>
-                        </div>
-                      )}
-                    </div>
+                            },
+                            () => {
+                              showAdminToastMessage('GPS লোকেশন পাওয়া যায়নি, ম্যানুয়ালি বাছুন');
+                            },
+                            { enableHighAccuracy: true, timeout: 8000 }
+                          );
+                        }
+                      }}
+                      onChangeLocation={(name, coords) => {
+                        setPassengerPickup(name);
+                        setPickupCoords(coords);
+                      }}
+                      placeholder="পিকআপ স্ট্যান্ড বা এলাকা খুঁজুন..."
+                    />
 
                     {/* SWAP BUTTON */}
                     <div className="flex justify-center md:pt-4">
@@ -3275,70 +3523,17 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* DESTINATION POINT */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-extrabold text-slate-700 flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-red-600 ring-2 ring-red-200 inline-block"></span>
-                          <span>কোথায় যাবেন (গন্তব্য স্থল):</span>
-                        </label>
-                        {!isCustomDestination && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsCustomDestination(true);
-                              setPassengerCustomDestination('');
-                            }}
-                            className="text-[10px] font-bold text-blue-700 hover:underline cursor-pointer"
-                          >
-                            + অন্য গন্তব্য লিখুন
-                          </button>
-                        )}
-                      </div>
-
-                      {isCustomDestination ? (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={passengerCustomDestination}
-                            onChange={(e) => setPassengerCustomDestination(e.target.value)}
-                            placeholder="যেমন: পাগলা বাজার মোড় / কলেজ গেট"
-                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                            autoFocus
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setIsCustomDestination(false)}
-                            className="p-1.5 text-slate-400 hover:text-slate-600 bg-white border border-slate-300 rounded-lg text-xs cursor-pointer"
-                            title="তালিকা থেকে বাছুন"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <select
-                            value={passengerDestination}
-                            onChange={(e) => {
-                              if (e.target.value === '__custom__') {
-                                setIsCustomDestination(true);
-                                setPassengerCustomDestination('');
-                              } else {
-                                setPassengerDestination(e.target.value);
-                              }
-                            }}
-                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer truncate"
-                          >
-                            <optgroup label="জনপ্রিয় স্ট্যান্ড ও গন্তব্য:">
-                              {stands.map(s => (
-                                <option key={s.id} value={s.bengaliName}>{s.bengaliName}</option>
-                              ))}
-                            </optgroup>
-                            <option value="__custom__">✍️ অন্য কোনো নির্দিষ্ট গন্তব্য লিখুন...</option>
-                          </select>
-                        </div>
-                      )}
-                    </div>
+                    {/* DESTINATION POINT WITH AUTOCOMPLETE */}
+                    <LocationAutocomplete
+                      label="কোথায় যাবেন (গন্তব্য স্থল):"
+                      isPickup={false}
+                      value={passengerDestination}
+                      onChangeLocation={(name, coords) => {
+                        setPassengerDestination(name);
+                        setDestCoords(coords);
+                      }}
+                      placeholder="গন্তব্য স্থান, মোড় বা বাজার খুঁজুন..."
+                    />
 
                   </div>
 
@@ -3347,15 +3542,16 @@ export default function App() {
                     <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin pb-1">
                       <span className="text-[10px] font-bold text-slate-500 shrink-0">দ্রুত গন্তব্য:</span>
                       {(appCustomSettings.quickDestinations || []).map(dest => {
-                        const isMatch = !isCustomDestination && passengerDestination === dest;
+                        const isMatch = passengerDestination.trim() === dest.trim();
                         const shortLabel = dest.replace(' স্ট্যান্ড', '').replace(' (হাসপাতাল)', '');
                         return (
                           <button
                             key={dest}
                             type="button"
                             onClick={() => {
-                              setIsCustomDestination(false);
                               setPassengerDestination(dest);
+                              const coords = resolveLocationCoordinates(dest, true);
+                              setDestCoords(coords);
                             }}
                             className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md border shrink-0 transition-all cursor-pointer ${
                               isMatch
@@ -3804,81 +4000,76 @@ export default function App() {
           {/* RIGHT 67% SECTION: INTERACTIVE LEAFLET LIVE MAP (CONTROLLABLE FROM ADMIN) */}
           {appCustomSettings.showLiveMapWidget && (
             <div className="w-[67%] flex flex-col">
-              <div id="safar-live-map-section" className="bg-white rounded-xl sm:rounded-2xl shadow-xs border border-slate-200 overflow-hidden flex flex-col h-full">
-              
-              {/* Map Header with Bengali Title & Touch Lock/Unlock Safeguard */}
-              <div className="p-2 sm:p-2.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-1.5 bg-slate-50/80">
-                <div className="flex items-center gap-1.5 text-emerald-900 font-bold text-xs sm:text-sm">
-                  <Navigation className="w-3.5 h-3.5 text-emerald-600" />
-                  <span className="truncate">গফরগাঁও লাইভ ম্যাপ</span>
-                </div>
-
-                {/* Mobile / Tablet Touch Drag Protection Toggle */}
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMapTouchUnlocked(!isMapTouchUnlocked);
-                      setShowTouchNotice(true);
-                      setTimeout(() => setShowTouchNotice(false), 3000);
-                    }}
-                    className={`inline-flex items-center gap-1 text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-lg border transition-all cursor-pointer ${
-                      isMapTouchUnlocked
-                        ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
-                        : 'bg-white text-slate-700 hover:bg-slate-100 border-slate-300'
-                    }`}
-                  >
-                    {isMapTouchUnlocked ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                    <span>{isMapTouchUnlocked ? 'ম্যাপ আনলকড' : 'স্ক্রল লক'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Map Viewport Area */}
-              <div className="relative w-full h-[340px] sm:h-[400px] lg:h-[460px] bg-slate-200 isolate">
-                
-                {/* Touch Protection Notification overlay */}
-                {showTouchNotice && (
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1000] bg-slate-900/90 text-white text-[11px] px-3 py-1 rounded-full shadow-lg pointer-events-none animate-in fade-in flex items-center gap-1.5">
-                    <Info className="w-3 h-3 text-emerald-400" />
-                    <span>
-                      {isMapTouchUnlocked 
-                        ? 'ম্যাপ আনলকড (আঙুল দিয়ে স্ক্রল ও সরাতে পারবেন)' 
-                        : 'পেজ স্ক্রলিং সুরক্ষার জন্য ম্যাপ লক করা হয়েছে'}
-                    </span>
-                  </div>
-                )}
-
-                {/* Leaflet DOM container */}
-                <div ref={mapContainerRef} className="w-full h-full" />
-
-                {/* Floating legend badge at bottom-right */}
-                <div className="absolute bottom-2 right-2 z-[400] bg-white/95 backdrop-blur-sm rounded-lg p-1.5 shadow-md border border-slate-200 text-[10px] font-semibold space-y-0.5 hidden xs:block">
-                  <div className="flex items-center gap-1 text-slate-700">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-700 inline-block border border-white"></span>
-                    <span>স্ট্যান্ড</span>
-                  </div>
-                  <div className="flex items-center gap-1 text-slate-700">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block border border-white"></span>
-                    <span>সক্রিয় চালক</span>
-                  </div>
-                  {activeBooking && (
-                    <div className="flex items-center gap-1 text-blue-700 font-bold">
-                      <span className="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block border border-white animate-ping"></span>
-                      <span>লাইভ ট্র্যাকিং রুট</span>
-                    </div>
-                  )}
-                </div>
-
-              </div>
-
-              {/* Map Footer helper note */}
-              <div className="p-1.5 sm:p-2 bg-slate-50 border-t border-slate-200 text-slate-600 text-[10px] sm:text-xs flex items-center justify-between">
-                <span className="truncate">যেকোনো আইকনে ট্যাপ করে চালক ও স্ট্যান্ডের বিস্তারিত তথ্য দেখুন</span>
-                <span className="font-bold text-emerald-700 hidden sm:inline">গফরগাঁও • পাগলা • শিবগঞ্জ</span>
-              </div>
+              <GafargaonMap
+                drivers={drivers.map(d => ({
+                  id: d.id,
+                  nameBn: d.name,
+                  nameEn: d.name,
+                  phone: d.phone,
+                  category: (d.category as any),
+                  vehicleName: d.vehicleModel,
+                  licensePlate: d.plateNumber,
+                  standId: d.standName,
+                  standName: d.standName,
+                  lat: d.lat,
+                  lng: d.lng,
+                  rating: d.rating,
+                  reviewCount: d.totalTrips,
+                  isAvailable: d.isOnline,
+                  isVerified: d.licenseVerified,
+                  nidVerified: d.nidVerified,
+                  experienceYears: 5,
+                  features: [],
+                  baseFare: 30
+                }))}
+                stands={stands.map(s => ({
+                  id: s.id,
+                  nameBn: s.bengaliName,
+                  nameEn: s.name,
+                  lat: s.lat,
+                  lng: s.lng,
+                  driverCount: s.activeDrivers
+                }))}
+                liveDrivers={serverState.drivers}
+                livePassengers={serverState.passengers}
+                connectionStatus={serverState.status}
+                latencyMs={serverState.latencyMs}
+                serverType={serverState.serverType}
+                onOpenServerSettings={() => setShowCloudflareModal(true)}
+                userGps={liveGps}
+                onStartGpsTracking={startGpsTracking}
+                userRole={userRole}
+                selectedDriver={selectedDriver as any}
+                onSelectDriver={(driver: any) => {
+                  const matched = drivers.find(d => d.id === driver.id) || driver;
+                  setSelectedDriver(matched);
+                  showAdminToastMessage(`নির্বাচিত চালক: ${driver.nameBn || driver.name}`);
+                }}
+                pickupCoords={pickupCoords}
+                destCoords={destCoords}
+                pickupTitle={passengerPickup}
+                destTitle={passengerDestination}
+                calculatedDistance={calculatedDistance}
+                calculatedDurationMinutes={calculatedDurationMinutes}
+                activeBooking={activeBooking ? {
+                  driverName: activeBooking.driver.name,
+                  driverPhone: activeBooking.driver.phone,
+                  driverCategory: activeBooking.driver.category,
+                  currentDriverLat: activeBooking.currentDriverLat,
+                  currentDriverLng: activeBooking.currentDriverLng,
+                  passengerLat: activeBooking.passengerLat,
+                  passengerLng: activeBooking.passengerLng,
+                  distanceKm: activeBooking.distanceKm,
+                  etaMinutes: activeBooking.etaMinutes
+                } : null}
+                onSelectPickupPlace={(standName: string) => {
+                  setPassengerPickup(standName);
+                  const coords = resolveLocationCoordinates(standName, false);
+                  setPickupCoords(coords);
+                  showAdminToastMessage(`পিকআপ স্থান সেট করা হয়েছে: ${standName}`);
+                }}
+              />
             </div>
-          </div>
           )}
 
         </div>
@@ -6956,6 +7147,17 @@ export default function App() {
           }}
         />
       )}
+
+      {/* 13. CLOUDFLARE LIVE SERVER CONFIGURATION MODAL */}
+      <CloudflareSettingsModal
+        isOpen={showCloudflareModal}
+        onClose={() => setShowCloudflareModal(false)}
+        status={serverState.status}
+        latencyMs={serverState.latencyMs}
+        serverType={serverState.serverType}
+        activeDriversCount={serverState.drivers.length}
+        activePassengersCount={serverState.passengers.length}
+      />
 
     </div>
   );

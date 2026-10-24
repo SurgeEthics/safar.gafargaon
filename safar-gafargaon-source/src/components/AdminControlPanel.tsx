@@ -24,7 +24,9 @@ import {
   Sparkles,
   HelpCircle,
   Layers,
-  ArrowRight
+  ArrowRight,
+  ShieldCheck,
+  MessageCircle
 } from 'lucide-react';
 import { Stand, Driver, VehicleCategoryItem } from '../App';
 
@@ -58,6 +60,9 @@ export interface AdminControlPanelProps {
   onDeleteCategory: (categoryId: string, name: string) => void;
   drivers: Driver[];
   onToggleDriverVerification: (driverId: string, type: 'license' | 'nid' | 'phone') => void;
+  onOpenVerificationGate?: (driver: Driver, gateType: 'brta' | 'wa' | 'nid') => void;
+  onApproveAllDriver?: (driverId: string) => void;
+  onRevokeDriver?: (driverId: string) => void;
   onToggleDriverOnline: (driverId: string) => void;
   onDeleteDriver: (driverId: string, name: string) => void;
   customSettings: AppCustomSettings;
@@ -84,6 +89,9 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   onDeleteCategory,
   drivers,
   onToggleDriverVerification,
+  onOpenVerificationGate,
+  onApproveAllDriver,
+  onRevokeDriver,
   onToggleDriverOnline,
   onDeleteDriver,
   customSettings,
@@ -1024,61 +1032,140 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                           <span className="text-slate-400">স্ট্যান্ড:</span>
                           <span className="text-slate-700 truncate">{driver.standName}</span>
                         </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">লাইসেন্স:</span>
+                          <span className="font-mono text-slate-700 font-medium">{driver.licenseNumber}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">NID নম্বর:</span>
+                          <span className="font-mono text-slate-700 font-medium">{driver.nidNumber}</span>
+                        </div>
                       </div>
 
-                      {/* 3-Step Verification Gateway Buttons */}
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => onToggleDriverVerification(driver.id, 'license')}
-                          className={`text-[10px] font-bold px-2 py-1 rounded-lg border cursor-pointer transition ${
-                            driver.licenseVerified
-                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                              : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-1 ring-amber-400/20'
-                          }`}
-                          title="ক্লিক করে বিআরটিএ লাইসেন্স ও ট্যাক্স টোকেন যাচাই গেটওয়ে খুলুন"
-                        >
-                          {driver.licenseVerified ? '✓ BRTA' : '⏳ BRTA'}
-                        </button>
+                      {/* 3-Step Dedicated Verification Action Badges (Opens BRTA, WA, NID Gateways) */}
+                      <div className="pt-2.5 border-t border-slate-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10.5px] font-bold text-slate-600">
+                            ৩টি আবশ্যিক নিরাপত্তা অনুমোদন সূচক:
+                          </span>
+                          <span className={`text-[9.5px] font-black px-2 py-0.5 rounded-full ${
+                            (driver.licenseVerified && driver.phoneVerified && driver.nidVerified)
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : 'bg-amber-100 text-amber-800 border border-amber-300'
+                          }`}>
+                            {(driver.licenseVerified && driver.phoneVerified && driver.nidVerified)
+                              ? '🟢 সম্পূর্ণ ভেরিফাইড (৩/৩)'
+                              : `⏳ পেন্ডিং (${[driver.licenseVerified, driver.phoneVerified, driver.nidVerified].filter(Boolean).length}/৩)`}
+                          </span>
+                        </div>
 
-                        <button
-                          type="button"
-                          onClick={() => onToggleDriverVerification(driver.id, 'nid')}
-                          className={`text-[10px] font-bold px-2 py-1 rounded-lg border cursor-pointer transition ${
-                            driver.nidVerified
-                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                              : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-1 ring-amber-400/20'
-                          }`}
-                          title="ক্লিক করে নির্বাচন কমিশন NID যাচাই গেটওয়ে খুলুন"
-                        >
-                          {driver.nidVerified ? '✓ NID' : '⏳ NID'}
-                        </button>
+                        {/* 3 Verification Gateways Grid */}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {/* 1. BRTA Official Gateway */}
+                          <button
+                            type="button"
+                            onClick={() => onOpenVerificationGate ? onOpenVerificationGate(driver, 'brta') : onToggleDriverVerification(driver.id, 'license')}
+                            className={`flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg text-[10px] font-bold border cursor-pointer transition-all ${
+                              driver.licenseVerified
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-xs'
+                                : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-2 ring-amber-400/20'
+                            }`}
+                            title="ক্লিক করে BRTA লাইসেন্স ও মোটরযান গেটওয়েতে যান"
+                          >
+                            {driver.licenseVerified ? (
+                              <CheckCircle className="w-3 h-3 text-emerald-600" />
+                            ) : (
+                              <AlertCircle className="w-3 h-3 text-amber-600 animate-pulse" />
+                            )}
+                            <span className="truncate">BRTA {driver.licenseVerified ? '✅' : '⏳'}</span>
+                          </button>
 
-                        <button
-                          type="button"
-                          onClick={() => onToggleDriverVerification(driver.id, 'phone')}
-                          className={`text-[10px] font-bold px-2 py-1 rounded-lg border cursor-pointer transition ${
-                            driver.phoneVerified
-                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                              : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-1 ring-amber-400/20'
-                          }`}
-                          title="ক্লিক করে WhatsApp ও ওটিপি যাচাই গেটওয়ে খুলুন"
-                        >
-                          {driver.phoneVerified ? '✓ WA' : '⏳ WA'}
-                        </button>
+                          {/* 2. WhatsApp & Phone Gateway */}
+                          <button
+                            type="button"
+                            onClick={() => onOpenVerificationGate ? onOpenVerificationGate(driver, 'wa') : onToggleDriverVerification(driver.id, 'phone')}
+                            className={`flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg text-[10px] font-bold border cursor-pointer transition-all ${
+                              driver.phoneVerified
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-xs'
+                                : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-2 ring-amber-400/20'
+                            }`}
+                            title="ক্লিক করে WhatsApp কল ও ওটিপি যাচাই গেটওয়েতে যান"
+                          >
+                            {driver.phoneVerified ? (
+                              <CheckCircle className="w-3 h-3 text-emerald-600" />
+                            ) : (
+                              <AlertCircle className="w-3 h-3 text-amber-600 animate-pulse" />
+                            )}
+                            <span className="truncate">WA {driver.phoneVerified ? '✅' : '⏳'}</span>
+                          </button>
 
-                        <button
-                          type="button"
-                          onClick={() => onToggleDriverOnline(driver.id)}
-                          className={`text-[10px] font-bold px-2 py-1 rounded-lg border cursor-pointer transition ${
-                            driver.isOnline
-                              ? 'bg-emerald-600 text-white border-emerald-700'
-                              : 'bg-slate-200 text-slate-600 border-slate-300'
-                          }`}
-                          title="চালকের অনলাইন/অফলাইন পরিবর্তন করুন"
-                        >
-                          {driver.isOnline ? 'সক্রিয়' : 'নিষ্ক্রিয়'}
-                        </button>
+                          {/* 3. NID Verification Gateway */}
+                          <button
+                            type="button"
+                            onClick={() => onOpenVerificationGate ? onOpenVerificationGate(driver, 'nid') : onToggleDriverVerification(driver.id, 'nid')}
+                            className={`flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg text-[10px] font-bold border cursor-pointer transition-all ${
+                              driver.nidVerified
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-xs'
+                                : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-2 ring-amber-400/20'
+                            }`}
+                            title="ক্লিক করে জাতীয় পরিচয়পত্র (NID) গেটওয়েতে যান"
+                          >
+                            {driver.nidVerified ? (
+                              <CheckCircle className="w-3 h-3 text-emerald-600" />
+                            ) : (
+                              <AlertCircle className="w-3 h-3 text-amber-600 animate-pulse" />
+                            )}
+                            <span className="truncate">NID {driver.nidVerified ? '✅' : '⏳'}</span>
+                          </button>
+                        </div>
+
+                        {/* Quick 1-Click Approve / Pending Controls */}
+                        <div className="flex items-center gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => onApproveAllDriver ? onApproveAllDriver(driver.id) : null}
+                            className="flex-1 py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10.5px] font-bold flex items-center justify-center gap-1 cursor-pointer transition shadow-xs"
+                            title="এক ক্লিকে ৩টি নিরাপত্তা অনুমোদনই সক্রিয় করুন"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span>১-ক্লিকে ৩টিই অনুমোদন</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onRevokeDriver ? onRevokeDriver(driver.id) : null}
+                            className="py-1.5 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10.5px] font-bold cursor-pointer transition"
+                            title="সকল অনুমোদন প্রত্যাহার করে পেন্ডিং করুন"
+                          >
+                            পেন্ডিং করুন
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => onToggleDriverOnline(driver.id)}
+                            className={`py-1.5 px-2.5 rounded-lg text-[10.5px] font-bold border cursor-pointer transition ${
+                              driver.isOnline
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                : 'bg-slate-100 text-slate-500 border-slate-200'
+                            }`}
+                            title="অনলাইন / অফলাইন পরিবর্তন"
+                          >
+                            {driver.isOnline ? 'অনলাইন' : 'অফলাইন'}
+                          </button>
+                        </div>
+
+                        {/* Direct WhatsApp Verification Notice Send Button */}
+                        {(driver.licenseVerified && driver.phoneVerified && driver.nidVerified) && (
+                          <a
+                            href={`https://wa.me/880${driver.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`অভিনন্দন ${driver.name}! সফর (SAFAR) প্ল্যাটফর্মে আপনার ৩-ধাপের নিরাপত্তা ভেরিফিকেশন (BRTA ড্রাইভিং লাইসেন্স, WhatsApp ফোন ও NID) সফলভাবে সম্পন্ন হয়েছে। আপনার চালক অ্যাকাউন্ট এখন সম্পূর্ণ সক্রিয় ও অনুমোদিত। আপনি এখন অ্যাপে অনলাইন হয়ে যাত্রীদের রাইড কল গ্রহণ করতে পারবেন।`)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-lg text-[10.5px] font-black transition shadow-xs cursor-pointer mt-1"
+                            title="চালকের হোয়াটসঅ্যাপে সফল ভেরিফিকেশন কনফার্মেশন পাঠান"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span>চালককে WhatsApp-এ ভেরিফিকেশন মেসেজ পাঠান</span>
+                          </a>
+                        )}
                       </div>
                     </div>
                   </div>

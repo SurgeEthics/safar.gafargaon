@@ -1890,6 +1890,57 @@ export default function App() {
     }
   }, []);
 
+  // Secret Admin Access via URL hash (#admin or ?admin=1), Keyboard (Ctrl+Shift+A)
+  useEffect(() => {
+    const checkAdminTrigger = () => {
+      if (typeof window === 'undefined') return;
+      const hash = window.location.hash;
+      const search = window.location.search;
+      if (hash === '#admin' || search.includes('admin=1') || search.includes('admin=true')) {
+        setAdminAuthError(null);
+        setAdminPinInput('');
+        setShowAdminAuthModal(true);
+      }
+    };
+    checkAdminTrigger();
+    window.addEventListener('hashchange', checkAdminTrigger);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+        e.preventDefault();
+        setAdminAuthError(null);
+        setAdminPinInput('');
+        setShowAdminAuthModal(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('hashchange', checkAdminTrigger);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const secretClickCountRef = useRef(0);
+  const secretClickTimerRef = useRef<any>(null);
+
+  const handleSecretAdminTrigger = () => {
+    secretClickCountRef.current += 1;
+    if (secretClickTimerRef.current) clearTimeout(secretClickTimerRef.current);
+
+    if (secretClickCountRef.current >= 3) {
+      secretClickCountRef.current = 0;
+      setAdminAuthError(null);
+      setAdminPinInput('');
+      setShowAdminAuthModal(true);
+      return;
+    }
+
+    secretClickTimerRef.current = setTimeout(() => {
+      secretClickCountRef.current = 0;
+    }, 1200);
+  };
+
   // AUTO-SCROLL TO ACTIVE DRIVER LIST ON CATEGORY CLICK
   const handleSelectCategory = (catId: VehicleCategory) => {
     setSelectedCategory(catId);
@@ -2417,7 +2468,7 @@ export default function App() {
       setAdminAuthError(null);
       showAdminToastMessage('অ্যাডমিন ড্যাশবোর্ডে স্বাগতম!');
     } else {
-      setAdminAuthError('ভুল পিন কোড! সঠিক অ্যাডমিন পিন দিন (ডিফল্ট: 7788)');
+      setAdminAuthError('ভুল পিন কোড! অনুগ্রহ করে সঠিক অ্যাডমিন পিন দিন।');
     }
   };
 
@@ -2793,9 +2844,9 @@ export default function App() {
             
             {/* SAFAR LOGO & BRANDING */}
             <div 
-              onClick={handleResetToHomePage} 
+              onClick={() => { handleResetToHomePage(); handleSecretAdminTrigger(); }} 
               className="flex items-center gap-2.5 sm:gap-3 cursor-pointer select-none min-w-0 group"
-              title="সফর হোম পেজে ফিরে যান (ডিফল্ট মোড)"
+              title="সফর হোম পেজ"
             >
               {/* Bengali 'স' Highway Road Emblem with Map Pin & 'সফর' underneath */}
               <SafarLogo size="md" showSubtitle={false} />
@@ -5547,28 +5598,27 @@ export default function App() {
       {/* ============================================================== */}
       {/* 6. CLEAN FOOTER                                                */}
       {/* ============================================================== */}
+      {/* 6. CLEAN FOOTER (ADMIN ENTRY STRICTLY HIDDEN FOR REGULAR USERS) */}
+      {/* ============================================================== */}
       <footer className="bg-emerald-950 text-emerald-200 text-center py-3 border-t border-emerald-900 mt-auto">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6">
-          <p className="font-semibold text-[11px] sm:text-xs">© {new Date().getFullYear()} সফর (Safar) - গফরগাঁও স্মার্ট ট্রান্সপোর্ট ও ইমার্জেন্সি নেটওয়ার্ক</p>
-          <p className="text-emerald-400 text-[10px] sm:text-[11px] mt-0.5">গফরগাঁও পৌরসভা, পাগলা থানা ও সংলগ্ন সকল স্ট্যান্ডের নাগরিকদের জন্য দ্রুত ও নিরাপদ যাতায়াত সেবা</p>
+          <p className="font-semibold text-[11px] sm:text-xs">
+            <span
+              onClick={handleSecretAdminTrigger}
+              className="cursor-default select-none"
+              title=""
+            >
+              ©
+            </span>{' '}
+            {new Date().getFullYear()} সফর (Safar) - গফরগাঁও স্মার্ট ট্রান্সপোর্ট ও ইমার্জেন্সি নেটওয়ার্ক
+          </p>
+          <p className="text-emerald-400 text-[10px] sm:text-[11px] mt-0.5">
+            গফরগাঁও পৌরসভা, পাগলা থানা ও সংলগ্ন সকল স্ট্যান্ডের নাগরিকদের জন্য দ্রুত ও নিরাপদ যাতায়াত সেবা
+          </p>
           
-          {/* Discreet Admin Entrance (Strictly protected by PIN, placed at the bottom for admin only) */}
-          <div className="mt-3 pt-2.5 border-t border-emerald-900/60 flex items-center justify-center gap-3 text-xs">
-            {!isAdminLoggedIn ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setAdminAuthError(null);
-                  setAdminPinInput('');
-                  setShowAdminAuthModal(true);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/60 hover:bg-emerald-900 text-emerald-300 hover:text-white text-[11px] font-semibold transition-all border border-emerald-800/80 cursor-pointer shadow-xs active:scale-95"
-                title="শুধুমাত্র অনুমোদিত অ্যাডমিনদের জন্য (গোপন পিন সুরক্ষিত)"
-              >
-                <Lock className="w-3.5 h-3.5 text-amber-400" />
-                <span>অ্যাডমিন কন্ট্রোল প্যানেল (লগইন)</span>
-              </button>
-            ) : (
+          {/* Admin Control Bar: STRICTLY visible only when admin is already authenticated */}
+          {isAdminLoggedIn && (
+            <div className="mt-3 pt-2.5 border-t border-emerald-900/60 flex items-center justify-center gap-3 text-xs animate-in fade-in">
               <div className="inline-flex items-center gap-2 bg-emerald-900/90 px-3 py-1.5 rounded-lg border border-emerald-500/50 shadow-xs">
                 <button
                   type="button"
@@ -5587,8 +5637,8 @@ export default function App() {
                   লগআউট
                 </button>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </footer>
 
@@ -5603,7 +5653,7 @@ export default function App() {
       )}
 
       {/* ============================================================== */}
-      {/* 8. ADMIN PIN AUTHENTICATION MODAL                              */}
+      {/* 8. ADMIN PIN AUTHENTICATION MODAL (DISCREET & UNBRANDED)       */}
       {/* ============================================================== */}
       {showAdminAuthModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
@@ -5638,15 +5688,12 @@ export default function App() {
                     maxLength={8}
                     value={adminPinInput}
                     onChange={(e) => { setAdminPinInput(e.target.value); setAdminAuthError(null); }}
-                    placeholder="পিন দিন (ডিফল্ট: 7788)"
+                    placeholder="গোপন পিন কোড দিন"
                     autoFocus
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-center text-base tracking-widest font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
                   />
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1 text-center">
-                  প্যানেল অ্যাক্সেস করতে ডিফল্ট পিন <b className="text-slate-600">7788</b> ব্যবহার করুন
-                </p>
               </div>
 
               {adminAuthError && (

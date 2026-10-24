@@ -69,7 +69,7 @@ export const SafarLogo: React.FC<SafarLogoProps> = ({
             <path
               d="M 24,46 C 18,34 26,18 44,18 C 58,18 64,28 55,38 C 45,46 32,48 32,58 L 76,58"
               fill="none"
-              stroke="url(#safarRoadPure)"
+              stroke="#ffffff"
               strokeWidth="9"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -78,7 +78,7 @@ export const SafarLogo: React.FC<SafarLogoProps> = ({
             <path
               d="M 76,17 L 76,62"
               fill="none"
-              stroke="url(#safarRoadPure)"
+              stroke="#ffffff"
               strokeWidth="9"
               strokeLinecap="round"
             />

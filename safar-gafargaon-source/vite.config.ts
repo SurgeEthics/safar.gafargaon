@@ -14,8 +14,8 @@ export default defineConfig(() => {
         includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
         manifest: {
           id: '/',
-          name: 'সফর - গফরগাঁও স্মার্ট ট্রান্সপোর্ট ও ইমার্জেন্সি',
-          short_name: 'সফর অ্যাপ',
+          name: 'সফর',
+          short_name: 'সফর',
           description: 'গফরগাঁওয়ের স্থানীয় যাত্রী ও চালকদের স্মার্ট ডিজিটাল প্ল্যাটফর্ম — লাইভ ম্যাপ, ভাড়ার হিসাব, নির্ভরযোগ্য চালক ও জরুরি সেবা।',
           theme_color: '#059669',
           background_color: '#ffffff',

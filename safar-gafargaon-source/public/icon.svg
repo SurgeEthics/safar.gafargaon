@@ -1,0 +1,62 @@
+
+    <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#10b981" />
+          <stop offset="38%" stop-color="#059669" />
+          <stop offset="78%" stop-color="#0f766e" />
+          <stop offset="100%" stop-color="#064e3b" />
+        </linearGradient>
+
+        <linearGradient id="pinGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#ff4d4f" />
+          <stop offset="100%" stop-color="#dc2626" />
+        </linearGradient>
+
+        <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#022c22" flood-opacity="0.45" />
+        </filter>
+
+        <filter id="badgeShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#022c22" flood-opacity="0.4" />
+        </filter>
+
+        <filter id="textShadow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="5" stdDeviation="4" flood-color="#01241c" flood-opacity="0.5" />
+        </filter>
+      </defs>
+
+      
+        <!-- Rounded badge background matching app logo squircle -->
+        <rect x="18" y="18" width="476" height="476" rx="108" fill="url(#bgGrad)" stroke="#6ee7b7" stroke-width="10" stroke-opacity="0.85" filter="url(#badgeShadow)" />
+        <path d="M 28,128 C 28,68 68,28 128,28 L 384,28 C 420,28 452,48 468,78 C 360,95 240,150 140,240 C 60,312 35,400 28,450 Z" fill="#ffffff" opacity="0.07" />
+      
+
+      <g transform="translate(15.360000000000014, 15.360000000000014) scale(0.94)">
+        <!-- Depth Group for highway glyph and pin -->
+        <g filter="url(#dropShadow)">
+          <!-- Road white base -->
+          <path d="M 122.88,235.52 C 92.16,174.08 133.12,92.16 225.28,92.16 C 296.96,92.16 327.68,143.36 281.6,194.56 C 230.4,235.52 163.84,245.76 163.84,296.96 L 389.12,296.96" fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M 389.12,87.04 L 389.12,317.44" fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round" />
+
+          <!-- Center dashed green lanes -->
+          <path d="M 122.88,235.52 C 92.16,174.08 133.12,92.16 225.28,92.16 C 296.96,92.16 327.68,143.36 281.6,194.56 C 230.4,235.52 163.84,245.76 163.84,296.96 L 380,296.96" fill="none" stroke="#059669" stroke-width="11.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="18 13" />
+          <path d="M 389.12,105 L 389.12,300" fill="none" stroke="#059669" stroke-width="11.2" stroke-linecap="round" stroke-dasharray="18 13" />
+
+          <!-- Map Pin (📍) at apex (225.28, 61.44) -->
+          <g transform="translate(225.28, 61.44)" filter="url(#textShadow)">
+            <path d="M 0,-56 C -30.7,-56 -53.8,-33.3 -53.8,-2.6 C -53.8,28.2 0,66.6 0,66.6 C 0,66.6 53.8,28.2 53.8,-2.6 C 53.8,-33.3 30.7,-56 0,-56 Z" fill="url(#pinGrad)" stroke="#ffffff" stroke-width="9" />
+            <circle cx="0" cy="-7.7" r="16.4" fill="#ffffff" />
+          </g>
+
+          <!-- Origin Vehicle Blue Dot at (122.88, 235.52) -->
+          <circle cx="122.88" cy="235.52" r="19.5" fill="#0284c7" stroke="#ffffff" stroke-width="8.2" />
+        </g>
+
+        <!-- Bengali Text 'সফর' - Bold, clean vector shape -->
+        <g filter="url(#textShadow)">
+          <path d="M201.25 390.68L201.25 460L183.89 460L183.89 439.04Q183.89 426.89 176.33 426.89Q173.85 426.89 171.68 429Q169.51 431.11 167.59 434.15Q165.67 437.18 163.25 440.28Q160.83 443.38 156.61 445.49Q152.40 447.60 146.69 447.60Q141.61 447.60 137.02 446.11L137.02 431.85Q140.37 432.84 144.21 432.84Q146.57 432.84 148.74 431.54Q150.91 430.24 151.96 429Q153.02 427.76 155.13 424.60Q157.23 421.44 157.98 420.44Q156.49 412.14 151.22 407.92Q145.95 403.70 137.77 403.70L137.77 390.68L130.57 390.68L130.57 376.80L211.92 376.80L211.92 390.68L201.25 390.68M171.99 412.26L172.49 412.26Q180.42 412.26 183.89 417.10L183.89 390.68L153.76 390.68Q168.15 396.88 171.99 412.26M307.77 424.41Q307.77 436.07 301.51 442.64Q295.25 449.21 284.21 449.21Q282.47 449.21 281.61 449.09L281.61 433.46L282.85 433.46Q291.03 433.46 291.03 424.41Q291.03 413.13 274.17 413.13L274.17 460L256.81 460L213.65 442.39L213.78 442.27L213.78 425.90L231.63 413.87L214.15 403.58L214.15 390.68L206.83 390.68L206.83 376.80L314.47 376.80L314.47 390.68L223.95 390.68L248.13 406.56L248.13 421.31L231.88 432.60L256.81 443.38L256.81 398.12L274.17 398.12Q288.05 398.12 297.91 404.88Q307.77 411.64 307.77 424.41M381.43 376.80L381.43 390.68L370.89 390.68L370.89 460L354.15 460L354.15 459.88L354.02 460L316.57 434.08L316.57 417.47Q334.55 402.84 354.15 397.50L354.15 390.68L309.51 390.68L309.51 376.80L381.43 376.80M330.09 450.82Q332.82 453.55 332.82 457.52Q332.82 461.49 330.09 464.22Q327.36 466.94 323.39 466.94Q319.43 466.94 316.70 464.22Q313.97 461.49 313.97 457.52Q313.97 453.55 316.70 450.82Q319.43 448.10 323.39 448.10Q327.36 448.10 330.09 450.82M332.20 426.02L354.15 441.90L354.15 414Q341.37 419.08 332.20 426.02" fill="#ffffff" />
+        </g>
+      </g>
+    </svg>
+    

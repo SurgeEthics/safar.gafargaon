@@ -22,16 +22,18 @@ import {
 import confetti from 'canvas-confetti';
 import { sounds } from '../utils/audio';
 import { PauseMarqueeText } from './PauseMarqueeText';
+import { toBengaliNumber } from '../utils/calculator';
 
 export interface PassengerRideCockpitProps {
   request: {
     id: string;
     pickupPoint: string;
+    pickupLandmark?: string;
     destination: string;
     category: string;
     distanceKm: number;
     estFare: number;
-    status: 'pending' | 'accepted' | 'declined' | 'completed' | 'cancelled';
+    status: 'pending' | 'accepted' | 'declined' | 'in_transit' | 'completed' | 'cancelled';
   } | null;
   activeBooking: {
     driver: {
@@ -51,6 +53,7 @@ export interface PassengerRideCockpitProps {
       standName?: string;
     };
     pickupTitle?: string;
+    pickupLandmark?: string;
     destTitle?: string;
     fare?: number;
     distanceKm?: number;
@@ -212,6 +215,16 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                   </div>
                 </div>
 
+                {/* 2nd Option: Nearest Known Landmark Reference */}
+                {request.pickupLandmark && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-amber-200/95 pl-5 min-w-0 bg-amber-500/10 py-0.5 px-2 rounded-lg border border-amber-400/20">
+                    <span className="shrink-0 text-amber-300 font-extrabold text-[9.5px] bg-amber-400/20 px-1.5 py-0.2 rounded border border-amber-400/30">২য় পরিচিত রেফারেন্স:</span>
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <PauseMarqueeText text={request.pickupLandmark} className="text-[11px] font-bold text-amber-100" pauseSec={1.5} />
+                    </div>
+                  </div>
+                )}
+
                 {/* Destination Row with Marquee */}
                 <div className="flex items-center gap-1.5 text-[12px] min-w-0">
                   <Navigation className="w-3.5 h-3.5 text-red-400 shrink-0" />
@@ -222,10 +235,16 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                 </div>
               </div>
 
-              <div className="text-[11px] text-emerald-200/80 mt-2 flex items-center gap-2 flex-wrap">
-                <span>দূরত্ব: <strong className="text-emerald-300 font-bold">{request.distanceKm} কিমি</strong></span>
-                <span>•</span>
-                <span className="truncate">গফরগাঁও পৌরসভা ও সংলগ্ন এলাকায় সক্রিয় চালক অনুসন্ধান চলছে...</span>
+              <div className="text-[11px] text-emerald-200/80 mt-2 flex items-center gap-2 flex-wrap min-w-0">
+                <span className="shrink-0">দূরত্ব: <strong className="text-emerald-300 font-bold">{request.distanceKm} কিমি</strong></span>
+                <span className="shrink-0">•</span>
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <PauseMarqueeText
+                    text="গফরগাঁও পৌরসভা ও সংলগ্ন এলাকায় সক্রিয় চালক অনুসন্ধান চলছে..."
+                    className="text-[11px] text-emerald-200 font-semibold"
+                    pauseSec={1.5}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -253,9 +272,25 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
       {/* ============================================================== */}
       {activeBooking && (
         <div className="mb-4 rounded-2xl bg-slate-900 text-white border-2 border-emerald-500 shadow-2xl p-4 sm:p-5 animate-in slide-in-from-top-3 relative overflow-hidden">
-          {/* Top Status Bar */}
+          {/* Top Status Bar with Dynamic Phase 1 & Phase 2 Badges */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3.5 mb-3.5 border-b border-slate-800 gap-2.5">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
+              {/* Dynamic Status Badge with 1.5s Pause Marquee (No emojis) */}
+              <div className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-sm max-w-[280px] xs:max-w-[340px] overflow-hidden">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <PauseMarqueeText
+                    text={
+                      activeBooking.status === 'in_transit'
+                        ? 'আল্লাহ্র উপর ভরসা করে যাত্রা শুরু করছি...'
+                        : 'পিকআপের দিকে রওনা'
+                    }
+                    className="text-xs font-bold text-emerald-300"
+                    pauseSec={1.5}
+                  />
+                </div>
+              </div>
+
               {/* Ride Start Security OTP Code */}
               <div
                 onClick={() => {
@@ -265,7 +300,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                     setTimeout(() => setCopiedOtp(false), 2000);
                   }
                 }}
-                className="bg-slate-950 text-amber-300 border border-amber-400/60 px-3 py-1 rounded-full text-xs font-mono font-black flex items-center gap-1.5 cursor-pointer hover:bg-slate-800 transition shadow-md"
+                className="bg-slate-950 text-amber-300 border border-amber-400/60 px-3 py-1 rounded-full text-xs font-mono font-black flex items-center gap-1.5 cursor-pointer hover:bg-slate-800 transition shadow-md shrink-0"
                 title="কপি করতে ক্লিক করুন (চালকের সাথে পিন মিলিয়ে গাড়িতে উঠবেন)"
               >
                 <Lock className="w-3 h-3 text-amber-400" />
@@ -274,7 +309,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 text-xs shrink-0">
               <span className="text-slate-400">মোট ভাড়া:</span>
               <span className="text-lg font-black text-amber-300 bg-slate-950 px-2.5 py-0.5 rounded-lg border border-amber-400/40">
                 ৳ {activeBooking.fare && activeBooking.fare > 0 ? activeBooking.fare : 40}
@@ -321,28 +356,11 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                 </div>
 
                 <div className="text-xs sm:text-sm text-slate-300 mt-0.5 min-w-0">
-                  {(() => {
-                    const rawPlate = activeBooking.driver.plateNumber || '';
-                    const isDummyPlate = !rawPlate || 
-                      rawPlate.includes('৩৪৫৬') || 
-                      rawPlate.includes('3456') || 
-                      rawPlate.includes('১২-৩৪৫৬') || 
-                      rawPlate.includes('12-3456') || 
-                      rawPlate.includes('BRTA-GAF');
-                    const displayPlate = isDummyPlate 
-                      ? (activeBooking.driver.phone?.includes('01304841550') || activeBooking.driver.name?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : 'MYMENSINGH-HA-15-5206') 
-                      : rawPlate;
-                    const displayModel = (!activeBooking.driver.vehicleModel || activeBooking.driver.vehicleModel === 'যানবাহন')
-                      ? (activeBooking.driver.phone?.includes('01304841550') || activeBooking.driver.name?.toUpperCase().includes('TASNIMUL') ? 'BAJAJ DISCOVER 125CC' : 'মোটরসাইকেল')
-                      : activeBooking.driver.vehicleModel;
-                    return (
-                      <PauseMarqueeText
-                        text={`${displayModel} • ${displayPlate}`}
-                        className="text-xs sm:text-sm text-slate-300 font-bold"
-                        pauseSec={1.5}
-                      />
-                    );
-                  })()}
+                  <PauseMarqueeText
+                    text={`${activeBooking.driver.vehicleModel} • ${activeBooking.driver.plateNumber}`}
+                    className="text-xs sm:text-sm text-slate-300"
+                    pauseSec={1.5}
+                  />
                 </div>
 
                 <div className="text-[11px] text-slate-400 mt-0.5 min-w-0">
@@ -366,6 +384,14 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                         />
                       </div>
                     </div>
+                    {(activeBooking.pickupLandmark || request?.pickupLandmark) && (
+                      <div className="flex items-center gap-1.5 text-[10.5px] text-amber-200/95 pl-5 min-w-0 bg-amber-500/10 py-0.5 px-2 rounded-lg border border-amber-400/20">
+                        <span className="shrink-0 text-amber-300 font-extrabold text-[9px] bg-amber-400/20 px-1 py-0.2 rounded border border-amber-400/30">২য় পরিচিত স্থান:</span>
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <PauseMarqueeText text={activeBooking.pickupLandmark || request?.pickupLandmark || ''} className="text-[10.5px] font-bold text-amber-100" pauseSec={1.5} />
+                        </div>
+                      </div>
+                    )}
                     <div className="flex items-center gap-1.5 min-w-0">
                       <Navigation className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                       <span className="shrink-0 text-blue-300 font-bold">গন্তব্য:</span>
@@ -412,7 +438,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                 <span>ম্যাপে ট্র্যাক</span>
               </button>
 
-              {activeBooking.status === 'en_route' && (
+              {activeBooking.status !== 'in_transit' ? (
                 <button
                   type="button"
                   onClick={onStartRide}
@@ -421,9 +447,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                   <Check className="w-4 h-4" />
                   <span>গাড়িতে উঠেছি</span>
                 </button>
-              )}
-
-              {activeBooking.status !== 'en_route' && (
+              ) : (
                 <button
                   type="button"
                   onClick={handleFinishAndShowReview}
@@ -437,10 +461,10 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
               <button
                 type="button"
                 onClick={onCancelBooking}
-                className="inline-flex items-center gap-1 bg-slate-800 hover:bg-red-600 text-slate-300 hover:text-white px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer transition"
+                className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-500 text-white font-bold px-3.5 py-2 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition active:scale-95 shrink-0"
                 title="ট্রিপ বাতিল করুন"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4 stroke-[2.5]" />
                 <span>বাতিল</span>
               </button>
             </div>

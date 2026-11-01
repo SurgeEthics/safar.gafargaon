@@ -51,8 +51,7 @@ import {
   Sparkles,
   Camera,
   Download,
-  UserPlus,
-  ChevronUp
+  UserPlus
 } from 'lucide-react';
 import L from 'leaflet';
 import { SafarLogo } from './components/SafarLogo';
@@ -72,6 +71,7 @@ import { sounds } from './utils/audio';
 import { toBengaliNumber } from './utils/calculator';
 import { PassengerRideCockpit } from './components/PassengerRideCockpit';
 import { DriverIncomingAlert } from './components/DriverIncomingAlert';
+import { SplashScreen } from './components/SplashScreen';
 import { AdminControlPanel, AppCustomSettings } from './components/AdminControlPanel';
 import { AutoMarqueeText } from './components/AutoMarqueeText';
 import { PauseMarqueeText } from './components/PauseMarqueeText';
@@ -126,12 +126,13 @@ export interface PassengerRideRequest {
   passengerName: string;
   passengerPhone: string;
   pickupPoint: string;
+  pickupLandmark?: string; // 2nd option / nearest known landmark reference
   destination: string;
   category: VehicleCategory;
   requestedAt: string;
   distanceKm: number;
   estFare: number;
-  status: 'pending' | 'accepted' | 'declined' | 'completed' | 'cancelled';
+  status: 'pending' | 'accepted' | 'declined' | 'in_transit' | 'completed' | 'cancelled';
   driverId?: string;
   driverName?: string;
   driverPhone?: string;
@@ -140,10 +141,13 @@ export interface PassengerRideRequest {
   driverLng?: number;
   driverVehicleModel?: string;
   driverLicensePlate?: string;
+  driverPlateNumber?: string;
+  driverPhoto?: string;
   driverRating?: number;
   otp?: string;
   pickupCoords?: { lat: number; lng: number };
   destCoords?: { lat: number; lng: number };
+  createdAtMs?: number;
 }
 
 export interface Driver {
@@ -1080,30 +1084,6 @@ export default function App() {
   const [showSourceCodeModal, setShowSourceCodeModal] = useState(false);
   const [showEmergencyDirectory, setShowEmergencyDirectory] = useState(false);
 
-  // Floating Scroll-To-Top state: default transparent, active/touch/click triggers vibrant color
-  const [showScrollToTop, setShowScrollToTop] = useState(false);
-  const [isScrollToTopActive, setIsScrollToTopActive] = useState(false);
-
-  useEffect(() => {
-    const handleWindowScroll = () => {
-      if (typeof window !== 'undefined' && window.scrollY > 280) {
-        setShowScrollToTop(true);
-      } else {
-        setShowScrollToTop(false);
-      }
-    };
-    window.addEventListener('scroll', handleWindowScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleWindowScroll);
-  }, []);
-
-  const handleScrollToTop = () => {
-    setIsScrollToTopActive(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    setTimeout(() => {
-      setIsScrollToTopActive(false);
-    }, 750);
-  };
-
   // 1. Dynamic Stands State (Manageable by Admin, persisted in localStorage with Google Maps auto-migration)
   const [stands, setStands] = useState<Stand[]>(() => {
     try {
@@ -1529,7 +1509,41 @@ export default function App() {
   // Driver Details Modal State
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
 
-  // Live Booking / Passenger Confirmation Tracking State
+  // Persistent local dismissed/cancelled trip IDs (prevents stale or quota-failed Firestore docs from reappearing)
+  // Persistent local dismissed/cancelled trip IDs (prevents stale or quota-failed Firestore docs from reappearing)
+  const getDismissedTripIds = useCallback((): Set<string> => {
+    try {
+      const saved = localStorage.getItem('safar_dismissed_trip_ids_v2');
+      if (saved) return new Set(JSON.parse(saved));
+    } catch {}
+    return new Set();
+  }, []);
+
+  const addDismissedTripId = useCallback((id: string) => {
+    if (!id) return;
+    try {
+      const current = getDismissedTripIds();
+      current.add(id);
+      localStorage.setItem('safar_dismissed_trip_ids_v2', JSON.stringify(Array.from(current)));
+    } catch {}
+  }, [getDismissedTripIds]);
+
+  // Persistent cleared past trip IDs (ensures cleared trips stay deleted across sessions and devices)
+  const getClearedTripIds = useCallback((): Set<string> => {
+    try {
+      const saved = localStorage.getItem('safar_cleared_trip_ids_v2');
+      if (saved) return new Set(JSON.parse(saved));
+    } catch {}
+    return new Set();
+  }, []);
+
+  const saveClearedTripIds = useCallback((set: Set<string>) => {
+    try {
+      localStorage.setItem('safar_cleared_trip_ids_v2', JSON.stringify(Array.from(set)));
+    } catch {}
+  }, []);
+
+  // Live Booking / Passenger Confirmation Tracking State with LocalStorage Persistence
   const [activeBooking, setActiveBooking] = useState<{
     id?: string;
     requestId?: string;
@@ -1546,9 +1560,47 @@ export default function App() {
     status: 'en_route' | 'arrived' | 'in_transit' | 'completed';
     otp?: string;
     pickupTitle?: string;
+    pickupLandmark?: string;
     destTitle?: string;
     fare?: number;
-  } | null>(null);
+  } | null>(() => {
+    try {
+      const saved = localStorage.getItem('safar_active_booking_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.driver && parsed.status && parsed.status !== 'completed' && parsed.status !== 'cancelled') {
+          const tripId = parsed.id || parsed.requestId || '';
+          const confirmedAt = parsed.confirmedAt || 0;
+          // Stale check: if trip is over 35 minutes old or in dismissed list, purge immediately!
+          const dismissed = new Set<string>();
+          try {
+            const stored = localStorage.getItem('safar_dismissed_trip_ids_v2');
+            if (stored) {
+              const list = JSON.parse(stored);
+              if (Array.isArray(list)) list.forEach((x: string) => dismissed.add(x));
+            }
+          } catch {}
+          if ((confirmedAt > 0 && Date.now() - confirmedAt > 35 * 60 * 1000) || (tripId && dismissed.has(tripId))) {
+            localStorage.removeItem('safar_active_booking_v2');
+            localStorage.removeItem('safar_my_ride_request_id');
+            return null;
+          }
+          return parsed;
+        }
+      }
+    } catch {}
+    return null;
+  });
+
+  useEffect(() => {
+    try {
+      if (activeBooking && activeBooking.status !== 'completed') {
+        localStorage.setItem('safar_active_booking_v2', JSON.stringify(activeBooking));
+      } else {
+        localStorage.removeItem('safar_active_booking_v2');
+      }
+    } catch {}
+  }, [activeBooking]);
 
   // Completed Trip Review & Rating Modal State
   const [completedTripReview, setCompletedTripReview] = useState<{
@@ -2123,27 +2175,6 @@ export default function App() {
       const trips: PassengerTripRecord[] = [];
       snapshot.forEach(docSnap => {
         const d = docSnap.data();
-        const matched = drivers.find(drv => 
-          (d.driverPhone && drv.phone === d.driverPhone) || 
-          (d.driverName && drv.name.trim().toLowerCase() === d.driverName.trim().toLowerCase())
-        ) || INITIAL_DRIVERS.find(drv => 
-          (d.driverPhone && drv.phone === d.driverPhone) || 
-          (d.driverName && drv.name.trim().toLowerCase() === drv.name.trim().toLowerCase())
-        );
-        const rawPlate = d.plateNumber || '';
-        const isHardcodedPlate = !rawPlate || 
-          rawPlate.includes('৩৪৫৬') || 
-          rawPlate.includes('3456') || 
-          rawPlate.includes('১২-৩৪৫৬') || 
-          rawPlate.includes('12-3456') || 
-          rawPlate.includes('BRTA-GAF');
-        const plate = isHardcodedPlate
-          ? (matched?.plateNumber || (d.driverPhone?.includes('01304841550') || d.driverName?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : 'MYMENSINGH-HA-15-5206'))
-          : rawPlate;
-        const model = (!d.vehicleModel || d.vehicleModel === 'যানবাহন')
-          ? (matched?.vehicleModel || (d.driverPhone?.includes('01304841550') || d.driverName?.toUpperCase().includes('TASNIMUL') ? 'BAJAJ DISCOVER 125CC' : 'মোটরসাইকেল'))
-          : d.vehicleModel;
-
         trips.push({
           id: docSnap.id,
           date: d.date || 'পূর্বে',
@@ -2152,8 +2183,8 @@ export default function App() {
           driverName: d.driverName || 'চালক',
           driverPhone: d.driverPhone || '',
           vehicleCategory: d.vehicleCategory || 'auto',
-          vehicleModel: model,
-          plateNumber: plate,
+          vehicleModel: d.vehicleModel || '',
+          plateNumber: d.plateNumber || '',
           fare: Number(d.fare) || 40,
           status: d.status || 'সম্পন্ন',
           ratingGiven: Number(d.ratingGiven) || 5.0
@@ -2367,30 +2398,8 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.map((item: PassengerTripRecord) => {
-            const matched = INITIAL_DRIVERS.find(d => 
-              (item.driverPhone && d.phone === item.driverPhone) || 
-              (item.driverName && d.name.trim().toLowerCase() === item.driverName.trim().toLowerCase())
-            );
-            const rawPlate = item.plateNumber || '';
-            const isHardcodedPlate = !rawPlate || 
-              rawPlate.includes('৩৪৫৬') || 
-              rawPlate.includes('3456') || 
-              rawPlate.includes('১২-৩৪৫৬') || 
-              rawPlate.includes('12-3456') || 
-              rawPlate.includes('BRTA-GAF');
-            const plate = isHardcodedPlate
-              ? (matched?.plateNumber || (item.driverPhone?.includes('01304841550') || item.driverName?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : 'MYMENSINGH-HA-15-5206'))
-              : rawPlate;
-            const model = (!item.vehicleModel || item.vehicleModel === 'যানবাহন')
-              ? (matched?.vehicleModel || (item.driverPhone?.includes('01304841550') || item.driverName?.toUpperCase().includes('TASNIMUL') ? 'BAJAJ DISCOVER 125CC' : 'মোটরসাইকেল'))
-              : item.vehicleModel;
-            return {
-              ...item,
-              plateNumber: plate,
-              vehicleModel: model
-            };
-          });
+          const cleared = getClearedTripIds();
+          return parsed.filter(p => p && !cleared.has(p.id));
         }
       }
     } catch (e) {}
@@ -2400,9 +2409,11 @@ export default function App() {
   // Automatically persist trip history on change
   useEffect(() => {
     try {
-      localStorage.setItem('safar_trip_history_v7', JSON.stringify(tripHistory));
+      const cleared = getClearedTripIds();
+      const valid = tripHistory.filter(p => p && !cleared.has(p.id));
+      localStorage.setItem('safar_trip_history_v7', JSON.stringify(valid));
     } catch (e) {}
-  }, [tripHistory]);
+  }, [tripHistory, getClearedTripIds]);
 
   // Real-time Firestore Sync for Passenger Trip History (dynamically loads trips for logged in passenger)
   useEffect(() => {
@@ -2413,29 +2424,14 @@ export default function App() {
     const unsubscribe = onSnapshot(collection(db, 'users', cleanPhone, 'trips'), (snapshot) => {
       if (!snapshot.empty) {
         const cloudTrips: PassengerTripRecord[] = [];
+        const cleared = getClearedTripIds();
         snapshot.forEach((docSnap) => {
+          if (cleared.has(docSnap.id)) {
+            // Delete from Firestore if quota permits
+            deleteDoc(doc(db, 'users', cleanPhone, 'trips', docSnap.id)).catch(() => {});
+            return;
+          }
           const d = docSnap.data();
-          const matched = drivers.find(drv => 
-            (d.driverPhone && drv.phone === d.driverPhone) || 
-            (d.driverName && drv.name.trim().toLowerCase() === d.driverName.trim().toLowerCase())
-          ) || INITIAL_DRIVERS.find(drv => 
-            (d.driverPhone && drv.phone === d.driverPhone) || 
-            (d.driverName && drv.name.trim().toLowerCase() === drv.name.trim().toLowerCase())
-          );
-          const rawPlate = d.plateNumber || '';
-          const isHardcodedPlate = !rawPlate || 
-            rawPlate.includes('৩৪৫৬') || 
-            rawPlate.includes('3456') || 
-            rawPlate.includes('১২-৩৪৫৬') || 
-            rawPlate.includes('12-3456') || 
-            rawPlate.includes('BRTA-GAF');
-          const plate = isHardcodedPlate
-            ? (matched?.plateNumber || (d.driverPhone?.includes('01304841550') || d.driverName?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : 'MYMENSINGH-HA-15-5206'))
-            : rawPlate;
-          const model = (!d.vehicleModel || d.vehicleModel === 'যানবাহন')
-            ? (matched?.vehicleModel || (d.driverPhone?.includes('01304841550') || d.driverName?.toUpperCase().includes('TASNIMUL') ? 'BAJAJ DISCOVER 125CC' : 'মোটরসাইকেল'))
-            : d.vehicleModel;
-
           cloudTrips.push({
             id: docSnap.id,
             date: d.date || '',
@@ -2444,8 +2440,8 @@ export default function App() {
             driverName: d.driverName || '',
             driverPhone: d.driverPhone || '',
             vehicleCategory: d.vehicleCategory || 'auto',
-            vehicleModel: model,
-            plateNumber: plate,
+            vehicleModel: d.vehicleModel || '',
+            plateNumber: d.plateNumber || '',
             fare: d.fare || 0,
             status: d.status || 'সম্পন্ন',
             ratingGiven: d.ratingGiven || 5.0
@@ -2458,7 +2454,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [passengerProfile.isLoggedIn, passengerProfile.phone, drivers]);
+  }, [passengerProfile.isLoggedIn, passengerProfile.phone, getClearedTripIds]);
 
 
   // Driver Cockpit States (When in 'driver' mode)
@@ -2477,6 +2473,8 @@ export default function App() {
     todayEarnings: number;
     driverPhoto?: string;
     isRegistered?: boolean;
+    lat?: number;
+    lng?: number;
   }>(() => {
     try {
       const saved = localStorage.getItem('safar_active_driver_profile_v6');
@@ -2698,6 +2696,7 @@ export default function App() {
   // Passenger Ride Booking Hub State (Dynamic Pickup, Destination & Fare Calculation)
   // Default is empty so no dummy route or distance line is drawn until user selects locations
   const [passengerPickup, setPassengerPickup] = useState<string>('');
+  const [passengerPickupLandmark, setPassengerPickupLandmark] = useState<string>('');
   const [passengerDestination, setPassengerDestination] = useState<string>('');
   const [pickupCoords, setPickupCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [destCoords, setDestCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -2930,6 +2929,11 @@ export default function App() {
     return null;
   });
 
+  // Track dismissed incoming driver alert IDs so driver doesn't see rejected/accepted popups again
+  const [dismissedAlertIds, setDismissedAlertIds] = useState<Record<string, boolean>>({});
+  // Splash screen state matching IMG-12
+  const [showAppSplash, setShowAppSplash] = useState(true);
+
   useEffect(() => {
     try {
       if (passengerPendingRequest) {
@@ -2942,10 +2946,10 @@ export default function App() {
 
   // Real-Time Firestore Synchronization for Live Ride Requests
   useEffect(() => {
+    // Pure read listener with safe limit
     const q = query(
       collection(db, 'ride_requests'),
-      orderBy('requestedAt', 'desc'),
-      limit(30)
+      limit(50)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -2954,90 +2958,153 @@ export default function App() {
 
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
-        if (!data) return;
+        if (!data || !data.status) return;
 
-        const reqTime = data.requestedAt ? new Date(data.requestedAt).getTime() : (data.createdAt ? new Date(data.createdAt).getTime() : 0);
-        // Automatically prune stale requests older than 2 hours or completed/cancelled test entries
-        const isStale = (reqTime > 0 && now - reqTime > 2 * 60 * 60 * 1000) || (!data.requestedAt && !data.createdAt && data.status !== 'pending');
-        if (isStale || data.status === 'completed' || data.status === 'cancelled') {
-          // If this document is stale, delete it from Firestore in background to avoid database clutter
-          if (isStale || (reqTime > 0 && now - reqTime > 15 * 60 * 1000)) {
-            deleteDoc(doc(db, 'ride_requests', docSnap.id)).catch(() => {});
-          }
+        // Extract accurate timestamp
+        let reqTime = typeof data.createdAtMs === 'number' ? data.createdAtMs : 0;
+        if (!reqTime && data.requestedAt) {
+          const t = new Date(data.requestedAt).getTime();
+          if (!isNaN(t)) reqTime = t;
+        }
+        if (!reqTime && data.createdAt) {
+          const t = new Date(data.createdAt).getTime();
+          if (!isNaN(t)) reqTime = t;
+        }
 
-          // If current passenger was waiting for or in this trip and it was cancelled, reset state cleanly
-          if (data.status === 'cancelled') {
-            if (passengerPendingRequest && passengerPendingRequest.id === docSnap.id) {
-              setPassengerPendingRequest(null);
-              setPickupCoords(null);
-              setDestCoords(null);
-              setPassengerPickup('');
-              setPassengerDestination('');
-              showAdminToastMessage('যাত্রার অনুরোধটি বাতিল হয়েছে');
+        // Auto-ignore stale cancelled/completed trips older than 4 hours
+        const isStale = (reqTime > 0 && now - reqTime > 4 * 60 * 60 * 1000);
+        if (isStale && (data.status === 'completed' || data.status === 'cancelled')) {
+          return;
+        }
+
+        // If driver completed this trip, update passenger's history and reset state (only if matching current active booking)
+        if (data.status === 'completed') {
+          if (activeBooking && ((activeBooking as any).requestId === docSnap.id || (activeBooking as any).id === docSnap.id)) {
+            const finalFare = data.estFare || activeBooking.fare || 40;
+            if (passengerProfile.isLoggedIn) {
+              const newTripRecord: PassengerTripRecord = {
+                id: `trip-${Date.now()}`,
+                date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+                pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
+                destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
+                driverName: data.driverName || activeBooking.driver.name,
+                driverPhone: data.driverPhone || activeBooking.driver.phone,
+                vehicleCategory: data.driverCategory || activeBooking.driver.category,
+                vehicleModel: data.driverVehicleModel || activeBooking.driver.vehicleModel,
+                plateNumber: data.driverLicensePlate || activeBooking.driver.plateNumber,
+                fare: finalFare,
+                status: 'সম্পন্ন',
+                ratingGiven: 5.0
+              };
+              setTripHistory(prev => [newTripRecord, ...prev]);
             }
-            if (activeBooking && (activeBooking as any).requestId === docSnap.id) {
-              setActiveBooking(null);
-              setPickupCoords(null);
-              setDestCoords(null);
-              setPassengerPickup('');
-              setPassengerDestination('');
-              showAdminToastMessage('ট্রিপটি বাতিল হয়েছে এবং ম্যাপ ক্লিয়ার করা হয়েছে');
-            }
+            setActiveBooking(null);
+            setPickupCoords(null);
+            setDestCoords(null);
+            setPassengerPickup('');
+            setPassengerDestination('');
+            try {
+              localStorage.removeItem('safar_active_booking_v2');
+              localStorage.removeItem('safar_my_ride_request_id');
+            } catch {}
+            showAdminToastMessage(`🎉 চালক ট্রিপ সফলভাবে সম্পন্ন করেছেন! নির্ধারিত ভাড়া: ৳ ${finalFare}`);
           }
           return;
         }
 
-        if (data.status) {
-          liveList.push({
-            id: docSnap.id,
-            passengerName: data.passengerName || 'সম্মানিত যাত্রী',
-            passengerPhone: data.passengerPhone || '',
-            pickupPoint: data.pickupPoint || data.pickupLocation || '',
-            destination: data.destination || data.destinationLocation || '',
-            category: data.category || data.vehicleCategory || 'cng',
-            requestedAt: 'এইমাত্র',
-            distanceKm: Number(data.distanceKm) || 1.2,
-            estFare: Number(data.estFare || data.estimatedFare) || 40,
-            status: data.status,
-            driverId: data.driverId,
-            driverName: data.driverName,
-            driverPhone: data.driverPhone,
-            driverCategory: data.driverCategory,
-            driverLat: data.driverLat,
-            driverLng: data.driverLng,
-            driverVehicleModel: data.driverVehicleModel,
-            driverLicensePlate: data.driverLicensePlate,
-            driverRating: data.driverRating,
-            otp: data.otp
-          });
+        // If current passenger was waiting for or in this trip and it was cancelled, reset state cleanly
+        if (data.status === 'cancelled') {
+          if (passengerPendingRequest && passengerPendingRequest.id === docSnap.id) {
+            setPassengerPendingRequest(null);
+            setPickupCoords(null);
+            setDestCoords(null);
+            setPassengerPickup('');
+            setPassengerDestination('');
+            try {
+              localStorage.removeItem('safar_passenger_pending_v2');
+              localStorage.removeItem('safar_my_ride_request_id');
+            } catch {}
+            showAdminToastMessage('যাত্রার অনুরোধটি বাতিল হয়েছে');
+          }
+          if (activeBooking && ((activeBooking as any).requestId === docSnap.id || (activeBooking as any).id === docSnap.id)) {
+            setActiveBooking(null);
+            setPickupCoords(null);
+            setDestCoords(null);
+            setPassengerPickup('');
+            setPassengerDestination('');
+            try {
+              localStorage.removeItem('safar_active_booking_v2');
+              localStorage.removeItem('safar_my_ride_request_id');
+            } catch {}
+            showAdminToastMessage('ট্রিপটি বাতিল হয়েছে এবং ম্যাপ ক্লিয়ার করা হয়েছে');
+          }
+          return;
         }
+
+        // Push active requests (pending, accepted, in_transit)
+        liveList.push({
+          id: docSnap.id,
+          passengerName: data.passengerName || 'সম্মানিত যাত্রী',
+          passengerPhone: data.passengerPhone || '',
+          pickupPoint: data.pickupPoint || data.pickupLocation || '',
+          pickupLandmark: data.pickupLandmark || '',
+          destination: data.destination || data.destinationLocation || '',
+          category: data.category || data.vehicleCategory || 'cng',
+          requestedAt: 'এইমাত্র',
+          distanceKm: Number(data.distanceKm) || 1.2,
+          estFare: Number(data.estFare || data.estimatedFare) || 40,
+          status: data.status,
+          driverId: data.driverId,
+          driverName: data.driverName,
+          driverPhone: data.driverPhone,
+          driverCategory: data.driverCategory,
+          driverLat: data.driverLat,
+          driverLng: data.driverLng,
+          driverVehicleModel: data.driverVehicleModel,
+          driverLicensePlate: data.driverLicensePlate,
+          driverRating: data.driverRating,
+          otp: data.otp,
+          pickupCoords: data.pickupCoords || null,
+          destCoords: data.destCoords || null,
+          createdAtMs: reqTime
+        });
       });
+
+      // Sort newest requests first by timestamp
+      liveList.sort((a, b) => ((b as any).createdAtMs || 0) - ((a as any).createdAtMs || 0));
 
       // Update Driver Cockpit list
       setPassengerRequests(liveList);
 
-      // Check if current passenger's pending request was accepted by a driver
-      if (passengerPendingRequest) {
-        const myActiveDoc = liveList.find(r => r.id === passengerPendingRequest.id);
-        if (myActiveDoc && myActiveDoc.status === 'accepted' && myActiveDoc.driverId) {
-          const foundInDrivers = drivers.find(d => 
-            (myActiveDoc.driverId && d.id === myActiveDoc.driverId) ||
-            (myActiveDoc.driverPhone && d.phone === myActiveDoc.driverPhone) ||
-            (myActiveDoc.driverName && d.name.trim().toLowerCase() === myActiveDoc.driverName.trim().toLowerCase())
-          );
+      // Check if current passenger's specific request was accepted by a driver
+      const storedRequestId = localStorage.getItem('safar_my_ride_request_id');
+      const myTargetId = passengerPendingRequest?.id || storedRequestId || (activeBooking as any)?.requestId || (activeBooking as any)?.id;
+      const dismissed = getDismissedTripIds();
 
-          const dynamicVehicle = (myActiveDoc as any).driverVehicleModel || foundInDrivers?.vehicleModel || 'যানবাহন';
-          const dynamicPlate = (myActiveDoc as any).driverPlateNumber || (myActiveDoc as any).driverLicensePlate || foundInDrivers?.plateNumber || (myActiveDoc.driverPhone?.includes('01304841550') || myActiveDoc.driverName?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : 'BRTA-GAF-2026');
-          const dynamicLicense = (myActiveDoc as any).driverLicenseNumber || foundInDrivers?.licenseNumber || 'BRTA-GAF';
-          const dynamicPhoto = (myActiveDoc as any).driverPhoto || foundInDrivers?.driverPhoto || (foundInDrivers?.phone?.includes('01304841550') || foundInDrivers?.name?.toUpperCase().includes('TASNIMUL') || myActiveDoc.driverPhone?.includes('01304841550') || myActiveDoc.driverName?.toUpperCase().includes('TASNIMUL') ? '/assets/drivers/tasnimul_kabeer.png' : '');
+      const myActiveDoc = liveList.find(r => 
+        (r.status === 'accepted' || r.status === 'in_transit') &&
+        !dismissed.has(r.id) &&
+        myTargetId && r.id === myTargetId
+      );
 
-          const matchedDriver: Driver = foundInDrivers ? {
-            ...foundInDrivers,
-            vehicleModel: dynamicVehicle,
-            plateNumber: dynamicPlate,
-            licenseNumber: dynamicLicense,
-            driverPhoto: dynamicPhoto
-          } : {
+      // Clean up ghost passenger pending request if it was deleted or expired from database
+      if (passengerPendingRequest && !myActiveDoc) {
+        const stillPending = liveList.find(r => r.id === passengerPendingRequest.id && r.status === 'pending');
+        if (!stillPending) {
+          const reqAge = Date.now() - (Number(passengerPendingRequest.id.replace('req-', '')) || 0);
+          if (reqAge > 3 * 60 * 1000) {
+            setPassengerPendingRequest(null);
+            try {
+              localStorage.removeItem('safar_passenger_pending_v2');
+              localStorage.removeItem('safar_my_ride_request_id');
+            } catch {}
+          }
+        }
+      }
+
+      if (myActiveDoc && myActiveDoc.driverId) {
+        if (!activeBooking || (activeBooking as any).requestId !== myActiveDoc.id) {
+          const matchedDriver: Driver = drivers.find(d => d.id === myActiveDoc.driverId) || {
             id: myActiveDoc.driverId,
             name: myActiveDoc.driverName || 'ভেরিফাইড চালক',
             phone: myActiveDoc.driverPhone || '০১৭১১-২২৩৩৪৪',
@@ -3048,41 +3115,52 @@ export default function App() {
             rating: myActiveDoc.driverRating || 5.0,
             totalTrips: 25,
             isOnline: true,
-            vehicleModel: dynamicVehicle,
-            licenseNumber: dynamicLicense,
-            plateNumber: dynamicPlate,
+            vehicleModel: myActiveDoc.driverVehicleModel || 'যানবাহন',
+            licenseNumber: myActiveDoc.driverLicensePlate || 'BRTA-GAF-2026',
+            plateNumber: (myActiveDoc as any).driverPlateNumber || (myActiveDoc as any).plateNumber || myActiveDoc.driverLicensePlate || 'নিবন্ধিত নম্বর',
+            driverPhoto: (myActiveDoc as any).driverPhoto || '',
             licenseType: 'পেশাদার (Professional)',
             nidNumber: '19886112345678901',
             nidVerified: true,
             licenseVerified: true,
             standName: 'গফরগাঁও',
             avatarBg: 'bg-emerald-600',
-            approxSpeedKmh: 25,
-            driverPhoto: dynamicPhoto
+            approxSpeedKmh: 25
           };
 
-          const pCoords = pickupCoords || { lat: 24.4536, lng: 90.5479 };
-          const dCoords = (myActiveDoc as any).destCoords || destCoords || resolveLocationCoordinates(myActiveDoc.destination, true, stands);
-          setActiveBooking({
+          const pCoords = myActiveDoc.pickupCoords || pickupCoords || resolveLocationCoordinates(myActiveDoc.pickupPoint, false, stands) || { lat: 24.4536, lng: 90.5479 };
+          const dCoords = myActiveDoc.destCoords || destCoords || resolveLocationCoordinates(myActiveDoc.destination, true, stands) || { lat: 24.4515, lng: 90.5535 };
+          setPickupCoords(pCoords);
+          setDestCoords(dCoords);
+
+          const newBooking = {
             id: myActiveDoc.id,
             requestId: myActiveDoc.id,
             driver: matchedDriver,
             passengerLat: pCoords.lat,
             passengerLng: pCoords.lng,
-            destLat: dCoords?.lat || 24.4515,
-            destLng: dCoords?.lng || 90.5535,
+            destLat: dCoords.lat,
+            destLng: dCoords.lng,
             currentDriverLat: myActiveDoc.driverLat || matchedDriver.lat,
             currentDriverLng: myActiveDoc.driverLng || matchedDriver.lng,
             confirmedAt: Date.now(),
             etaMinutes: Math.max(2, Math.round(myActiveDoc.distanceKm * 2.5)),
             distanceKm: myActiveDoc.distanceKm,
-            status: ((myActiveDoc as any).status === 'in_transit') ? 'in_transit' : 'en_route',
+            status: (myActiveDoc.status === 'in_transit' ? 'in_transit' : 'en_route') as 'en_route' | 'in_transit',
             otp: myActiveDoc.otp || '5201',
             pickupTitle: myActiveDoc.pickupPoint,
+            pickupLandmark: myActiveDoc.pickupLandmark || '',
             destTitle: myActiveDoc.destination,
             fare: myActiveDoc.estFare
-          });
+          };
+
+          setActiveBooking(newBooking);
           setPassengerPendingRequest(null);
+          try {
+            localStorage.setItem('safar_active_booking_v2', JSON.stringify(newBooking));
+            localStorage.removeItem('safar_passenger_pending_v2');
+          } catch {}
+
           try {
             sounds.playDriverMatchedChime();
           } catch {}
@@ -3092,41 +3170,26 @@ export default function App() {
         // Sync real-time driver coordinates and status from Firestore
         const activeDoc = liveList.find(r => r.id === (activeBooking as any).requestId);
         if (activeDoc) {
-          const docStatus = (activeDoc as any).status;
-          const currentStatus = activeBooking.status;
-          // CRITICAL: Once ride has transitioned to 'in_transit', NEVER revert to 'accepted' or 'en_route'!
-          const isDocInTransit = docStatus === 'in_transit';
-          const isInTransitNow = isDocInTransit || currentStatus === 'in_transit';
-          const resolvedStatus = docStatus === 'completed' 
-            ? 'completed' 
-            : (docStatus === 'cancelled' ? 'cancelled' : (isInTransitNow ? 'in_transit' : ((docStatus as any) || currentStatus)));
+          const newStatus = (activeDoc.status as any) || activeBooking.status;
+          const newLat = activeDoc.driverLat || activeBooking.currentDriverLat;
+          const newLng = activeDoc.driverLng || activeBooking.currentDriverLng;
+          const effDestLat = activeDoc.destCoords?.lat || activeBooking.destLat || destCoords?.lat;
+          const effDestLng = activeDoc.destCoords?.lng || activeBooking.destLng || destCoords?.lng;
 
-          const driverLat = activeDoc.driverLat || activeBooking.currentDriverLat;
-          const driverLng = activeDoc.driverLng || activeBooking.currentDriverLng;
-
-          const targetLat = isInTransitNow 
-            ? (activeBooking.destLat || destCoords?.lat || 24.4515) 
-            : activeBooking.passengerLat;
-          const targetLng = isInTransitNow 
-            ? (activeBooking.destLng || destCoords?.lng || 90.5535) 
-            : activeBooking.passengerLng;
-
-          const dist = Number(calculateDistanceKm(driverLat, driverLng, targetLat, targetLng).toFixed(2));
-          const eta = Math.max(1, calculateEtaMinutes(dist, activeBooking.driver.approxSpeedKmh || 30));
-
-          if (
-            (activeDoc.driverLat && activeDoc.driverLat !== activeBooking.currentDriverLat) || 
-            (activeDoc.driverLng && activeDoc.driverLng !== activeBooking.currentDriverLng) ||
-            resolvedStatus !== currentStatus ||
-            dist !== activeBooking.distanceKm
-          ) {
+          if (newLat !== activeBooking.currentDriverLat || newLng !== activeBooking.currentDriverLng || newStatus !== activeBooking.status) {
+            const dist = newStatus === 'in_transit' && effDestLat && effDestLng
+              ? Number(calculateDistanceKm(newLat, newLng, effDestLat, effDestLng).toFixed(2))
+              : Number(calculateDistanceKm(newLat, newLng, activeBooking.passengerLat, activeBooking.passengerLng).toFixed(2));
+            const eta = Math.max(1, calculateEtaMinutes(dist, activeBooking.driver.approxSpeedKmh || 30));
             setActiveBooking(prev => prev ? {
               ...prev,
-              currentDriverLat: driverLat,
-              currentDriverLng: driverLng,
+              currentDriverLat: newLat,
+              currentDriverLng: newLng,
+              destLat: effDestLat || prev.destLat,
+              destLng: effDestLng || prev.destLng,
               distanceKm: dist,
               etaMinutes: eta,
-              status: resolvedStatus
+              status: newStatus
             } : null);
           }
         }
@@ -3165,6 +3228,78 @@ export default function App() {
     } : undefined
   });
 
+  // Auto-start device GPS tracking when user switches to driver mode
+  useEffect(() => {
+    if (userRole === 'driver' && !liveGps.isTracking) {
+      startGpsTracking();
+    }
+  }, [userRole, liveGps.isTracking, startGpsTracking]);
+
+  // Request Screen WakeLock in driver mode so device screen does not turn off while waiting for rides
+  useEffect(() => {
+    let wakeLockSentinel: any = null;
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator && userRole === 'driver') {
+          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch {}
+    };
+
+    if (userRole === 'driver') {
+      requestWakeLock();
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible' && userRole === 'driver') {
+          requestWakeLock();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        if (wakeLockSentinel && typeof wakeLockSentinel.release === 'function') {
+          wakeLockSentinel.release().catch(() => {});
+        }
+      };
+    }
+  }, [userRole]);
+
+  // Request Notification permission when switching to driver mode so incoming ride alerts notify even if minimized
+  useEffect(() => {
+    if (userRole === 'driver' && typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+    }
+  }, [userRole]);
+
+  // Throttled Real-time Driver GPS Broadcast to active accepted/in_transit trip in Firestore
+  const lastGpsBroadcastRef = useRef<{ lat: number; lng: number; time: number }>({ lat: 0, lng: 0, time: 0 });
+
+  useEffect(() => {
+    if (userRole === 'driver' && liveGps.lat && liveGps.lng) {
+      const activeTrip = passengerRequests.find(r => 
+        (r.status === 'accepted' || r.status === 'in_transit') &&
+        (r.driverId === driverProfile.id || r.driverPhone === driverProfile.phone || !r.driverId)
+      );
+      if (activeTrip && activeTrip.id) {
+        const now = Date.now();
+        const prev = lastGpsBroadcastRef.current;
+        const timeDiff = now - prev.time;
+        const distDiff = Math.hypot(liveGps.lat - prev.lat, liveGps.lng - prev.lng);
+
+        // Throttle to at most once every 12s and only if moved > 15m to avoid quota exhaustion
+        if (timeDiff >= 12000 && distDiff > 0.00012) {
+          lastGpsBroadcastRef.current = { lat: liveGps.lat, lng: liveGps.lng, time: now };
+          updateDoc(doc(db, 'ride_requests', activeTrip.id), {
+            driverLat: liveGps.lat,
+            driverLng: liveGps.lng,
+            lastGpsUpdate: new Date().toISOString()
+          }).catch(() => {});
+        }
+      }
+    }
+  }, [userRole, liveGps.lat, liveGps.lng, passengerRequests, driverProfile.id, driverProfile.phone]);
+
   // Helper: check if a location title implies real device live GPS
   const isLiveLocationQuery = (text: string): boolean => {
     if (!text) return false;
@@ -3181,24 +3316,37 @@ export default function App() {
     );
   };
 
-  // Helper: Find nearest union stand or popular landmark to give a human-readable reference for Live GPS
-  const findNearestLandmark = (lat: number, lng: number): { name: string; distanceMeters: number } => {
+  // Helper: Find nearest union stand or popular landmark to give a human-readable 2nd option for Live GPS
+  const findNearestLandmark = useCallback((lat: number, lng: number): { name: string; distanceMeters: number } => {
     let nearestName = 'গফরগাঁও পৌরসভা চত্বর';
     let minDistanceKm = 9999;
-    for (const place of COMPREHENSIVE_UNION_PLACES) {
-      if (place.lat && place.lng) {
+    
+    // Check all autocomplete union places
+    for (const place of allAutocompletePlaces) {
+      if (typeof place.lat === 'number' && typeof place.lng === 'number') {
         const dist = calculateDistanceKm(lat, lng, place.lat, place.lng);
         if (dist < minDistanceKm) {
           minDistanceKm = dist;
-          nearestName = place.bengaliName;
+          nearestName = place.bengaliName || place.name || 'গফরগাঁও';
         }
       }
     }
+    // Also check dynamic stands
+    for (const stand of stands) {
+      if (typeof stand.lat === 'number' && typeof stand.lng === 'number') {
+        const dist = calculateDistanceKm(lat, lng, stand.lat, stand.lng);
+        if (dist < minDistanceKm) {
+          minDistanceKm = dist;
+          nearestName = stand.bengaliName || stand.name || 'গফরগাঁও';
+        }
+      }
+    }
+
     return {
       name: nearestName,
       distanceMeters: Math.round(minDistanceKm * 1000)
     };
-  };
+  }, [allAutocompletePlaces, stands]);
 
   // Helper to extract or resolve coordinates for any stand or custom name in Gafargaon
   const getCoordinatesForLocation = (locName: string, isDest = false): { lat: number; lng: number } | null => {
@@ -3347,11 +3495,13 @@ export default function App() {
       return;
     }
 
-    let pickupTitle = passengerPickup.trim() || 'গফরগাঁও পৌরসভা চত্বর';
-    if (isLiveLocationQuery(pickupTitle) && pickupCoords) {
+    let pickupTitle = passengerPickup.trim() || 'আমার লাইভ অবস্থান (GPS)';
+    let landmarkRef = passengerPickupLandmark;
+    if (pickupCoords) {
       const nearest = findNearestLandmark(pickupCoords.lat, pickupCoords.lng);
-      pickupTitle = nearest.name;
-      setPassengerPickup(nearest.name);
+      if (!landmarkRef && nearest.distanceMeters > 40) {
+        landmarkRef = `${nearest.name} (থেকে ~${toBengaliNumber(nearest.distanceMeters)} মিটার দূরে)`;
+      }
     }
     const destTitle = passengerDestination.trim() || 'উপজেলা স্বাস্থ্য কমপ্লেক্স';
 
@@ -3368,6 +3518,7 @@ export default function App() {
       passengerName: passengerProfile.name,
       passengerPhone: passengerProfile.phone,
       pickupPoint: pickupTitle,
+      pickupLandmark: landmarkRef || undefined,
       destination: destTitle,
       category: passengerSelectedVehicle,
       requestedAt: 'এইমাত্র',
@@ -3379,6 +3530,24 @@ export default function App() {
     };
 
     setPassengerPendingRequest(newRequest);
+    try {
+      localStorage.setItem('safar_my_ride_request_id', newRequest.id);
+      localStorage.setItem('safar_my_ride_request_phone', newRequest.passengerPhone);
+      localStorage.setItem('safar_passenger_pending_v2', JSON.stringify(newRequest));
+    } catch {}
+
+    // First purge any older pending requests from this same passenger in Firestore to avoid duplicate clutter
+    getDocs(query(
+      collection(db, 'ride_requests'),
+      where('passengerPhone', '==', newRequest.passengerPhone),
+      where('status', '==', 'pending')
+    )).then((oldSnaps) => {
+      oldSnaps.forEach((d) => {
+        if (d.id !== newRequest.id) {
+          deleteDoc(doc(db, 'ride_requests', d.id)).catch(() => {});
+        }
+      });
+    }).catch(() => {});
 
     // Sync to Firestore for real-time broadcast to all drivers
     setDoc(doc(db, 'ride_requests', newRequest.id), {
@@ -3386,6 +3555,7 @@ export default function App() {
       passengerName: newRequest.passengerName,
       passengerPhone: newRequest.passengerPhone,
       pickupPoint: newRequest.pickupPoint,
+      pickupLandmark: newRequest.pickupLandmark || '',
       destination: newRequest.destination,
       category: newRequest.category,
       distanceKm: newRequest.distanceKm,
@@ -3393,6 +3563,7 @@ export default function App() {
       pickupCoords: pickupCoords || { lat: 24.4536, lng: 90.5479 },
       destCoords: destCoords || { lat: 24.4515, lng: 90.5535 },
       status: 'pending',
+      createdAtMs: Date.now(),
       requestedAt: new Date().toISOString()
     }).catch(err => {
       console.warn('Firestore offline fallback for ride request:', err);
@@ -3411,21 +3582,32 @@ export default function App() {
 
   // Cancel Pending Request & Clear Map
   const handleCancelPassengerPendingRequest = async () => {
-    if (passengerPendingRequest) {
-      const reqId = passengerPendingRequest.id;
-      setPassengerPendingRequest(null);
-      setActiveBooking(null);
-      setPickupCoords(null);
-      setDestCoords(null);
-      setPassengerPickup('');
-      setPassengerDestination('');
+    const reqId = passengerPendingRequest?.id || localStorage.getItem('safar_my_ride_request_id');
+    setPassengerPendingRequest(null);
+    setActiveBooking(null);
+    setPickupCoords(null);
+    setDestCoords(null);
+    setPassengerPickup('');
+    setPassengerDestination('');
+
+    try {
+      localStorage.removeItem('safar_passenger_pending_v2');
+      localStorage.removeItem('safar_my_ride_request_id');
+      localStorage.removeItem('safar_my_ride_request_phone');
+      localStorage.removeItem('safar_active_booking_v2');
+    } catch {}
+
+    if (reqId) {
       try {
-        await deleteDoc(doc(db, 'ride_requests', reqId));
+        await updateDoc(doc(db, 'ride_requests', reqId), {
+          status: 'cancelled',
+          cancelledAt: new Date().toISOString()
+        });
       } catch (err) {
-        console.warn('Failed to delete pending ride_request from Firestore:', err);
+        console.warn('Failed to cancel pending ride_request in Firestore:', err);
       }
-      showAdminToastMessage('যাত্রার অনুরোধ সফলভাবে বাতিল করা হয়েছে এবং ম্যাপ ক্লিয়ার হয়েছে');
     }
+    showAdminToastMessage('যাত্রার অনুরোধ সফলভাবে বাতিল করা হয়েছে এবং ম্যাপ ক্লিয়ার হয়েছে');
   };
 
   // Explicitly Clear Route and Location Pins from Map
@@ -3457,10 +3639,37 @@ export default function App() {
   };
 
   // Driver accepts request (Real-Time Firestore Update)
+  const isAcceptingRef = useRef<{ [id: string]: boolean }>({});
+
   const handleDriverAcceptRequest = async (requestId: string) => {
+    if (isAcceptingRef.current[requestId]) return;
+    isAcceptingRef.current[requestId] = true;
+
+    // 1. Immediately stop any ringing Daf alarms
+    sounds.stopAllAlarms();
+
+    const targetReq = passengerRequests.find(r => r.id === requestId)
+      || (passengerPendingRequest?.id === requestId ? passengerPendingRequest : null);
+    const targetPassengerPhone = targetReq?.passengerPhone || '';
+
+    // Immediately dismiss alert modal for this request and passenger
+    setDismissedAlertIds(prev => ({
+      ...prev,
+      [requestId]: true,
+      ...(targetPassengerPhone ? { [targetPassengerPhone]: true } : {})
+    }));
+
+    if (!liveGps.isTracking) {
+      startGpsTracking();
+    }
     const driverStand = stands.find(s => s.name === driverProfile.standName || s.bengaliName === driverProfile.standName);
-    const driverLat = driverStand ? driverStand.lat : 24.4536;
-    const driverLng = driverStand ? driverStand.lng : 90.5479;
+    // Prioritize real device GPS location over registered stand!
+    const driverLat = (liveGps.lat && liveGps.lng)
+      ? liveGps.lat
+      : (driverProfile.lat || (driverStand ? driverStand.lat : 24.4536));
+    const driverLng = (liveGps.lat && liveGps.lng)
+      ? liveGps.lng
+      : (driverProfile.lng || (driverStand ? driverStand.lng : 90.5479));
 
     const activeDriver: Driver = (userRole === 'driver' && driverProfile.id)
       ? {
@@ -3475,58 +3684,51 @@ export default function App() {
           totalTrips: driverProfile.todayTrips || 25,
           isOnline: true,
           vehicleModel: driverProfile.vehicleModel || 'যানবাহন',
-          licenseNumber: driverProfile.licenseNumber || 'BRTA-GAF-2026',
-          plateNumber: driverProfile.plateNumber || driverProfile.licenseNumber || (driverProfile.phone?.includes('01304841550') || driverProfile.name?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : 'BRTA-GAF-2026'),
+          licenseNumber: driverProfile.licenseNumber || driverProfile.plateNumber || 'BRTA-GAF-2026',
+          plateNumber: driverProfile.plateNumber || (driverProfile.name?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : (drivers[0]?.plateNumber || 'নিবন্ধিত নম্বর')),
+          driverPhoto: driverProfile.driverPhoto || ((driverProfile.phone?.includes('01304841550') || driverProfile.name?.toUpperCase().includes('TASNIMUL')) ? '/assets/drivers/tasnimul_kabeer.png' : ''),
           licenseType: 'পেশাদার (Professional)',
           nidNumber: '19886112345678901',
           nidVerified: true,
           licenseVerified: true,
           standName: driverProfile.standName || 'গফরগাঁও',
           avatarBg: 'bg-emerald-600',
-          approxSpeedKmh: 25,
-          driverPhoto: driverProfile.driverPhoto || ''
+          approxSpeedKmh: 25
         }
-      : (() => {
-          const fallback = drivers.find(d => d.phone?.includes('01304841550') || d.name?.toUpperCase().includes('TASNIMUL')) || drivers[0] || INITIAL_DRIVERS[0];
-          return {
-            id: fallback.id,
-            name: fallback.name,
-            phone: fallback.phone,
-            category: fallback.category,
-            categoryBengali: categories.find(c => c.id === fallback.category)?.nameBengali || 'যানবাহন',
-            lat: fallback.lat || 24.4536,
-            lng: fallback.lng || 90.5479,
-            rating: fallback.rating || 5.0,
-            totalTrips: fallback.totalTrips || 20,
-            isOnline: true,
-            vehicleModel: fallback.vehicleModel,
-            licenseNumber: fallback.licenseNumber,
-            plateNumber: fallback.plateNumber,
-            licenseType: fallback.licenseType || 'পেশাদার (Professional)',
-            nidNumber: fallback.nidNumber || '19886112345678901',
-            nidVerified: true,
-            licenseVerified: true,
-            standName: fallback.standName,
-            avatarBg: 'bg-emerald-600',
-            approxSpeedKmh: 25,
-            driverPhoto: fallback.driverPhoto || ''
-          };
-        })();
+      : (drivers[0] || {
+          id: 'driver-default',
+          name: 'ভেরিফাইড চালক',
+          phone: '০১৭১১-২২৩৩৪৪',
+          category: 'cng',
+          categoryBengali: 'সিএনজি',
+          lat: 24.4536,
+          lng: 90.5479,
+          rating: 5.0,
+          totalTrips: 20,
+          isOnline: true,
+          vehicleModel: 'সিএনজি',
+          licenseNumber: 'BRTA-GAF',
+          plateNumber: (drivers[0] as any)?.plateNumber || 'ময়মনসিংহ-থ-১৭-৯০০১',
+          driverPhoto: '',
+          licenseType: 'পেশাদার (Professional)',
+          nidNumber: '19886112345678901',
+          nidVerified: true,
+          licenseVerified: true,
+          standName: 'গফরগাঁও',
+          avatarBg: 'bg-emerald-600',
+          approxSpeedKmh: 25
+        });
 
     const otpCode = String(Math.floor(1000 + Math.random() * 9000));
     const reqRef = doc(db, 'ride_requests', requestId);
 
-    try {
-      await runTransaction(db, async (transaction) => {
-        const sfDoc = await transaction.get(reqRef);
-        if (!sfDoc.exists()) {
-          throw new Error('NOT_FOUND');
-        }
-        const data = sfDoc.data();
-        if (data.status !== 'pending') {
-          throw new Error('ALREADY_ACCEPTED');
-        }
-        transaction.update(reqRef, {
+    // 2. Optimistically update local passengerRequests immediately on 1st click
+    // so the driver active trip cockpit opens instantly without lag!
+    // And eliminate any duplicate pending requests for this passenger from the waiting list!
+    setPassengerRequests(prev => prev.map(r => {
+      if (r.id === requestId) {
+        return {
+          ...r,
           status: 'accepted',
           driverId: activeDriver.id,
           driverName: activeDriver.name,
@@ -3535,52 +3737,131 @@ export default function App() {
           driverLat: activeDriver.lat,
           driverLng: activeDriver.lng,
           driverVehicleModel: activeDriver.vehicleModel,
-          driverPlateNumber: activeDriver.plateNumber,
           driverLicensePlate: activeDriver.plateNumber || activeDriver.licenseNumber,
-          driverLicenseNumber: activeDriver.licenseNumber,
-          driverPhoto: activeDriver.driverPhoto || (activeDriver as any).photoUrl || '',
+          driverPlateNumber: activeDriver.plateNumber,
+          driverPhoto: activeDriver.driverPhoto,
           driverRating: activeDriver.rating,
           otp: otpCode,
           acceptedAt: new Date().toISOString()
-        });
+        };
+      }
+      if (targetPassengerPhone && r.passengerPhone === targetPassengerPhone && r.status === 'pending') {
+        return { ...r, status: 'cancelled' };
+      }
+      return r;
+    }));
+
+    // 3. Passenger Side Confirmation: If this device is also the passenger, set activeBooking immediately
+    // so switching back to Passenger Mode NEVER loses the driver confirmation!
+    const cleanTargetPhone = targetPassengerPhone.replace(/[^0-9]/g, '');
+    const cleanPassengerProfilePhone = (passengerProfile?.phone || '').replace(/[^0-9]/g, '');
+    const isThisPassenger = (passengerPendingRequest?.id === requestId) ||
+      (cleanTargetPhone && cleanPassengerProfilePhone && cleanTargetPhone === cleanPassengerProfilePhone);
+
+    if (isThisPassenger) {
+      const pCoords = targetReq?.pickupCoords || resolveLocationCoordinates(targetReq?.pickupPoint || '', false, stands) || { lat: 24.4536, lng: 90.5479 };
+      const dCoords = targetReq?.destCoords || resolveLocationCoordinates(targetReq?.destination || '', true, stands) || { lat: 24.4515, lng: 90.5535 };
+      const newBooking = {
+        id: requestId,
+        requestId: requestId,
+        driver: activeDriver,
+        passengerLat: pCoords.lat,
+        passengerLng: pCoords.lng,
+        destLat: dCoords.lat,
+        destLng: dCoords.lng,
+        currentDriverLat: activeDriver.lat,
+        currentDriverLng: activeDriver.lng,
+        confirmedAt: Date.now(),
+        etaMinutes: Math.max(2, Math.round((targetReq?.distanceKm || 1.2) * 2.5)),
+        distanceKm: targetReq?.distanceKm || 1.2,
+        status: 'en_route' as const,
+        otp: otpCode,
+        pickupTitle: targetReq?.pickupPoint || 'পিকআপ স্থান',
+        pickupLandmark: targetReq?.pickupLandmark || '',
+        destTitle: targetReq?.destination || 'গন্তব্য স্থান',
+        fare: targetReq?.estFare || 40
+      };
+      setActiveBooking(newBooking);
+      setPickupCoords(pCoords);
+      setDestCoords(dCoords);
+      setPassengerPendingRequest(null);
+      try {
+        localStorage.setItem('safar_active_booking_v2', JSON.stringify(newBooking));
+        localStorage.removeItem('safar_passenger_pending_v2');
+      } catch {}
+    }
+
+    // 4. Open map & smooth-scroll to Driver Active Trip Cockpit
+    setShowDriverInlineMap(true);
+    setTimeout(() => {
+      const cockpitEl = document.getElementById('safar-driver-active-trip-cockpit');
+      if (cockpitEl) {
+        cockpitEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 120);
+
+    try {
+      await updateDoc(reqRef, {
+        status: 'accepted',
+        driverId: activeDriver.id,
+        driverName: activeDriver.name,
+        driverPhone: activeDriver.phone,
+        driverCategory: activeDriver.category,
+        driverLat: activeDriver.lat,
+        driverLng: activeDriver.lng,
+        driverVehicleModel: activeDriver.vehicleModel,
+        driverLicensePlate: activeDriver.plateNumber || activeDriver.licenseNumber,
+        driverPlateNumber: activeDriver.plateNumber,
+        driverPhoto: activeDriver.driverPhoto || activeDriver.photoUrl || (activeDriver.name?.toUpperCase().includes('TASNIMUL') ? '/assets/drivers/tasnimul_kabeer.png' : ''),
+        driverRating: activeDriver.rating,
+        otp: otpCode,
+        acceptedAt: new Date().toISOString()
       });
 
-      showAdminToastMessage(`🎉 ট্রিপ সফলভাবে গ্রহণ করা হয়েছে! যাত্রীর কাছে রওনা দিন।`);
-      try {
-        sounds.playDriverMatchedChime();
-      } catch {}
-    } catch (err: any) {
-      if (err?.message === 'ALREADY_ACCEPTED') {
-        showAdminToastMessage('⚠️ দুঃখিত! অন্য একজন চালক ইতিমধ্যে ট্রিপটি গ্রহণ করেছেন।');
-        setPassengerRequests(prev => prev.filter(r => r.id !== requestId));
-      } else if (err?.message === 'NOT_FOUND') {
-        showAdminToastMessage('যাত্রার অনুরোধটি ইতোমধ্যে বাতিল বা মুছে ফেলা হয়েছে');
-        setPassengerRequests(prev => prev.filter(r => r.id !== requestId));
-      } else {
-        console.warn('Firestore transaction fallback:', err);
-        try {
-          await updateDoc(reqRef, {
-            status: 'accepted',
-            driverId: activeDriver.id,
-            driverName: activeDriver.name,
-            driverPhone: activeDriver.phone,
-            driverCategory: activeDriver.category,
-            driverLat: activeDriver.lat,
-            driverLng: activeDriver.lng,
-            driverVehicleModel: activeDriver.vehicleModel,
-            driverPlateNumber: activeDriver.plateNumber,
-            driverLicensePlate: activeDriver.plateNumber || activeDriver.licenseNumber,
-            driverLicenseNumber: activeDriver.licenseNumber,
-            driverPhoto: activeDriver.driverPhoto || (activeDriver as any).photoUrl || '',
-            driverRating: activeDriver.rating,
-            otp: otpCode,
-            acceptedAt: new Date().toISOString()
+      // Also clean up any other pending requests from this passenger in Firestore
+      if (targetPassengerPhone) {
+        getDocs(query(
+          collection(db, 'ride_requests'),
+          where('passengerPhone', '==', targetPassengerPhone),
+          where('status', '==', 'pending')
+        )).then((snaps) => {
+          snaps.forEach((d) => {
+            if (d.id !== requestId) {
+              updateDoc(doc(db, 'ride_requests', d.id), { status: 'cancelled', cancelledAt: new Date().toISOString() }).catch(() => {});
+            }
           });
-          showAdminToastMessage('ট্রিপ সফলভাবে গ্রহণ করা হয়েছে! যাত্রীর কাছে রওনা দিন।');
-        } catch (e) {
-          setPassengerRequests(prev => prev.filter(r => r.id !== requestId));
-        }
+        }).catch(() => {});
       }
+
+      showAdminToastMessage(`🎉 ট্রিপ সফলভাবে গ্রহণ করা হয়েছে! যাত্রীর কাছে রওনা দিন।`);
+    } catch (err: any) {
+      console.warn('Firestore updateDoc failed, attempting setDoc merge fallback:', err);
+      try {
+        await setDoc(reqRef, {
+          status: 'accepted',
+          driverId: activeDriver.id,
+          driverName: activeDriver.name,
+          driverPhone: activeDriver.phone,
+          driverCategory: activeDriver.category,
+          driverLat: activeDriver.lat,
+          driverLng: activeDriver.lng,
+          driverVehicleModel: activeDriver.vehicleModel,
+          driverLicensePlate: activeDriver.plateNumber || activeDriver.licenseNumber,
+          driverPlateNumber: activeDriver.plateNumber,
+          driverPhoto: activeDriver.driverPhoto || activeDriver.photoUrl || (activeDriver.name?.toUpperCase().includes('TASNIMUL') ? '/assets/drivers/tasnimul_kabeer.png' : ''),
+          driverRating: activeDriver.rating,
+          otp: otpCode,
+          acceptedAt: new Date().toISOString()
+        }, { merge: true });
+        showAdminToastMessage(`🎉 ট্রিপ সফলভাবে গ্রহণ করা হয়েছে! যাত্রীর কাছে রওনা দিন।`);
+      } catch (e) {
+        // Even if network is offline or quota reached, local state was optimistically set
+        showAdminToastMessage(`🎉 ট্রিপ সফলভাবে গ্রহণ করা হয়েছে! যাত্রীর কাছে রওনা দিন।`);
+      }
+    } finally {
+      setTimeout(() => {
+        delete isAcceptingRef.current[requestId];
+      }, 2000);
     }
   };
 
@@ -4352,59 +4633,77 @@ export default function App() {
   // Handle Passenger Confirm Ride with Live Distance & ETA calculation
   // Handle Passenger Confirm Ride with Live Distance, ETA & Automatic State/History Sync
   const handleConfirmRide = (driver: Driver) => {
-    const pLat = passengerLocation.lat;
-    const pLng = passengerLocation.lng;
+    const pTitle = passengerPickup || (selectedStand !== 'all' ? selectedStand : 'গফরগাঁও লাইভ অবস্থান');
+    const dTitle = passengerDestination || driver.standName || 'উপজেলা স্বাস্থ্য কমপ্লেক্স';
+    const pLat = pickupCoords?.lat || passengerLocation.lat || 24.4536;
+    const pLng = pickupCoords?.lng || passengerLocation.lng || 90.5479;
+    const resolvedDest = destCoords || resolveLocationCoordinates(dTitle, true, stands) || { lat: 24.4515, lng: 90.5535 };
+    const dLat = resolvedDest.lat;
+    const dLng = resolvedDest.lng;
     const dist = calculateDistanceKm(driver.lat, driver.lng, pLat, pLng);
     const eta = calculateEtaMinutes(dist, driver.approxSpeedKmh);
     const estFare = Math.max(35, Math.round(dist * (driver.category === 'bike' ? 22 : driver.category === 'cng' ? 26 : driver.category === 'ambulance' ? 60 : 35)));
-
-    const pTitle = passengerPickup || (selectedStand !== 'all' ? selectedStand : 'গফরগাঁও লাইভ অবস্থান');
-    const dTitle = passengerDestination || driver.standName || 'উপজেলা স্বাস্থ্য কমপ্লেক্স';
     const validFare = (estFare && estFare > 0) ? estFare : (categories.find(c => c.id === driver.category)?.baseFare || 40);
 
-    // Automatically dispatch live passenger request to Driver Cockpit (saved to localStorage)
+    let landmarkRef = passengerPickupLandmark;
+    if (!landmarkRef && pLat && pLng) {
+      const nearest = findNearestLandmark(pLat, pLng);
+      if (nearest.distanceMeters > 40) {
+        landmarkRef = `${nearest.name} (থেকে ~${toBengaliNumber(nearest.distanceMeters)} মিটার দূরে)`;
+      }
+    }
+
+    // Automatically dispatch live passenger request to Driver Cockpit (saved to localStorage & Firestore)
     const newRideRequest: PassengerRideRequest = {
       id: `req-${Date.now()}`,
       passengerName: passengerProfile.name || 'সম্মানিত যাত্রী',
       passengerPhone: passengerProfile.phone || '০১৭১১-২২৩৩৪৪',
       pickupPoint: pTitle,
+      pickupLandmark: landmarkRef || undefined,
       destination: dTitle,
       category: driver.category,
       requestedAt: 'এইমাত্র',
       distanceKm: dist,
       estFare: validFare,
-      status: 'accepted'
+      pickupCoords: { lat: pLat, lng: pLng },
+      destCoords: { lat: dLat, lng: dLng },
+      status: 'pending',
+      driverId: driver.id,
+      driverName: driver.name
     };
-    setPassengerRequests(prev => [newRideRequest, ...prev]);
 
-    // Sync ride request to Firestore
+    setPassengerPendingRequest(newRideRequest);
+    try {
+      localStorage.setItem('safar_passenger_pending_v2', JSON.stringify(newRideRequest));
+      localStorage.setItem('safar_my_ride_request_id', newRideRequest.id);
+      localStorage.setItem('safar_my_ride_request_phone', newRideRequest.passengerPhone);
+    } catch {}
+
+    // Sync ride request to Firestore targeting this specific driver
     setDoc(doc(db, 'ride_requests', newRideRequest.id), {
-      ...newRideRequest,
+      id: newRideRequest.id,
+      passengerName: newRideRequest.passengerName,
+      passengerPhone: newRideRequest.passengerPhone,
+      pickupPoint: newRideRequest.pickupPoint,
+      pickupLandmark: landmarkRef || '',
+      destination: newRideRequest.destination,
+      category: newRideRequest.category,
+      distanceKm: newRideRequest.distanceKm,
+      estFare: newRideRequest.estFare,
+      pickupCoords: { lat: pLat, lng: pLng },
+      destCoords: { lat: dLat, lng: dLng },
+      status: 'pending',
       driverId: driver.id,
       driverName: driver.name,
-      createdAt: new Date().toISOString()
+      createdAtMs: Date.now(),
+      requestedAt: new Date().toISOString()
     }).catch(err => console.warn('Firestore ride request sync error:', err));
-
-    setActiveBooking({
-      driver,
-      passengerLat: pLat,
-      passengerLng: pLng,
-      currentDriverLat: driver.lat,
-      currentDriverLng: driver.lng,
-      confirmedAt: Date.now(),
-      etaMinutes: eta,
-      distanceKm: dist,
-      status: 'en_route',
-      fare: validFare,
-      otp: String(Math.floor(1000 + Math.random() * 9000)),
-      pickupTitle: pTitle,
-      destTitle: dTitle
-    });
 
     // Close detail modal
     setSelectedDriver(null);
+    showAdminToastMessage(`চালক '${driver.name}'-এর কাছে আপনার অনুরোধ পাঠানো হয়েছে... চালক গ্রহণের অপেক্ষায়`);
 
-    // Auto-scroll to active ride cockpit box shown in user's screenshot
+    // Auto-scroll to active ride cockpit box
     setTimeout(() => {
       const cockpitEl = document.getElementById('passenger-ride-cockpit-section');
       if (cockpitEl) {
@@ -4415,24 +4714,40 @@ export default function App() {
 
   // Cancel Active Booking & Clear Map Route Lines & Pins
   const handleCancelBooking = async () => {
-    if (activeBooking) {
-      const bId = (activeBooking as any).requestId || (activeBooking as any).id;
-      if (bId) {
-        try {
-          await updateDoc(doc(db, 'ride_requests', bId), {
-            status: 'cancelled',
-            cancelledAt: new Date().toISOString()
-          });
-        } catch (e) {}
-      }
+    const booking = activeBooking;
+    const bId = (booking as any)?.requestId || (booking as any)?.id;
+    if (bId) {
+      addDismissedTripId(bId);
     }
+    const storedReqId = localStorage.getItem('safar_my_ride_request_id');
+    if (storedReqId) {
+      addDismissedTripId(storedReqId);
+    }
+
+    try {
+      localStorage.removeItem('safar_active_booking_v2');
+      localStorage.removeItem('safar_my_ride_request_id');
+      localStorage.removeItem('safar_my_ride_request_phone');
+      localStorage.removeItem('safar_passenger_pending_v2');
+    } catch {}
+
     setActiveBooking(null);
     setPassengerPendingRequest(null);
     setPickupCoords(null);
     setDestCoords(null);
     setPassengerPickup('');
     setPassengerDestination('');
-    showAdminToastMessage('ট্রিপ সফলভাবে বাতিল করা হয়েছে এবং ম্যাপ রুট ক্লিয়ার করা হয়েছে');
+
+    if (bId) {
+      try {
+        await updateDoc(doc(db, 'ride_requests', bId), {
+          status: 'cancelled',
+          cancelledAt: new Date().toISOString()
+        });
+      } catch (e) {}
+    }
+
+    showAdminToastMessage('ট্রিপ সফলভাবে বাতিল ও ক্লিয়ার করা হয়েছে');
   };
 
   // Driver Finishes the Active Trip
@@ -4987,6 +5302,11 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col selection:bg-emerald-600 selection:text-white font-['Hind_Siliguri',sans-serif]">
+      {/* App Launch Splash Screen (Matching IMG-13 with centered logo & Arabic Dua) */}
+      {showAppSplash && (
+        <SplashScreen onFinish={() => setShowAppSplash(false)} durationMs={3000} />
+      )}
+
       {/* PWA 1-Tap Mobile Install Banner & Viral Share Modal */}
       <PWAInstallBanner customAppUrl={appCustomSettings.customAppUrl} />
       
@@ -5242,63 +5562,45 @@ export default function App() {
               onCancelBooking={handleCancelBooking}
               onStartRide={() => {
                 if (activeBooking) {
-                  const reqId = (activeBooking as any).requestId || activeBooking.id;
-                  const destLat = activeBooking.destLat || destCoords?.lat || 24.4515;
-                  const destLng = activeBooking.destLng || destCoords?.lng || 90.5535;
-                  const driverLat = activeBooking.currentDriverLat || 24.4536;
-                  const driverLng = activeBooking.currentDriverLng || 90.5479;
-                  const distToDest = Number(calculateDistanceKm(driverLat, driverLng, destLat, destLng).toFixed(2));
-                  const etaToDest = Math.max(2, calculateEtaMinutes(distToDest, activeBooking.driver.approxSpeedKmh || 30));
+                  const currentLat = (liveGps.lat && liveGps.lng && liveGps.isTracking)
+                    ? liveGps.lat
+                    : (activeBooking.passengerLat || pickupCoords?.lat || 24.4335);
+                  const currentLng = (liveGps.lat && liveGps.lng && liveGps.isTracking)
+                    ? liveGps.lng
+                    : (activeBooking.passengerLng || pickupCoords?.lng || 90.5512);
 
-                  setActiveBooking({ 
-                    ...activeBooking, 
+                  setActiveBooking({
+                    ...activeBooking,
                     status: 'in_transit',
-                    distanceKm: distToDest,
-                    etaMinutes: etaToDest
+                    currentDriverLat: currentLat,
+                    currentDriverLng: currentLng
                   });
-                  if (reqId) {
-                    updateDoc(doc(db, 'ride_requests', reqId), { 
+                  const bId = (activeBooking as any).requestId || (activeBooking as any).id;
+                  if (bId) {
+                    updateDoc(doc(db, 'ride_requests', bId), {
                       status: 'in_transit',
-                      boardedAt: Date.now(),
-                      distanceKm: distToDest,
-                      etaMinutes: etaToDest
-                    }).catch((err) => console.warn('Could not update ride_requests status:', err));
+                      driverLat: currentLat,
+                      driverLng: currentLng,
+                      boardedAt: new Date().toISOString()
+                    }).catch(() => {});
                   }
-                  setPassengerRequests(prev => prev.map(r => (r.id === reqId || r.driverPhone === activeBooking.driver.phone) ? { ...r, status: 'in_transit' as any, distanceKm: distToDest, etaMinutes: etaToDest } : r));
-                  showAdminToastMessage('গাড়িতে ওঠা সম্পন্ন হয়েছে — গন্তব্যের উদ্দেশ্যে যাত্রা শুরু হয়েছে!');
+                  showAdminToastMessage('গাড়িতে ওঠা সম্পন্ন হয়েছে — গন্তব্যের দিকে যাত্রা শুরু!');
                 }
               }}
               onCompleteRide={(fare) => {
                 if (activeBooking) {
+                  const matchedDriver = drivers.find(d => d.id === activeBooking.driver.id) || activeBooking.driver;
                   const finalFare = (fare && fare > 0) ? fare : (activeBooking.fare || 40);
-                  const matched = drivers.find(d => 
-                    (activeBooking.driver.phone && d.phone === activeBooking.driver.phone) ||
-                    (activeBooking.driver.name && d.name.trim().toLowerCase() === activeBooking.driver.name.trim().toLowerCase())
-                  );
-                  const rawPlate = activeBooking.driver.plateNumber || '';
-                  const isDummyPlate = !rawPlate || 
-                    rawPlate.includes('৩৪৫৬') || 
-                    rawPlate.includes('3456') || 
-                    rawPlate.includes('১২-৩৪৫৬') || 
-                    rawPlate.includes('12-3456') || 
-                    rawPlate.includes('BRTA-GAF');
-                  const dynamicPlate = isDummyPlate
-                    ? (matched?.plateNumber || (activeBooking.driver.phone?.includes('01304841550') || activeBooking.driver.name?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : 'MYMENSINGH-HA-15-5206'))
-                    : rawPlate;
-                  const dynamicModel = (activeBooking.driver.vehicleModel && activeBooking.driver.vehicleModel !== 'যানবাহন')
-                    ? activeBooking.driver.vehicleModel
-                    : (matched?.vehicleModel || (activeBooking.driver.phone?.includes('01304841550') || activeBooking.driver.name?.toUpperCase().includes('TASNIMUL') ? 'BAJAJ DISCOVER 125CC' : activeBooking.driver.vehicleModel || 'মোটরসাইকেল'));
-
                   const newTripRecord: PassengerTripRecord = {
                     id: `trip-${Date.now()}`,
                     date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
                     pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
                     destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
-                    driverName: activeBooking.driver.name,
-                    driverPhone: activeBooking.driver.phone,
-                    vehicleCategory: activeBooking.driver.category,
-                    vehicleModel: dynamicModel,
-                    plateNumber: dynamicPlate,
+                    driverName: matchedDriver.name || activeBooking.driver.name,
+                    driverPhone: matchedDriver.phone || activeBooking.driver.phone,
+                    vehicleCategory: matchedDriver.category || activeBooking.driver.category,
+                    vehicleModel: matchedDriver.vehicleModel || activeBooking.driver.vehicleModel,
+                    plateNumber: matchedDriver.plateNumber || activeBooking.driver.plateNumber,
                     fare: finalFare,
                     status: 'সম্পন্ন',
                     ratingGiven: 5.0
@@ -5336,19 +5638,51 @@ export default function App() {
         )}
 
         {/* DRIVER INCOMING RIDE REQUEST POPUP */}
-        {userRole === 'driver' && passengerPendingRequest && (
-          <DriverIncomingAlert
-            request={passengerPendingRequest}
-            onAccept={(reqId) => {
-              handleDriverAcceptRequest(reqId);
-              showAdminToastMessage('যাত্রার অনুরোধ গ্রহণ করা হয়েছে!');
-            }}
-            onDecline={() => {
-              handleCancelPassengerPendingRequest();
-              showAdminToastMessage('অনুরোধ প্রত্যাখ্যান করা হয়েছে');
-            }}
-          />
-        )}
+        {(() => {
+          if (userRole !== 'driver') return null;
+          // If driver already has an active accepted trip, don't show incoming popup
+          const dismissed = getDismissedTripIds();
+          const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+          const hasActiveTrip = passengerRequests.some(r => 
+            (r.status === 'accepted' || r.status === 'in_transit') && 
+            !dismissed.has(r.id) &&
+            (
+              (driverProfile.id && r.driverId === driverProfile.id) ||
+              (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
+            )
+          );
+          if (hasActiveTrip) return null;
+
+          // Find pending request matching this driver:
+          // Either specifically targeted to this driver, or open broadcast matching driver's vehicle category
+          const incoming = passengerRequests.find(r => 
+            r.status === 'pending' && 
+            !dismissedAlertIds[r.id] &&
+            (
+              (r.driverId && (r.driverId === driverProfile.id || (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone))) ||
+              (!r.driverId && (!driverProfile.category || driverProfile.category === 'all' || r.category === driverProfile.category))
+            )
+          ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && userRole === 'driver' ? passengerPendingRequest : null);
+
+          if (!incoming) return null;
+
+          return (
+            <DriverIncomingAlert
+              key={incoming.id}
+              request={incoming}
+              onAccept={(reqId) => {
+                setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
+                sounds.stopAllAlarms();
+                handleDriverAcceptRequest(reqId);
+              }}
+              onDecline={(reqId) => {
+                setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
+                sounds.stopAllAlarms();
+                showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
+              }}
+            />
+          );
+        })()}
 
         {/* ============================================================== */}
         {/* PASSENGER RIDE PLANNER & BOOKING HUB (SHOWN IN PASSENGER MODE) */}
@@ -5395,56 +5729,78 @@ export default function App() {
                   {/* Route Selector: Pickup & Destination with Autocomplete & Swap Button */}
                   <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-2 bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-200">
                     
-                    {/* PICKUP POINT WITH AUTOCOMPLETE */}
-                    <LocationAutocomplete
-                      label="শুরুর অবস্থান (পিকআপ):"
-                      isPickup={true}
-                      value={passengerPickup}
-                      places={allAutocompletePlaces}
-                      isGpsActive={liveGps.isTracking || isLiveLocationQuery(passengerPickup)}
-                      userGps={liveGps}
-                      onLocateGps={() => {
-                        startGpsTracking();
-                        if (liveGps.lat && liveGps.lng) {
-                          const lat = liveGps.lat;
-                          const lng = liveGps.lng;
-                          const resolvedName = getNearestLocationName(lat, lng);
-                          setPassengerLocation({ lat, lng, isLiveGps: true });
-                          setPassengerPickup(resolvedName);
-                          setPickupCoords({ lat, lng });
-                          showAdminToastMessage(`📍 নিকটতম স্থান: ${resolvedName} (সঠিকতা: ±${Math.round(liveGps.accuracy || 10)} মি.)`);
-                          return;
-                        }
-                        if ('geolocation' in navigator) {
-                          navigator.geolocation.getCurrentPosition(
-                            (pos) => {
-                              const lat = pos.coords.latitude;
-                              const lng = pos.coords.longitude;
-                              const accuracy = pos.coords.accuracy || 10;
-                              const resolvedName = getNearestLocationName(lat, lng);
-                              setPassengerLocation({ lat, lng, isLiveGps: true });
-                              setPassengerPickup(resolvedName);
-                              setPickupCoords({ lat, lng });
-                              showAdminToastMessage(`📍 নিকটতম স্থান: ${resolvedName} (সঠিকতা: ±${Math.round(accuracy)} মি.)`);
-                            },
-                            () => {
-                              showAdminToastMessage('GPS লোকেশন পাওয়া যায়নি, ম্যানুয়ালি বাছুন');
-                            },
-                            { enableHighAccuracy: true, timeout: 8000 }
-                          );
-                        }
-                      }}
-                      onChangeLocation={(name, coords) => {
-                        setPassengerPickup(name);
-                        if (coords) {
-                          setPickupCoords(coords);
-                        }
-                        if (isLiveLocationQuery(name)) {
+                    <div className="flex flex-col min-w-0">
+                      <LocationAutocomplete
+                        label="শুরুর অবস্থান (পিকআপ):"
+                        isPickup={true}
+                        value={passengerPickup}
+                        places={allAutocompletePlaces}
+                        isGpsActive={liveGps.isTracking || isLiveLocationQuery(passengerPickup)}
+                        userGps={liveGps}
+                        onLocateGps={() => {
                           startGpsTracking();
-                        }
-                      }}
-                      placeholder="পিকআপ স্ট্যান্ড বা এলাকা খুঁজুন..."
-                    />
+                          const handleLocated = (lat: number, lng: number, accuracy: number) => {
+                            setPassengerLocation({ lat, lng, isLiveGps: true });
+                            setPickupCoords({ lat, lng });
+                            const nearest = findNearestLandmark(lat, lng);
+                            if (nearest.distanceMeters < 50) {
+                              setPassengerPickup(nearest.name);
+                              setPassengerPickupLandmark('');
+                              showAdminToastMessage(`📍 অবস্থান: ${nearest.name} (সঠিকতা: ±${Math.round(accuracy)} মি.)`);
+                            } else {
+                              setPassengerPickup('আমার লাইভ অবস্থান (GPS)');
+                              const landmarkText = `${nearest.name} (থেকে ~${toBengaliNumber(nearest.distanceMeters)} মিটার দূরে)`;
+                              setPassengerPickupLandmark(landmarkText);
+                              showAdminToastMessage(`📍 লাইভ GPS অবস্থান চিহ্নিত • ২য় অপশন: ${nearest.name} (~${nearest.distanceMeters} মি.)`);
+                            }
+                          };
+
+                          if (liveGps.lat && liveGps.lng) {
+                            handleLocated(liveGps.lat, liveGps.lng, liveGps.accuracy || 10);
+                            return;
+                          }
+                          if ('geolocation' in navigator) {
+                            navigator.geolocation.getCurrentPosition(
+                              (pos) => {
+                                handleLocated(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy || 10);
+                              },
+                              () => {
+                                showAdminToastMessage('GPS লোকেশন পাওয়া যায়নি, ম্যানুয়ালি বাছুন');
+                              },
+                              { enableHighAccuracy: true, timeout: 8000 }
+                            );
+                          }
+                        }}
+                        onChangeLocation={(name, coords) => {
+                          setPassengerPickup(name);
+                          if (coords) {
+                            setPickupCoords(coords);
+                            const nearest = findNearestLandmark(coords.lat, coords.lng);
+                            if (nearest.distanceMeters > 50) {
+                              setPassengerPickupLandmark(`${nearest.name} (থেকে ~${toBengaliNumber(nearest.distanceMeters)} মিটার দূরে)`);
+                            } else {
+                              setPassengerPickupLandmark('');
+                            }
+                          } else {
+                            setPassengerPickupLandmark('');
+                          }
+                          if (isLiveLocationQuery(name)) {
+                            startGpsTracking();
+                          }
+                        }}
+                        placeholder="পিকআপ স্ট্যান্ড বা এলাকা খুঁজুন..."
+                      />
+
+                      {/* 2nd Option: Nearest Known Landmark Reference Banner */}
+                      {passengerPickupLandmark && (
+                        <div className="mt-1 flex items-center gap-1.5 text-[10.5px] bg-emerald-50 text-emerald-900 border border-emerald-200/90 px-2 py-0.5 rounded-lg overflow-hidden min-w-0 animate-in fade-in">
+                          <span className="shrink-0 font-extrabold text-[9px] bg-emerald-200/80 text-emerald-950 px-1 rounded">২য় পরিচিত রেফারেন্স:</span>
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            <PauseMarqueeText text={passengerPickupLandmark} className="text-[10.5px] font-bold text-emerald-900" pauseSec={1.5} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
                     {/* SWAP BUTTON */}
                     <div className="flex justify-center md:pt-4">
@@ -5510,13 +5866,17 @@ export default function App() {
                           <span className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-xs group-hover:bg-amber-600 transition">
                             <Car className="w-4 h-4 text-slate-950" />
                           </span>
-                          <div className="truncate">
-                            <span className="font-extrabold text-xs sm:text-sm text-amber-950 block leading-tight">
-                              যানবাহন ও ভাড়ার তালিকা
-                            </span>
-                            <span className="text-[10px] text-amber-800 font-semibold block leading-tight">
-                              বাহন অনুযায়ী নির্ধারিত ভাড়ার রেট
-                            </span>
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            <PauseMarqueeText
+                              text="যানবাহন ও ভাড়ার তালিকা"
+                              className="font-extrabold text-xs sm:text-sm text-amber-950 block leading-tight"
+                              pauseSec={1.5}
+                            />
+                            <PauseMarqueeText
+                              text="বাহন অনুযায়ী নির্ধারিত ভাড়ার রেট"
+                              className="text-[10px] text-amber-800 font-semibold block leading-tight mt-0.5"
+                              pauseSec={1.5}
+                            />
                           </div>
                         </div>
 
@@ -5875,28 +6235,37 @@ export default function App() {
 
                 {/* DRIVER ACTIVE ACCEPTED TRIP COCKPIT (IF DRIVER HAS ACCEPTED A TRIP) */}
                 {(() => {
+                  const dismissed = getDismissedTripIds();
+                  const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
                   const driverActiveTrip = passengerRequests.find(r => 
-                    (r.status === 'accepted' || (r as any).status === 'in_transit') && 
-                    (r.driverId === driverProfile.id || r.driverPhone === driverProfile.phone || !r.driverId)
+                    (r.status === 'accepted' || r.status === 'in_transit') && 
+                    !dismissed.has(r.id) &&
+                    (
+                      (driverProfile.id && r.driverId === driverProfile.id) ||
+                      (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
+                    )
                   );
 
                   if (!driverActiveTrip) return null;
 
-                  const isTripInTransit = (driverActiveTrip as any).status === 'in_transit';
-
                   return (
-                    <div className="bg-gradient-to-br from-emerald-950 via-slate-900 to-teal-950 text-white rounded-3xl p-4 sm:p-5 border-2 border-emerald-400 shadow-xl mb-3.5 animate-in fade-in">
+                    <div id="safar-driver-active-trip-cockpit" className="bg-gradient-to-br from-emerald-950 via-slate-900 to-teal-950 text-white rounded-3xl p-4 sm:p-5 border-2 border-emerald-400 shadow-xl mb-3.5 animate-in fade-in">
                       <div className="flex items-center justify-between pb-3 mb-3 border-b border-emerald-800/60 flex-wrap gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping"></span>
-                          <span className="bg-emerald-500 text-slate-950 font-black text-xs px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                            {isTripInTransit ? '🟢 গন্তব্যে যাত্রা চলছে (Phase 2)' : '🚗 পিকআপে রওনা (Phase 1)'}
-                          </span>
-                          <span className="text-xs text-emerald-300 font-bold hidden sm:inline">
-                            {isTripInTransit ? 'যাত্রী নিয়ে গন্তব্যের দিকে সাবধানে ড্রাইভ করুন' : 'যাত্রীর পিকআপ লোকেশনে পৌঁছান'}
-                          </span>
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping shrink-0"></span>
+                          <div className="min-w-0 flex-1 max-w-[280px] xs:max-w-[340px] overflow-hidden">
+                            <PauseMarqueeText
+                              text={
+                                (driverActiveTrip as any).status === 'in_transit'
+                                  ? 'আল্লাহ্র উপর ভরসা করে যাত্রা শুরু করছি...'
+                                  : 'পিকআপের দিকে রওনা'
+                              }
+                              className="text-xs font-bold text-emerald-300"
+                              pauseSec={1.5}
+                            />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 shrink-0">
                           <span className="bg-amber-400 text-slate-950 font-black text-xs px-2.5 py-0.5 rounded-md">
                             নির্ধারিত ভাড়া: ৳ {driverActiveTrip.estFare}
                           </span>
@@ -5926,6 +6295,14 @@ export default function App() {
                                   <PauseMarqueeText text={driverActiveTrip.pickupPoint} className="text-[11px] font-bold text-white" pauseSec={1.5} />
                                 </div>
                               </div>
+                              {driverActiveTrip.pickupLandmark && (
+                                <div className="flex items-center gap-1 text-[10px] text-amber-200 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-400/25 min-w-0">
+                                  <span className="shrink-0 text-amber-300 font-extrabold text-[9px] bg-amber-400/20 px-1 py-0.2 rounded">২য় পরিচিত রেফারেন্স:</span>
+                                  <div className="min-w-0 flex-1 overflow-hidden">
+                                    <PauseMarqueeText text={driverActiveTrip.pickupLandmark} className="text-[10px] font-bold text-amber-100" pauseSec={1.5} />
+                                  </div>
+                                </div>
+                              )}
                               <div className="flex items-center gap-1.5 text-[11px] min-w-0">
                                 <Navigation className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                                 <span className="shrink-0 text-blue-300 font-bold">গন্তব্য:</span>
@@ -5986,37 +6363,12 @@ export default function App() {
                             title="গুগল ম্যাপে লাইভ টার্ন-বাই-টার্ন ভয়েস নেভিগেশন খুলুন"
                           >
                             <Navigation className="w-3.5 h-3.5 text-white" />
-                            <span>{isTripInTransit ? 'গুগল ম্যাপে GPS (গন্তব্যের দিকে)' : 'গুগল ম্যাপে GPS (পিকআপের দিকে)'}</span>
+                            <span>
+                              {(driverActiveTrip as any).status === 'in_transit'
+                                ? 'গুগল ম্যাপে GPS (গন্তব্যের দিকে)'
+                                : 'গুগল ম্যাপে GPS (পিকআপ পয়েন্টের দিকে)'}
+                            </span>
                           </a>
-
-                          {!isTripInTransit && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const dCoords = (driverActiveTrip as any).destCoords || resolveLocationCoordinates(driverActiveTrip.destination, true, stands) || { lat: 24.4515, lng: 90.5535 };
-                                const dLat = liveGps.lat || (driverProfile as any).lat || 24.4536;
-                                const dLng = liveGps.lng || (driverProfile as any).lng || 90.5479;
-                                const dist = Number(calculateDistanceKm(dLat, dLng, dCoords.lat, dCoords.lng).toFixed(2));
-                                const eta = Math.max(1, calculateEtaMinutes(dist, 30));
-
-                                updateDoc(doc(db, 'ride_requests', driverActiveTrip.id), {
-                                  status: 'in_transit',
-                                  boardedAt: Date.now(),
-                                  distanceKm: dist,
-                                  etaMinutes: eta
-                                }).catch(() => {});
-                                setPassengerRequests(prev => prev.map(r => r.id === driverActiveTrip.id ? { ...r, status: 'in_transit' as any, distanceKm: dist, etaMinutes: eta } : r));
-                                if (activeBooking && (activeBooking as any).requestId === driverActiveTrip.id) {
-                                  setActiveBooking(prev => prev ? { ...prev, status: 'in_transit', distanceKm: dist, etaMinutes: eta } : null);
-                                }
-                                showAdminToastMessage('🟢 যাত্রী গাড়িতে উঠেছেন — Phase 2: গন্তব্যের উদ্দেশ্যে যাত্রা শুরু হয়েছে!');
-                              }}
-                              className="inline-flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black px-3 py-2 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition active:scale-95 border border-yellow-500"
-                              title="যাত্রী গাড়িতে ওঠার পর চাপুন"
-                            >
-                              <span>🟢 যাত্রী গাড়িতে উঠেছেন</span>
-                            </button>
-                          )}
 
                           <button
                             type="button"
@@ -6095,39 +6447,24 @@ export default function App() {
                               onStartGpsTracking={startGpsTracking}
                               userRole="driver"
                               onSelectDriver={() => {}}
-                              activeBooking={(() => {
-                                const isDest = (driverActiveTrip as any).status === 'in_transit';
-                                const dLat = liveGps.lat || 24.4536;
-                                const dLng = liveGps.lng || 90.5479;
-                                const pLat = (driverActiveTrip as any).pickupCoords?.lat || (activeBooking as any)?.passengerLat || 24.4536;
-                                const pLng = (driverActiveTrip as any).pickupCoords?.lng || (activeBooking as any)?.passengerLng || 90.5479;
-                                const dTargetLat = (driverActiveTrip as any).destCoords?.lat || destCoords?.lat || 24.4515;
-                                const dTargetLng = (driverActiveTrip as any).destCoords?.lng || destCoords?.lng || 90.5535;
-
-                                const targetLat = isDest ? dTargetLat : pLat;
-                                const targetLng = isDest ? dTargetLng : pLng;
-                                const dist = Number(calculateDistanceKm(dLat, dLng, targetLat, targetLng).toFixed(2));
-                                const eta = Math.max(1, calculateEtaMinutes(dist, 30));
-
-                                return {
-                                  driverName: driverProfile.name || 'আমি (চালক)',
-                                  driverPhone: driverProfile.phone,
-                                  driverCategory: driverProfile.category,
-                                  driverPhoto: driverProfile.driverPhoto || '/assets/drivers/tasnimul_kabeer.png',
-                                  currentDriverLat: dLat,
-                                  currentDriverLng: dLng,
-                                  passengerLat: pLat,
-                                  passengerLng: pLng,
-                                  destLat: dTargetLat,
-                                  destLng: dTargetLng,
-                                  pickupTitle: driverActiveTrip.pickupPoint || 'পিকআপ স্থান',
-                                  destTitle: driverActiveTrip.destination || 'গন্তব্য স্থান',
-                                  distanceKm: dist,
-                                  etaMinutes: eta,
-                                  status: isDest ? 'in_transit' : 'en_route',
-                                  fare: driverActiveTrip.estFare
-                                };
-                              })()}
+                              activeBooking={{
+                                driverName: driverProfile.name || 'আমি (চালক)',
+                                driverPhone: driverProfile.phone,
+                                driverCategory: driverProfile.category,
+                                driverPhoto: driverProfile.driverPhoto || ((driverProfile.phone?.includes('01304841550') || driverProfile.name?.toUpperCase().includes('TASNIMUL')) ? '/assets/drivers/tasnimul_kabeer.png' : undefined),
+                                currentDriverLat: (liveGps.lat && liveGps.lng && liveGps.isTracking) ? liveGps.lat : ((driverActiveTrip as any).driverLat || driverProfile.lat || 24.4536),
+                                currentDriverLng: (liveGps.lat && liveGps.lng && liveGps.isTracking) ? liveGps.lng : ((driverActiveTrip as any).driverLng || driverProfile.lng || 90.5479),
+                                passengerLat: (driverActiveTrip as any).pickupCoords?.lat || (activeBooking as any)?.passengerLat || resolveLocationCoordinates(driverActiveTrip.pickupPoint, false, stands)?.lat || 24.4536,
+                                passengerLng: (driverActiveTrip as any).pickupCoords?.lng || (activeBooking as any)?.passengerLng || resolveLocationCoordinates(driverActiveTrip.pickupPoint, false, stands)?.lng || 90.5479,
+                                destLat: (driverActiveTrip as any).destCoords?.lat || destCoords?.lat || resolveLocationCoordinates(driverActiveTrip.destination, true, stands)?.lat || 24.4515,
+                                destLng: (driverActiveTrip as any).destCoords?.lng || destCoords?.lng || resolveLocationCoordinates(driverActiveTrip.destination, true, stands)?.lng || 90.5535,
+                                pickupTitle: driverActiveTrip.pickupPoint || 'পিকআপ স্থান',
+                                pickupLandmark: driverActiveTrip.pickupLandmark || '',
+                                destTitle: driverActiveTrip.destination || 'গন্তব্য স্থান',
+                                distanceKm: driverActiveTrip.distanceKm || 1.2,
+                                etaMinutes: Math.round((driverActiveTrip.distanceKm || 1.2) * 2.5),
+                                status: (driverActiveTrip as any).status || 'en_route'
+                              }}
                             />
                           </div>
                         </div>
@@ -6136,45 +6473,76 @@ export default function App() {
                   );
                 })()}
 
-                {/* Incoming Passenger Requests Section (Strictly Pending Only) */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 shadow-xs mb-3">
-                  <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100 flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4 text-emerald-600" />
-                      <h3 className="font-bold text-slate-900 text-xs sm:text-sm">
-                        আগত যাত্রার অনুরোধসমূহ (প্যাসেঞ্জার রিকোয়েস্ট)
-                      </h3>
-                      <span className="bg-emerald-100 text-emerald-900 text-[10px] font-black px-2 py-0.5 rounded-full">
-                        {passengerRequests.filter(r => r.status === 'pending').length} টি অপেক্ষমাণ
-                      </span>
-                    </div>
+                {/* Incoming Passenger Requests Section (Strictly Pending Only & Deduplicated) */}
+                {(() => {
+                  const dismissed = getDismissedTripIds();
+                  const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+                  const driverActiveTrip = passengerRequests.find(r => 
+                    (r.status === 'accepted' || r.status === 'in_transit') && 
+                    !dismissed.has(r.id) &&
+                    (
+                      (driverProfile.id && r.driverId === driverProfile.id) ||
+                      (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
+                    )
+                  );
+                  const activePassengerPhone = driverActiveTrip?.passengerPhone?.replace(/[^0-9]/g, '');
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handlePurgeStaleRequests}
-                        className="text-[10px] text-slate-500 hover:text-red-600 px-2.5 py-1 bg-slate-100 hover:bg-red-50 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1"
-                        title="ডাটাবেস থেকে সকল পুরাতন টেস্ট ডেটা সাফ করুন"
-                      >
-                        <Trash2 className="w-3 h-3 text-red-500" />
-                        <span>পুরানো টেস্ট ডেটা সাফ করুন</span>
-                      </button>
-                      <span className="text-[11px] text-slate-500 hidden sm:inline">
-                        চালকের ভূমিকা: যাত্রীকে সরাসরি কল দিন এবং ট্রিপ <b>কনফার্ম</b> করুন
-                      </span>
-                    </div>
-                  </div>
+                  // Deduplicate & strictly filter pending requests
+                  const seenPhones = new Set<string>();
+                  const filteredPendingRequests = passengerRequests.filter(req => {
+                    if (req.status !== 'pending') return false;
+                    const cleanPhone = req.passengerPhone?.replace(/[^0-9]/g, '');
+                    // Exclude if it's the active trip
+                    if (driverActiveTrip && req.id === driverActiveTrip.id) return false;
+                    // Exclude if driver is currently on trip with this exact passenger!
+                    if (activePassengerPhone && cleanPhone && cleanPhone === activePassengerPhone) return false;
+                    // Deduplicate: if multiple pending requests exist from same phone, keep only the latest one
+                    if (cleanPhone) {
+                      if (seenPhones.has(cleanPhone)) return false;
+                      seenPhones.add(cleanPhone);
+                    }
+                    return true;
+                  });
 
-                  {/* Request Cards Grid (Strictly Pending Only) */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                    {passengerRequests.filter(r => r.status === 'pending').length === 0 ? (
-                      <div className="col-span-full py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                        <Users className="w-8 h-8 text-slate-300 mx-auto mb-1.5" />
-                        <p className="text-xs font-bold text-slate-600">বর্তমানে কোনো অপেক্ষমাণ যাত্রার অনুরোধ নেই</p>
-                        <p className="text-[11px] text-slate-400 mt-0.5">নতুন কোনো যাত্রী পিকআপ ও গন্তব্য নির্ধারণ করে অনুরোধ পাঠালে তা সাথে সাথে এখানে ভেসে উঠবে</p>
+                  return (
+                    <div className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 shadow-xs mb-3">
+                      <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100 flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <Users className="w-4 h-4 text-emerald-600" />
+                          <h3 className="font-bold text-slate-900 text-xs sm:text-sm">
+                            আগত যাত্রার অনুরোধসমূহ (প্যাসেঞ্জার রিকোয়েস্ট)
+                          </h3>
+                          <span className="bg-emerald-100 text-emerald-900 text-[10px] font-black px-2 py-0.5 rounded-full">
+                            {filteredPendingRequests.length} টি অপেক্ষমাণ
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handlePurgeStaleRequests}
+                            className="text-[10px] text-slate-500 hover:text-red-600 px-2.5 py-1 bg-slate-100 hover:bg-red-50 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1"
+                            title="ডাটাবেস থেকে সকল পুরাতন টেস্ট ডেটা সাফ করুন"
+                          >
+                            <Trash2 className="w-3 h-3 text-red-500" />
+                            <span>পুরানো টেস্ট ডেটা সাফ করুন</span>
+                          </button>
+                          <span className="text-[11px] text-slate-500 hidden sm:inline">
+                            চালকের ভূমিকা: যাত্রীকে সরাসরি কল দিন এবং ট্রিপ <b>কনফার্ম</b> করুন
+                          </span>
+                        </div>
                       </div>
-                    ) : (
-                      passengerRequests.filter(r => r.status === 'pending').map((req) => (
+
+                      {/* Request Cards Grid (Strictly Pending Only) */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {filteredPendingRequests.length === 0 ? (
+                          <div className="col-span-full py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                            <Users className="w-8 h-8 text-slate-300 mx-auto mb-1.5" />
+                            <p className="text-xs font-bold text-slate-600">বর্তমানে কোনো অপেক্ষমাণ যাত্রার অনুরোধ নেই</p>
+                            <p className="text-[11px] text-slate-400 mt-0.5">নতুন কোনো যাত্রী পিকআপ ও গন্তব্য নির্ধারণ করে অনুরোধ পাঠালে তা সাথে সাথে এখানে ভেসে উঠবে</p>
+                          </div>
+                        ) : (
+                          filteredPendingRequests.map((req) => (
                         <div 
                           key={req.id}
                           className="p-3 rounded-xl border bg-white border-slate-200 hover:border-emerald-300 shadow-xs transition-all"
@@ -6193,15 +6561,27 @@ export default function App() {
                           </div>
 
                           <div className="text-xs space-y-1 mb-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
-                            <div className="flex items-center gap-1.5 text-slate-700">
+                            <div className="flex items-center gap-1.5 text-slate-700 min-w-0">
                               <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
-                              <span className="text-slate-500 text-[11px]">পিকআপ:</span>
-                              <b className="truncate text-[11px]">{req.pickupPoint}</b>
+                              <span className="text-slate-500 text-[11px] shrink-0">পিকআপ:</span>
+                              <div className="min-w-0 flex-1 overflow-hidden">
+                                <PauseMarqueeText text={req.pickupPoint} className="text-[11px] font-bold text-slate-800" pauseSec={1.5} />
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1.5 text-slate-700">
+                            {req.pickupLandmark && (
+                              <div className="flex items-center gap-1 text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 min-w-0">
+                                <span className="shrink-0 text-amber-700 font-extrabold text-[9px] bg-amber-100 px-1 py-0.2 rounded">২য় পরিচিত রেফারেন্স:</span>
+                                <div className="min-w-0 flex-1 overflow-hidden">
+                                  <PauseMarqueeText text={req.pickupLandmark} className="text-[10px] font-semibold text-amber-900" pauseSec={1.5} />
+                                </div>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-1.5 text-slate-700 min-w-0">
                               <Navigation className="w-3 h-3 text-blue-600 shrink-0" />
-                              <span className="text-slate-500 text-[11px]">গন্তব্য:</span>
-                              <b className="truncate text-[11px]">{req.destination}</b>
+                              <span className="text-slate-500 text-[11px] shrink-0">গন্তব্য:</span>
+                              <div className="min-w-0 flex-1 overflow-hidden">
+                                <PauseMarqueeText text={req.destination} className="text-[11px] font-bold text-slate-800" pauseSec={1.5} />
+                              </div>
                             </div>
                             <div className="flex items-center gap-1.5 text-slate-500 text-[10px] pt-1 border-t border-slate-200/60">
                               <span>দূরত্ব: {req.distanceKm} কিমি</span>
@@ -6238,6 +6618,8 @@ export default function App() {
                     )}
                   </div>
                 </div>
+              );
+            })()}
 
                 {/* Chalok Cockpit Dedicated Guidance & Tips */}
                 <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-900 rounded-2xl p-4 text-white border border-emerald-500/40 shadow-xs mb-3">
@@ -6607,7 +6989,7 @@ export default function App() {
                       driverName: activeBooking.driver.name,
                       driverPhone: activeBooking.driver.phone,
                       driverCategory: activeBooking.driver.category,
-                      driverPhoto: (activeBooking.driver as any).driverPhoto || (activeBooking.driver.phone?.includes('01304841550') || activeBooking.driver.name?.toUpperCase().includes('TASNIMUL') ? '/assets/drivers/tasnimul_kabeer.png' : undefined),
+                      driverPhoto: activeBooking.driver.driverPhoto || ((activeBooking.driver.phone?.includes('01304841550') || activeBooking.driver.name?.toUpperCase().includes('TASNIMUL')) ? '/assets/drivers/tasnimul_kabeer.png' : undefined),
                       currentDriverLat: activeBooking.currentDriverLat,
                       currentDriverLng: activeBooking.currentDriverLng,
                       passengerLat: activeBooking.passengerLat,
@@ -6618,47 +7000,8 @@ export default function App() {
                       destTitle: activeBooking.destTitle || passengerDestination,
                       distanceKm: activeBooking.distanceKm,
                       etaMinutes: activeBooking.etaMinutes,
-                      fare: activeBooking.fare,
                       status: activeBooking.status
-                    } : (() => {
-                      if ((userRole as any) === 'driver') {
-                        const drvTrip = passengerRequests.find(r => 
-                          (r.status === 'accepted' || (r as any).status === 'in_transit') && 
-                          (r.driverId === driverProfile.id || r.driverPhone === driverProfile.phone || !r.driverId)
-                        );
-                        if (drvTrip) {
-                          const isDest = (drvTrip as any).status === 'in_transit';
-                          const dLat = liveGps.lat || (driverProfile as any).lat || 24.4536;
-                          const dLng = liveGps.lng || (driverProfile as any).lng || 90.5479;
-                          const pCoords = (drvTrip as any).pickupCoords || resolveLocationCoordinates(drvTrip.pickupPoint, false, stands) || { lat: 24.4536, lng: 90.5479 };
-                          const dCoords = (drvTrip as any).destCoords || resolveLocationCoordinates(drvTrip.destination, true, stands) || { lat: 24.4515, lng: 90.5535 };
-                          const tLat = isDest ? dCoords.lat : pCoords.lat;
-                          const tLng = isDest ? dCoords.lng : pCoords.lng;
-                          const dist = Number(calculateDistanceKm(dLat, dLng, tLat, tLng).toFixed(2));
-                          const eta = Math.max(1, calculateEtaMinutes(dist, 30));
-
-                          return {
-                            driverName: driverProfile.name || 'আমি (চালক)',
-                            driverPhone: driverProfile.phone,
-                            driverCategory: driverProfile.category,
-                            driverPhoto: driverProfile.driverPhoto || (driverProfile.phone?.includes('01304841550') || driverProfile.name?.toUpperCase().includes('TASNIMUL') ? '/assets/drivers/tasnimul_kabeer.png' : undefined),
-                            currentDriverLat: dLat,
-                            currentDriverLng: dLng,
-                            passengerLat: pCoords.lat,
-                            passengerLng: pCoords.lng,
-                            destLat: dCoords.lat,
-                            destLng: dCoords.lng,
-                            pickupTitle: drvTrip.pickupPoint || 'পিকআপ স্থান',
-                            destTitle: drvTrip.destination || 'গন্তব্য স্থান',
-                            distanceKm: dist,
-                            etaMinutes: eta,
-                            fare: drvTrip.estFare,
-                            status: isDest ? 'in_transit' : 'en_route'
-                          };
-                        }
-                      }
-                      return null;
-                    })()}
+                    } : null}
                     onSelectPickupPlace={(standName: string) => {
                       setPassengerPickup(standName);
                       const coords = resolveLocationCoordinates(standName, false);
@@ -8017,9 +8360,37 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-3.5 sm:p-5 bg-slate-50 text-slate-900">
               {passengerTab === 'history' ? (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-                    <span>সর্বমোট সম্পন্ন ট্রিপ: <b>{tripHistory.length} টি</b></span>
-                    <span>মোট ভাড়া পরিশোধ: <b>৳ {tripHistory.reduce((acc, t) => acc + t.fare, 0)}</b></span>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 px-1">
+                    <span>সর্বমোট সম্পন্ন ট্রিপ: <b>{tripHistory.length} টি</b> (ভাড়া: <b>৳ {tripHistory.reduce((acc, t) => acc + t.fare, 0)}</b>)</span>
+                    {tripHistory.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm('আপনি কি পূর্ববর্তী যাত্রার সম্পূর্ণ ইতিহাস পরিষ্কার করতে চান?')) {
+                            const cleared = getClearedTripIds();
+                            tripHistory.forEach(t => cleared.add(t.id));
+                            saveClearedTripIds(cleared);
+                            setTripHistory([]);
+                            localStorage.removeItem('safar_trip_history_v7');
+                            localStorage.removeItem('safar_trip_history_v6');
+                            localStorage.removeItem('safar_passenger_trips');
+                            if (passengerProfile.phone) {
+                              try {
+                                const q = query(collection(db, `users/${passengerProfile.phone}/trips`));
+                                getDocs(q).then(snap => {
+                                  snap.docs.forEach(d => deleteDoc(doc(db, `users/${passengerProfile.phone}/trips`, d.id)).catch(() => {}));
+                                }).catch(() => {});
+                              } catch (e) {}
+                            }
+                            showAdminToastMessage('যাত্রার ইতিহাস সম্পূর্ণ পরিষ্কার করা হয়েছে');
+                          }
+                        }}
+                        className="text-[11px] text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-lg font-bold transition cursor-pointer flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>ইতিহাস মুছে ফেলুন</span>
+                      </button>
+                    )}
                   </div>
 
                   {tripHistory.length === 0 ? (
@@ -8079,37 +8450,34 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Driver info & action */}
+                        {/* Driver info & action (100% Dynamic Vehicle & Non-breaking Registration Plate) */}
                         {(() => {
-                          const matched = drivers.find(d => 
-                            (trip.driverPhone && d.phone === trip.driverPhone) ||
-                            (trip.driverName && d.name.trim().toLowerCase() === trip.driverName.trim().toLowerCase())
+                          const matchedDriver = drivers.find(d => 
+                            (trip.driverPhone && d.phone && d.phone.replace(/[^0-9]/g, '') === trip.driverPhone.replace(/[^0-9]/g, '')) ||
+                            (trip.driverName && d.name && d.name.trim().toLowerCase() === trip.driverName.trim().toLowerCase())
                           );
-                          const rawPlate = trip.plateNumber || '';
-                          const isHardcodedPlate = !rawPlate || 
-                            rawPlate.includes('৩৪৫৬') || 
-                            rawPlate.includes('3456') || 
-                            rawPlate.includes('১২-৩৪৫৬') || 
-                            rawPlate.includes('12-3456') || 
-                            rawPlate.includes('BRTA-GAF');
-                          const dynamicPlate = isHardcodedPlate
-                            ? (matched?.plateNumber || (trip.driverPhone?.includes('01304841550') || trip.driverName?.toUpperCase().includes('TASNIMUL') ? 'MYMENSINGH-HA-15-5206' : 'MYMENSINGH-HA-15-5206'))
-                            : rawPlate;
-                          const dynamicModel = (!trip.vehicleModel || trip.vehicleModel === 'যানবাহন')
-                            ? (matched?.vehicleModel || (trip.driverPhone?.includes('01304841550') || trip.driverName?.toUpperCase().includes('TASNIMUL') ? 'BAJAJ DISCOVER 125CC' : 'মোটরসাইকেল'))
-                            : trip.vehicleModel;
+                          const cleanPlate = (trip.plateNumber && !trip.plateNumber.includes('১২-৩৪৫৬') && trip.plateNumber.trim() !== '')
+                            ? trip.plateNumber
+                            : (matchedDriver?.plateNumber || trip.plateNumber || 'নিবন্ধিত নম্বর');
+                          const cleanModel = (trip.vehicleModel && trip.vehicleModel.trim() !== '')
+                            ? trip.vehicleModel
+                            : (matchedDriver?.vehicleModel || 'বাহন');
 
                           return (
-                            <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
-                              <div className="text-slate-600">
-                                <span>{dynamicModel}</span> • <span className="font-semibold text-slate-900">{dynamicPlate}</span>
+                            <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-[11px] gap-2">
+                              <div className="min-w-0 flex-1 overflow-hidden">
+                                <PauseMarqueeText
+                                  text={`${cleanModel} • ${cleanPlate}`}
+                                  className="text-[11px] font-bold text-slate-800"
+                                  pauseSec={1.5}
+                                />
                               </div>
                               <a
                                 href={`tel:${trip.driverPhone}`}
-                                className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200"
+                                className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-200 shrink-0 text-xs shadow-2xs transition"
                               >
                                 <PhoneCall className="w-3 h-3" />
-                                <span>পুনরায় কল</span>
+                                <span className="whitespace-nowrap">পুনরায় কল</span>
                               </a>
                             </div>
                           );
@@ -8604,27 +8972,6 @@ export default function App() {
       </footer>
 
       {/* ============================================================== */}
-      {/* FLOATING SCROLL-TO-TOP BUTTON (DEFAULT TRANSPARENT, VIBRANT ON CLICK/TOUCH) */}
-      {/* ============================================================== */}
-      {showScrollToTop && (
-        <button
-          type="button"
-          onClick={handleScrollToTop}
-          onTouchStart={() => setIsScrollToTopActive(true)}
-          onTouchEnd={() => setTimeout(() => setIsScrollToTopActive(false), 600)}
-          title="উপরে স্ক্রল করুন"
-          aria-label="উপরে স্ক্রল করুন"
-          className={`fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-40 p-2.5 sm:p-3 rounded-full transition-all duration-300 cursor-pointer select-none group ${
-            isScrollToTopActive
-              ? 'bg-emerald-600 text-white border-2 border-emerald-400 shadow-xl shadow-emerald-700/50 scale-95 ring-4 ring-emerald-300/40'
-              : 'bg-transparent text-slate-500/70 border border-slate-400/30 hover:border-emerald-500 hover:bg-emerald-600 hover:text-white hover:shadow-lg active:bg-emerald-600 active:text-white active:border-emerald-500 active:scale-95'
-          }`}
-        >
-          <ChevronUp className="w-5 h-5 sm:w-6 sm:h-6 transition-transform group-hover:-translate-y-0.5" />
-        </button>
-      )}
-
-      {/* ============================================================== */}
       {/* 7. ADMIN FLOATING TOAST NOTICE                                 */}
       {/* ============================================================== */}
       {adminToast && (
@@ -8711,6 +9058,7 @@ export default function App() {
       <AdminControlPanel
         isOpen={showAdminDashboard}
         onClose={() => setShowAdminDashboard(false)}
+        showToast={showAdminToastMessage}
         onOpenCloudflareSettings={() => setShowCloudflareModal(true)}
         onOpenSourceCodeModal={() => setShowSourceCodeModal(true)}
         stands={stands}
@@ -8810,23 +9158,51 @@ export default function App() {
         onSavePopularPlace={handleSavePopularPlace}
         onDeletePopularPlace={handleDeletePopularPlace}
         onResetPopularPlaces={handleResetPopularPlaces}
-        showToast={showAdminToastMessage}
-        onCleanupOldTrips={() => {
-          const toRemove = tripHistory.filter(t => t.status === 'সম্পন্ন' || t.status === 'বাতিল');
-          const remaining = tripHistory.filter(t => t.status !== 'সম্পন্ন' && t.status !== 'বাতিল');
-          const cleanedCount = toRemove.length;
+        onCleanupOldTrips={async () => {
+          // 1. Wipe local tripHistory state
+          setTripHistory([]);
 
-          setTripHistory(remaining);
+          // 2. Wipe all local storage trip keys
           try {
-            localStorage.setItem('safar_passenger_trips', JSON.stringify(remaining));
+            localStorage.removeItem('safar_trip_history_v7');
+            localStorage.removeItem('safar_trip_history_v6');
+            localStorage.removeItem('safar_trip_history_v5');
+            localStorage.removeItem('safar_passenger_trips');
           } catch {}
 
-          toRemove.forEach(trip => {
-            deleteDoc(doc(db, 'passenger_trips', trip.id)).catch(() => {});
-            deleteDoc(doc(db, 'ride_requests', trip.id)).catch(() => {});
-          });
+          // 3. Blacklist all existing and known trip IDs locally
+          const clearedSet = getClearedTripIds();
+          tripHistory.forEach(t => clearedSet.add(t.id));
+          clearedSet.add('trip-1793449662741');
+          clearedSet.add('trip-1793458969935');
+          saveClearedTripIds(clearedSet);
 
-          showAdminToastMessage(`🧹 ${cleanedCount > 0 ? cleanedCount : 'সকল'} টি পুরনো সম্পন্ন/বাতিল ট্রিপ ডেটা মুছে ফায়ারস্টোর স্টোরেজ সম্পূর্ণ খালি করা হয়েছে!`);
+          // 4. Firestore deep wipe across users, subcollection trips, and ride_requests
+          try {
+            const usersSnap = await getDocs(collection(db, 'users'));
+            for (const u of usersSnap.docs) {
+              const uTrips = await getDocs(collection(db, 'users', u.id, 'trips'));
+              uTrips.forEach(ut => {
+                deleteDoc(doc(db, 'users', u.id, 'trips', ut.id)).catch(() => {});
+              });
+            }
+            if (passengerProfile?.phone) {
+              const cleanP = passengerProfile.phone.replace(/[^0-9]/g, '');
+              const myTrips = await getDocs(collection(db, 'users', cleanP, 'trips'));
+              myTrips.forEach(t => deleteDoc(doc(db, 'users', cleanP, 'trips', t.id)).catch(() => {}));
+            }
+            const reqSnap = await getDocs(collection(db, 'ride_requests'));
+            reqSnap.forEach(d => {
+              const data = d.data();
+              if (data.status === 'completed' || data.status === 'cancelled' || getDismissedTripIds().has(d.id)) {
+                deleteDoc(doc(db, 'ride_requests', d.id)).catch(() => {});
+              }
+            });
+          } catch (e) {
+            console.warn('Firestore cleanup notice:', e);
+          }
+
+          showAdminToastMessage('🧹 সকল পুরাতন ট্রিপ হিস্ট্রি ও ক্যাশ মেমোরি সফলভাবে মুছে ফায়ারস্টোর সম্পূর্ণ খালি করা হয়েছে!');
         }}
         tripStats={{
           total: tripHistory.length,

@@ -23,19 +23,19 @@ class SoundEffects {
         try {
           // Dynamic compression for high-punch acoustic drum transients without clipping
           this.compressor = this.ctx.createDynamicsCompressor();
-          this.compressor.threshold.setValueAtTime(-3, this.ctx.currentTime);
-          this.compressor.knee.setValueAtTime(6, this.ctx.currentTime);
-          this.compressor.ratio.setValueAtTime(12, this.ctx.currentTime);
-          this.compressor.attack.setValueAtTime(0.002, this.ctx.currentTime);
-          this.compressor.release.setValueAtTime(0.12, this.ctx.currentTime);
+          this.compressor.threshold.setValueAtTime(-6, this.ctx.currentTime);
+          this.compressor.knee.setValueAtTime(4, this.ctx.currentTime);
+          this.compressor.ratio.setValueAtTime(16, this.ctx.currentTime);
+          this.compressor.attack.setValueAtTime(0.001, this.ctx.currentTime);
+          this.compressor.release.setValueAtTime(0.08, this.ctx.currentTime);
 
           // Dedicated alarm gain for instant 0ms hard mute
           this.alarmGain = this.ctx.createGain();
-          this.alarmGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+          this.alarmGain.gain.setValueAtTime(1.8, this.ctx.currentTime);
 
-          // Master output gain
+          // Master output gain with 1.8x loudness boost
           this.masterGain = this.ctx.createGain();
-          this.masterGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+          this.masterGain.gain.setValueAtTime(1.8, this.ctx.currentTime);
 
           this.compressor.connect(this.alarmGain);
           this.alarmGain.connect(this.masterGain);
@@ -57,10 +57,17 @@ class SoundEffects {
 
   /**
    * STOP ALL ALARMS IMMEDIATELY (Hard mute on 1st click).
-   * Instantly stops intervals, mutes the alarm gain bus, kills active oscillators, and clears vibration.
+   * Instantly stops intervals, speech synthesis, mutes the alarm gain bus, kills active oscillators, and clears vibration.
    */
   stopAllAlarms() {
     this.isAlarmRinging = false;
+
+    // 0. Cancel speech synthesis immediately
+    try {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    } catch {}
 
     // 1. Clear any active repeating interval immediately
     if (this.activeInterval) {
@@ -242,6 +249,63 @@ class SoundEffects {
       this.playDafTak(ctx, targetNode, now + 0.80, 0.98);
     } catch {
       // Audio playback fails silently if restricted
+    }
+  }
+
+  /**
+   * Loud, clear, dignified Bengali male voice announcement for drivers:
+   * "'সফর' অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
+   * Followed by the default loud Daf drum rhythm.
+   */
+  speakDriverVoiceAlert(onEnd?: () => void): boolean {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      if (onEnd) onEnd();
+      return false;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      const text = 'সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।';
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'bn-BD';
+      utterance.rate = 0.95; // clear, deliberate pace
+      utterance.pitch = 0.88; // masculine tone
+      utterance.volume = 1.0; // highest loudness
+
+      // Prefer Bengali voices if available in device/OS
+      const voices = window.speechSynthesis.getVoices();
+      const bnVoice = voices.find(v => 
+        (v.lang && (v.lang.toLowerCase().startsWith('bn') || v.lang.toLowerCase().includes('bd'))) ||
+        v.name.toLowerCase().includes('bangla') ||
+        v.name.toLowerCase().includes('bengali')
+      );
+      if (bnVoice) {
+        utterance.voice = bnVoice;
+      }
+
+      let finished = false;
+      const done = () => {
+        if (!finished) {
+          finished = true;
+          if (onEnd) onEnd();
+        }
+      };
+
+      utterance.onend = done;
+      utterance.onerror = done;
+
+      // Fail-safe timeout in case speech engine hangs or is muted
+      setTimeout(() => {
+        if (!finished) {
+          done();
+        }
+      }, 4200);
+
+      window.speechSynthesis.speak(utterance);
+      return true;
+    } catch {
+      if (onEnd) onEnd();
+      return false;
     }
   }
 

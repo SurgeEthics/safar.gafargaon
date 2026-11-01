@@ -25,15 +25,20 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
   onAccept,
   onDecline
 }) => {
-  const [secondsRemaining, setSecondsRemaining] = useState(15);
+  const [secondsRemaining, setSecondsRemaining] = useState(25);
   const [isDismissed, setIsDismissed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const ringIntervalRef = useRef<any>(null);
   const countdownIntervalRef = useRef<any>(null);
+  const voiceTimeoutRef = useRef<any>(null);
 
-  // Clear all running timers and stop Daf alarm sound
+  // Clear all running timers and stop Daf alarm sound & speech
   const cleanupTimersAndAudio = () => {
+    if (voiceTimeoutRef.current) {
+      clearTimeout(voiceTimeoutRef.current);
+      voiceTimeoutRef.current = null;
+    }
     if (ringIntervalRef.current) {
       clearInterval(ringIntervalRef.current);
       ringIntervalRef.current = null;
@@ -54,17 +59,46 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
 
     setIsDismissed(false);
     setIsProcessing(false);
-    setSecondsRemaining(15);
+    setSecondsRemaining(25);
 
-    // 1. Play authentic Arabic Daf rhythm alarm immediately
-    sounds.playIncomingRideAlert();
+    // 0. Trigger OS/Mobile Notification with high priority
+    try {
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('নতুন যাত্রার অনুরোধ! (সফর)', {
+          body: `${request.pickupPoint} ➔ ${request.destination} (ভাড়া: ৳${request.estFare})`,
+          icon: '/safar-logo.png',
+          badge: '/safar-logo.png',
+          tag: 'driver-ride-alert',
+          requireInteraction: true
+        });
+      }
+    } catch {}
 
-    // 2. Repeat Daf rhythm every 2.2 seconds until accepted, declined, or timed out
-    ringIntervalRef.current = setInterval(() => {
+    // 1. Start with clear, soft & loud Bengali male voice announcement:
+    // "'সফর' অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
+    let hasStartedDaf = false;
+    const startDafRhythm = () => {
+      if (hasStartedDaf) return;
+      hasStartedDaf = true;
       sounds.playIncomingRideAlert();
-    }, 2200);
+      if (!ringIntervalRef.current) {
+        ringIntervalRef.current = setInterval(() => {
+          sounds.playIncomingRideAlert();
+        }, 2000);
+      }
+    };
 
-    // 3. 15-second countdown timer
+    sounds.speakDriverVoiceAlert(() => {
+      // Transition immediately into authentic repeating loud Arabic Daf alarm
+      startDafRhythm();
+    });
+
+    // Safety fallback: ensure Duff drum begins ringing within 3.5s even if voice API is delayed
+    voiceTimeoutRef.current = setTimeout(() => {
+      startDafRhythm();
+    }, 3500);
+
+    // 2. 25-second countdown timer
     countdownIntervalRef.current = setInterval(() => {
       setSecondsRemaining((prev) => {
         if (prev <= 1) {
@@ -88,7 +122,7 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
     e.stopPropagation();
     if (isProcessing || isDismissed || !request) return;
 
-    // Immediately stop alarm sound and clear repeating intervals
+    // Immediately stop voice & alarm sound and clear repeating intervals
     cleanupTimersAndAudio();
 
     // Immediately dismiss modal on 1st click to prevent double clicks or confusion
@@ -114,7 +148,7 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
 
   if (!request || request.status !== 'pending' || isDismissed) return null;
 
-  const progressPercent = (secondsRemaining / 15) * 100;
+  const progressPercent = (secondsRemaining / 25) * 100;
 
   return (
     <div className="fixed top-20 z-50 left-3 right-3 sm:left-auto sm:right-6 sm:w-full sm:max-w-md bg-slate-950 text-white rounded-3xl p-4 sm:p-5 shadow-2xl border-2 border-amber-400 animate-in slide-in-from-top-4">

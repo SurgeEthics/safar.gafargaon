@@ -7,7 +7,7 @@ os.system("npm run build")
 
 output_zip = 'public/safar-gafargaon-clean-source.zip'
 secondary_zip = 'public/safar-gafargaon-latest.zip'
-exclude_dirs = {'node_modules', '.git', '.aistudio', 'dev-dist', 'aistudio'}
+exclude_dirs = {'node_modules', '.git', '.aistudio', 'dev-dist', 'aistudio', 'dist'}
 exclude_extensions = {'.zip', '.log', '.map'}
 exclude_files = {'bun.lock', 'bun.lockb'}
 

@@ -147,6 +147,7 @@ export interface PassengerRideRequest {
   otp?: string;
   pickupCoords?: { lat: number; lng: number };
   destCoords?: { lat: number; lng: number };
+  createdAtMs?: number;
 }
 
 export interface Driver {
@@ -3233,6 +3234,43 @@ export default function App() {
       startGpsTracking();
     }
   }, [userRole, liveGps.isTracking, startGpsTracking]);
+
+  // Request Screen WakeLock in driver mode so device screen does not turn off while waiting for rides
+  useEffect(() => {
+    let wakeLockSentinel: any = null;
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator && userRole === 'driver') {
+          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch {}
+    };
+
+    if (userRole === 'driver') {
+      requestWakeLock();
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible' && userRole === 'driver') {
+          requestWakeLock();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        if (wakeLockSentinel && typeof wakeLockSentinel.release === 'function') {
+          wakeLockSentinel.release().catch(() => {});
+        }
+      };
+    }
+  }, [userRole]);
+
+  // Request Notification permission when switching to driver mode so incoming ride alerts notify even if minimized
+  useEffect(() => {
+    if (userRole === 'driver' && typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+    }
+  }, [userRole]);
 
   // Throttled Real-time Driver GPS Broadcast to active accepted/in_transit trip in Firestore
   const lastGpsBroadcastRef = useRef<{ lat: number; lng: number; time: number }>({ lat: 0, lng: 0, time: 0 });
@@ -8344,7 +8382,7 @@ export default function App() {
                                 }).catch(() => {});
                               } catch (e) {}
                             }
-                            setToastMessage('যাত্রার ইতিহাস সম্পূর্ণ পরিষ্কার করা হয়েছে');
+                            showAdminToastMessage('যাত্রার ইতিহাস সম্পূর্ণ পরিষ্কার করা হয়েছে');
                           }
                         }}
                         className="text-[11px] text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-lg font-bold transition cursor-pointer flex items-center gap-1"
@@ -9020,6 +9058,7 @@ export default function App() {
       <AdminControlPanel
         isOpen={showAdminDashboard}
         onClose={() => setShowAdminDashboard(false)}
+        showToast={showAdminToastMessage}
         onOpenCloudflareSettings={() => setShowCloudflareModal(true)}
         onOpenSourceCodeModal={() => setShowSourceCodeModal(true)}
         stands={stands}

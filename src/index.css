@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+/* Global styles */
+*, *::before, *::after {
+  box-sizing: border-box;
+  font-family: 'Hind Siliguri', sans-serif !important;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  background-color: #f8fafc;
+  color: #1e293b;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}

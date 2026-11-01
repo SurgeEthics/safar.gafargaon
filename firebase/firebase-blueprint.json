@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Safar Gafargaon Firestore Schema",
+  "entities": {
+    "categories": {
+      "description": "Transport vehicle categories and tariff rates",
+      "fields": {
+        "id": { "type": "string" },
+        "nameBengali": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "baseFare": { "type": "number" },
+        "perKmFare": { "type": "number" },
+        "minFare": { "type": "number" },
+        "iconType": { "type": "string" },
+        "isEmergency": { "type": "boolean" }
+      }
+    },
+    "stands": {
+      "description": "Transport stations and stands across Gafargaon",
+      "fields": {
+        "id": { "type": "string" },
+        "nameBengali": { "type": "string" },
+        "location": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "availableVehicles": { "type": "number" },
+        "managerPhone": { "type": "string" }
+      }
+    },
+    "drivers": {
+      "description": "Driver profiles, live status, and verification badges",
+      "fields": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "category": { "type": "string" },
+        "vehicleModel": { "type": "string" },
+        "plateNumber": { "type": "string" },
+        "isOnline": { "type": "boolean" },
+        "isVerified": { "type": "boolean" },
+        "verificationTier": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "rating": { "type": "number" },
+        "tripsCount": { "type": "number" }
+      }
+    },
+    "bookingRequests": {
+      "description": "Real-time trip requests between passengers and drivers",
+      "fields": {
+        "id": { "type": "string" },
+        "passengerName": { "type": "string" },
+        "passengerPhone": { "type": "string" },
+        "pickupPoint": { "type": "string" },
+        "destination": { "type": "string" },
+        "category": { "type": "string" },
+        "estimatedFare": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "completed", "cancelled"] },
+        "assignedDriverId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "settings": {
+      "description": "Global announcements and emergency phone numbers",
+      "fields": {
+        "announcement": { "type": "string" },
+        "emergencyPolice": { "type": "string" },
+        "emergencyFire": { "type": "string" },
+        "emergencyHospital": { "type": "string" },
+        "emergencyAmbulance": { "type": "string" }
+      }
+    }
+  }
+}

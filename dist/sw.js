@@ -93,7 +93,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "revision": "968e2740b061116784f61b61304a0e07"
   }, {
     "url": "index.html",
-    "revision": "5abeeadb36971434447be9bd9a37a4aa"
+    "revision": "2f3ed597e984b3b2cddea4a37c9736f8"
   }, {
     "url": "icon.svg",
     "revision": "2656b652288f2dc2146deee1452b7349"
@@ -113,7 +113,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/index-D_0C55oi.css",
     "revision": null
   }, {
-    "url": "assets/index-CYTe9pcR.js",
+    "url": "assets/index-CaR8FjqA.js",
     "revision": null
   }, {
     "url": "assets/drivers/tasnimul_kabeer.png",

@@ -1,0 +1,148 @@
+{
+  "entities": {
+    "driver": {
+      "title": "Driver",
+      "description": "Transport driver profile for Gafargaon",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "nameBn": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "category": { "type": "string" },
+        "categoryBengali": { "type": "string", "maxLength": 50 },
+        "vehicleModel": { "type": "string", "maxLength": 100 },
+        "plateNumber": { "type": "string", "maxLength": 50 },
+        "licenseNumber": { "type": "string", "maxLength": 50 },
+        "standName": { "type": "string", "maxLength": 100 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "rating": { "type": "number" },
+        "totalTrips": { "type": "number" },
+        "isOnline": { "type": "boolean" },
+        "isVerified": { "type": "boolean" },
+        "nidVerified": { "type": "boolean" },
+        "licenseVerified": { "type": "boolean" },
+        "phoneVerified": { "type": "boolean" },
+        "driverPhoto": { "type": "string", "maxLength": 500 },
+        "nidNumber": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "phone", "category", "standName"]
+    },
+    "stand": {
+      "title": "Stand",
+      "description": "Vehicle stand in Gafargaon / Pagla area",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "bengaliName": { "type": "string", "maxLength": 100 },
+        "location": { "type": "string", "maxLength": 150 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "driverCount": { "type": "number" },
+        "isPopular": { "type": "boolean" },
+        "description": { "type": "string", "maxLength": 250 },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "bengaliName", "lat", "lng"]
+    },
+    "category": {
+      "title": "VehicleCategory",
+      "description": "Transportation vehicle category and fare rates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 50 },
+        "nameBengali": { "type": "string", "maxLength": 50 },
+        "icon": { "type": "string", "maxLength": 20 },
+        "baseFare": { "type": "number" },
+        "perKmFare": { "type": "number" },
+        "minFare": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "description": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["name", "nameBengali", "baseFare", "perKmFare"]
+    },
+    "appSettings": {
+      "title": "AppSettings",
+      "description": "Super Admin control panel configuration and appearance",
+      "type": "object",
+      "properties": {
+        "primaryColor": { "type": "string", "maxLength": 50 },
+        "customHexColor": { "type": "string", "maxLength": 20 },
+        "fontFamily": { "type": "string", "maxLength": 50 },
+        "fontSizeMode": { "type": "string", "maxLength": 20 },
+        "cardRadius": { "type": "string", "maxLength": 30 },
+        "densityMode": { "type": "string", "maxLength": 20 },
+        "headerHotlineText": { "type": "string", "maxLength": 150 },
+        "announcementNotice": { "type": "string", "maxLength": 250 },
+        "customAppUrl": { "type": "string", "maxLength": 200 },
+        "showLiveMapWidget": { "type": "boolean" },
+        "showQuickChipsWidget": { "type": "boolean" },
+        "showHotlineTicker": { "type": "boolean" },
+        "showDriverStatsRow": { "type": "boolean" },
+        "baseFareMinimum": { "type": "number" },
+        "perKmMultiplier": { "type": "number" },
+        "roundFareToNearest5": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "hotlines": {
+      "title": "EmergencyHotlines",
+      "description": "Emergency hotline directory numbers",
+      "type": "object",
+      "properties": {
+        "hospital": { "type": "string", "maxLength": 30 },
+        "fire": { "type": "string", "maxLength": 30 },
+        "police": { "type": "string", "maxLength": 30 },
+        "national": { "type": "string", "maxLength": 30 },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "rideRequest": {
+      "title": "Ride Request",
+      "description": "Passenger ride booking request",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "passengerName": { "type": "string", "maxLength": 100 },
+        "passengerPhone": { "type": "string", "maxLength": 20 },
+        "pickupLocation": { "type": "string", "maxLength": 150 },
+        "destinationLocation": { "type": "string", "maxLength": 150 },
+        "vehicleCategory": { "type": "string" },
+        "status": { "type": "string" },
+        "estimatedFare": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["passengerName", "passengerPhone", "pickupLocation", "destinationLocation", "status"]
+    }
+  },
+  "firestore": {
+    "/drivers/{driverId}": {
+      "schema": "driver",
+      "description": "Collection of local drivers registered in Safar Gafargaon"
+    },
+    "/stands/{standId}": {
+      "schema": "stand",
+      "description": "Collection of transportation stands across Gafargaon and Pagla"
+    },
+    "/categories/{categoryId}": {
+      "schema": "category",
+      "description": "Vehicle categories and fare specifications"
+    },
+    "/settings/{settingId}": {
+      "schema": "appSettings",
+      "description": "App settings, themes, and configuration"
+    },
+    "/hotlines/{hotlineId}": {
+      "schema": "hotlines",
+      "description": "Emergency service hotlines"
+    },
+    "/ride_requests/{requestId}": {
+      "schema": "rideRequest",
+      "description": "Collection of ride requests submitted by passengers"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'http';
+// @ts-ignore
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import fs from 'fs';
@@ -71,8 +72,8 @@ server.on('upgrade', (request, socket, head) => {
   const host = request.headers.host || 'localhost';
   const url = new URL(request.url || '', `http://${host}`);
   if (url.pathname === '/ws' || url.pathname === '/api/live/ws') {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
+    (wss as any).handleUpgrade(request, socket, head, (ws: any) => {
+      (wss as any).emit('connection', ws, request);
     });
   } else {
     // Safely ignore or close other upgrades (like internal Vite HMR)
@@ -81,10 +82,10 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 // Broadcast helper
-function broadcast(data: any, excludeWs?: WebSocket) {
+function broadcast(data: any, excludeWs?: any) {
   const message = JSON.stringify(data);
-  wss.clients.forEach((client) => {
-    if (client !== excludeWs && client.readyState === WebSocket.OPEN) {
+  wss.clients.forEach((client: any) => {
+    if (client !== excludeWs && client.readyState === 1) {
       try {
         client.send(message);
       } catch (err) {

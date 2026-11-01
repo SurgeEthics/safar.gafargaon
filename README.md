@@ -1,22 +1,20 @@
-# সফর (Safar) - গফরগাঁও ও পাগলা থানা ডিজিটাল পরিবহন সেবা
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+</div>
 
-## 🚀 Cloudflare Pages ডিপ্লয় নির্দেশিকা (100% Guaranteed Zero Error)
+# Run and deploy your AI Studio app
 
-Cloudflare Pages বা GitHub-এ সরাসরি ডিপ্লয় করার সময় কোনো বিল্ড এরর যেন না হয়, সেজন্য এই প্রজেক্টে নিম্নলিখিত কনফিগারেশন যুক্ত রয়েছে:
-1. `.npmrc` ফাইল (`legacy-peer-deps=true`, `engine-strict=false`)
-2. `.node-version` এবং `.nvmrc` ফাইল (`20.18.0`)
-3. `firebase@^11.4.0` (Node 20 LTS পুরোপুরি সমর্থিত)
+This contains everything you need to run your app locally.
 
-### Cloudflare Pages সেটিংস:
-- **Framework Preset**: `Vite` (অথবা `None`)
-- **Build command**: `npm run build`
-- **Build output directory**: `dist`
-- **Root directory**: `/` (ফাঁকা রাখুন)
-- **Node.js version**: `20.18.0` (বা 20)
+View your app in AI Studio: https://ai.studio/apps/3142c77d-3797-4763-a872-12366a5d40d2
 
-### লোকাল টেস্ট বা রান করার নিয়ম:
-```bash
-npm install
-npm run build
-npm run preview
-```
+## Run Locally
+
+**Prerequisites:**  Node.js
+
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

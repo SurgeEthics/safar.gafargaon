@@ -643,7 +643,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
         window.URL.revokeObjectURL(url);
         document.body.removeChild(link);
       }, 2000);
-      showToast('🎉 সফলভাবে ক্লাউডফ্লেয়ার ফিক্সড সোর্স কোড ও dist জিপ (২.৯২ MB) ডাউনলোড হয়েছে!');
+      showToast('🎉 সফলভাবে ক্লাউডফ্লেয়ার ফিক্সড সোর্স কোড ও dist জিপ (২.৪ MB) ডাউনলোড হয়েছে!');
     } catch (err: any) {
       console.error('ZIP download error:', err);
       showToast('সরাসরি ডাউনলোড লিঙ্ক ওপেন করা হচ্ছে...');
@@ -2418,7 +2418,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </h3>
                 </div>
                 <p className="text-xs text-slate-700 leading-relaxed">
-                  আপনার সম্পূর্ণ অ্যাপের রিয়্যাক্ট ১৯, টাইপস্ক্রিপ্ট সোর্স কোড, চালক ও যাত্রী ড্যাশবোর্ড, লাইভ ম্যাপ ট্র্যাকিং, সকল আইকন এবং প্রস্তুতকৃত <strong>dist/</strong> প্রোডাকশন বিল্ড ফাইল সহ সম্পূর্ণ অফিশিয়াল ত্রুটিমুক্ত ফ্রেশ জিপ প্যাকেজ।
+                  আপনার সম্পূর্ণ অ্যাপের রিয়্যাক্ট ১৯, টাইপস্ক্রিপ্ট সোর্স কোড, চালক ভেরিফিকেশন পপআপ কোড, লাইভ ম্যাপ, আইকন, এবং প্রস্তুতকৃত <strong>dist/</strong> প্রোডাকশন বিল্ড ফাইল সহ সম্পূর্ণ অফিশিয়াল জিপ ফাইল। ক্লাউডফ্লেয়ারের <code>edgesOut</code> ও Node.js ডিপ্লয় এরর শতভাগ সমাধান করা হয়েছে (.npmrc ও .node-version অন্তর্ভুক্ত)।
                 </p>
                 <div className="flex flex-wrap items-center gap-2.5 pt-1">
                   {/* The requested yellow zip button */}
@@ -2436,7 +2436,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     ) : (
                       <>
                         <Download className="w-4 h-4 text-slate-950" />
-                        <span>📥 সম্পূর্ণ প্রজেক্ট জিপ ডাউনলোড করুন (৬.২৭ MB • ক্লাউডফ্লেয়ার ও গিটহাবে ১০০% এররমুক্ত)</span>
+                        <span>📥 সম্পূর্ণ প্রজেক্ট জিপ ডাউনলোড করুন (২.০৪ MB • সম্পূর্ণ ফ্রেশ ও ফাইনাল সোর্স)</span>
                       </>
                     )}
                   </button>
@@ -2447,7 +2447,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-3.5 py-2.5 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition"
                   >
                     <Download className="w-3.5 h-3.5 text-slate-600" />
-                    <span>সরাসরি লিঙ্ক (৬.২৭ MB)</span>
+                    <span>সরাসরি লিঙ্ক (২.০৪ MB)</span>
                   </a>
 
                   {onOpenSourceCodeModal && (
@@ -2613,12 +2613,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   onChange={(e) => {
                     const val = e.target.value.trim();
                     if (!val) return;
-                    const parts = val.split(/[,\s]+/).map(Number).filter(n => !isNaN(n));
-                    if (parts.length >= 2) {
+                    const match = val.match(/(-?\d+\.\d+)[\s,]+(-?\d+\.\d+)/);
+                    if (match) {
                       setStandForm(prev => ({
                         ...prev,
-                        lat: parts[0],
-                        lng: parts[1]
+                        lat: parseFloat(match[1]),
+                        lng: parseFloat(match[2])
                       }));
                     }
                   }}
@@ -3048,24 +3048,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   onChange={(e) => {
                     const val = e.target.value.trim();
                     if (!val) return;
-                    let lat = 0;
-                    let lng = 0;
-                    const urlMatch = val.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-                    if (urlMatch) {
-                      lat = parseFloat(urlMatch[1]);
-                      lng = parseFloat(urlMatch[2]);
-                    } else {
-                      const parts = val.split(/[,\s]+/).map(Number).filter(n => !isNaN(n));
-                      if (parts.length >= 2) {
-                        lat = parts[0];
-                        lng = parts[1];
-                      }
-                    }
-                    if (lat && lng) {
+                    const parts = val.split(/[,\s]+/).map(Number).filter(n => !isNaN(n));
+                    if (parts.length >= 2) {
                       setPlaceForm(prev => ({
                         ...prev,
-                        lat,
-                        lng
+                        lat: parts[0],
+                        lng: parts[1]
                       }));
                     }
                   }}

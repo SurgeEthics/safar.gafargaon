@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Bell, MapPin, Navigation, Check, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Bell, MapPin, Navigation, Clock, Check, X, Shield, PhoneCall } from 'lucide-react';
 import { sounds } from '../utils/audio';
 import { PauseMarqueeText } from './PauseMarqueeText';
 
@@ -9,12 +9,11 @@ export interface DriverIncomingAlertProps {
     passengerName: string;
     passengerPhone: string;
     pickupPoint: string;
-    pickupLandmark?: string;
     destination: string;
     category: string;
     distanceKm: number;
     estFare: number;
-    status: 'pending' | 'accepted' | 'declined' | 'in_transit' | 'completed' | 'cancelled';
+    status: 'pending' | 'accepted' | 'declined' | 'completed' | 'cancelled';
   } | null;
   onAccept: (requestId: string) => void;
   onDecline: (requestId: string) => void;
@@ -25,85 +24,19 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
   onAccept,
   onDecline
 }) => {
-  const [secondsRemaining, setSecondsRemaining] = useState(25);
-  const [isDismissed, setIsDismissed] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-
-  const ringIntervalRef = useRef<any>(null);
-  const countdownIntervalRef = useRef<any>(null);
-  const voiceTimeoutRef = useRef<any>(null);
-
-  // Clear all running timers and stop Daf alarm sound & speech
-  const cleanupTimersAndAudio = () => {
-    if (voiceTimeoutRef.current) {
-      clearTimeout(voiceTimeoutRef.current);
-      voiceTimeoutRef.current = null;
-    }
-    if (ringIntervalRef.current) {
-      clearInterval(ringIntervalRef.current);
-      ringIntervalRef.current = null;
-    }
-    if (countdownIntervalRef.current) {
-      clearInterval(countdownIntervalRef.current);
-      countdownIntervalRef.current = null;
-    }
-    sounds.stopAllAlarms();
-  };
+  const [secondsRemaining, setSecondsRemaining] = useState(15);
 
   useEffect(() => {
-    if (!request || request.status !== 'pending') {
-      cleanupTimersAndAudio();
-      setIsDismissed(true);
-      return;
-    }
+    if (!request || request.status !== 'pending') return;
 
-    setIsDismissed(false);
-    setIsProcessing(false);
-    setSecondsRemaining(25);
+    // Play ringing chime alert
+    sounds.playIncomingRideAlert();
 
-    // 0. Trigger OS/Mobile Notification with high priority
-    try {
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        new Notification('নতুন যাত্রার অনুরোধ! (সফর)', {
-          body: `${request.pickupPoint} ➔ ${request.destination} (ভাড়া: ৳${request.estFare})`,
-          icon: '/safar-logo.png',
-          badge: '/safar-logo.png',
-          tag: 'driver-ride-alert',
-          requireInteraction: true
-        });
-      }
-    } catch {}
-
-    // 1. Start with clear, soft & loud Bengali male voice announcement:
-    // "'সফর' অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
-    let hasStartedDaf = false;
-    const startDafRhythm = () => {
-      if (hasStartedDaf) return;
-      hasStartedDaf = true;
-      sounds.playIncomingRideAlert();
-      if (!ringIntervalRef.current) {
-        ringIntervalRef.current = setInterval(() => {
-          sounds.playIncomingRideAlert();
-        }, 2000);
-      }
-    };
-
-    sounds.speakDriverVoiceAlert(() => {
-      // Transition immediately into authentic repeating loud Arabic Daf alarm
-      startDafRhythm();
-    });
-
-    // Safety fallback: ensure Duff drum begins ringing within 3.5s even if voice API is delayed
-    voiceTimeoutRef.current = setTimeout(() => {
-      startDafRhythm();
-    }, 3500);
-
-    // 2. 25-second countdown timer
-    countdownIntervalRef.current = setInterval(() => {
+    setSecondsRemaining(15);
+    const interval = setInterval(() => {
       setSecondsRemaining((prev) => {
         if (prev <= 1) {
-          cleanupTimersAndAudio();
-          setIsDismissed(true);
+          clearInterval(interval);
           onDecline(request.id);
           return 0;
         }
@@ -111,44 +44,12 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       });
     }, 1000);
 
-    return () => {
-      cleanupTimersAndAudio();
-    };
+    return () => clearInterval(interval);
   }, [request?.id]);
 
-  // Handle Driver 1st-Click Accept
-  const handleAccept = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (isProcessing || isDismissed || !request) return;
+  if (!request || request.status !== 'pending') return null;
 
-    // Immediately stop voice & alarm sound and clear repeating intervals
-    cleanupTimersAndAudio();
-
-    // Immediately dismiss modal on 1st click to prevent double clicks or confusion
-    setIsProcessing(true);
-    setIsDismissed(true);
-
-    // Call parent handler
-    onAccept(request.id);
-  };
-
-  // Handle Driver Decline
-  const handleDecline = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (isProcessing || isDismissed || !request) return;
-
-    cleanupTimersAndAudio();
-    setIsProcessing(true);
-    setIsDismissed(true);
-
-    onDecline(request.id);
-  };
-
-  if (!request || request.status !== 'pending' || isDismissed) return null;
-
-  const progressPercent = (secondsRemaining / 25) * 100;
+  const progressPercent = (secondsRemaining / 15) * 100;
 
   return (
     <div className="fixed top-20 z-50 left-3 right-3 sm:left-auto sm:right-6 sm:w-full sm:max-w-md bg-slate-950 text-white rounded-3xl p-4 sm:p-5 shadow-2xl border-2 border-amber-400 animate-in slide-in-from-top-4">
@@ -193,14 +94,6 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
             <div className="min-w-0 w-full overflow-hidden">
               <PauseMarqueeText text={request.pickupPoint} className="text-xs font-bold text-emerald-300" pauseSec={1.5} />
             </div>
-            {request.pickupLandmark && (
-              <div className="flex items-center gap-1 text-[10.5px] text-amber-200 mt-1 bg-amber-500/15 px-2 py-0.5 rounded-lg border border-amber-400/25 min-w-0">
-                <span className="shrink-0 text-amber-300 font-extrabold text-[9px] bg-amber-400/25 px-1 py-0.2 rounded">২য় পরিচিত রেফারেন্স:</span>
-                <div className="min-w-0 flex-1 overflow-hidden">
-                  <PauseMarqueeText text={request.pickupLandmark} className="text-[10.5px] font-bold text-amber-100" pauseSec={1.5} />
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
@@ -227,9 +120,8 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={handleDecline}
-          disabled={isProcessing}
-          className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition"
+          onClick={() => onDecline(request.id)}
+          className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition"
         >
           <X className="w-4 h-4 text-slate-400" />
           <span>প্রত্যাখ্যান</span>
@@ -237,12 +129,11 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
 
         <button
           type="button"
-          onClick={handleAccept}
-          disabled={isProcessing}
-          className="flex-2 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer transition active:scale-95"
+          onClick={() => onAccept(request.id)}
+          className="flex-2 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer transition active:scale-95"
         >
           <Check className="w-4 h-4 text-slate-950" />
-          <span>{isProcessing ? 'গ্রহণ করা হচ্ছে...' : 'অনুরোধ গ্রহণ করুন (Accept)'}</span>
+          <span>অনুরোধ গ্রহণ করুন (Accept)</span>
         </button>
       </div>
     </div>

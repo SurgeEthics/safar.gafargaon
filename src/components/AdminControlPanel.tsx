@@ -39,7 +39,8 @@ import {
   ChevronRight,
   ArrowLeft,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Copy
 } from 'lucide-react';
 import { Stand, Driver, VehicleCategoryItem } from '../App';
 import { EmergencyContact } from '../types';
@@ -643,7 +644,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
         window.URL.revokeObjectURL(url);
         document.body.removeChild(link);
       }, 2000);
-      showToast('🎉 সফলভাবে ক্লাউডফ্লেয়ার ফিক্সড সোর্স কোড ও dist জিপ (২.৯২ MB) ডাউনলোড হয়েছে!');
+      showToast('🎉 সফলভাবে সম্পূর্ণ ফ্রেশ ও ক্লিন সোর্স কোড জিপ (৩.২৭ MB) ডাউনলোড হয়েছে!');
     } catch (err: any) {
       console.error('ZIP download error:', err);
       showToast('সরাসরি ডাউনলোড লিঙ্ক ওপেন করা হচ্ছে...');
@@ -2409,56 +2410,91 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                 </div>
               </div>
 
-              {/* Full Source Code Zip Download Card (With Yellow Zip Button) */}
-              <div className="bg-gradient-to-r from-amber-50 via-amber-100/40 to-emerald-50 p-5 rounded-2xl border-2 border-amber-300 shadow-sm space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-sm sm:text-base text-slate-900 flex items-center gap-2">
+              {/* Full Source Code Zip Download Card (Prominent Yellow Section) */}
+              <div className="bg-gradient-to-br from-amber-100 via-amber-50 to-emerald-50 p-5 rounded-2xl border-2 border-amber-400 shadow-md space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <h3 className="font-black text-sm sm:text-base text-slate-900 flex items-center gap-2">
                     <Download className="w-5 h-5 text-amber-600" />
-                    সম্পূর্ণ প্রজেক্ট সোর্স কোড ডাউনলোড (.ZIP)
+                    <span>সম্পূর্ণ প্রজেক্ট সোর্স কোড ও ক্লিন জিপ প্যাকেজ (.ZIP)</span>
                   </h3>
+                  <span className="inline-flex items-center gap-1.5 bg-emerald-600 text-white font-black text-[11px] px-2.5 py-0.5 rounded-full shadow-xs self-start sm:self-auto">
+                    <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                    লেটেস্ট ফ্রেশ প্যাকেজ • ৩.২৭ MB
+                  </span>
                 </div>
+
                 <p className="text-xs text-slate-700 leading-relaxed">
                   আপনার সম্পূর্ণ অ্যাপের রিয়্যাক্ট ১৯, টাইপস্ক্রিপ্ট সোর্স কোড, চালক ও যাত্রী ড্যাশবোর্ড, লাইভ ম্যাপ ট্র্যাকিং, সকল আইকন এবং প্রস্তুতকৃত <strong>dist/</strong> প্রোডাকশন বিল্ড ফাইল সহ সম্পূর্ণ অফিশিয়াল ত্রুটিমুক্ত ফ্রেশ জিপ প্যাকেজ।
                 </p>
+
+                {/* Primary Yellow 1-Click Download Button */}
                 <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                  {/* The requested yellow zip button */}
+                  <a
+                    href="/safar-gafargaon-clean-source.zip"
+                    download="safar-gafargaon-clean-source.zip"
+                    onClick={() => {
+                      showToast('🎉 সফর সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ (৩.২৭ MB) ডাউনলোড শুরু হয়েছে!');
+                    }}
+                    className="inline-flex items-center gap-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black px-5 py-3 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition border-2 border-amber-500/80"
+                  >
+                    <Download className="w-4 h-4 text-slate-950" />
+                    <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৩.২৭ MB)</span>
+                  </a>
+
                   <button
                     type="button"
                     onClick={handleDownloadZip}
                     disabled={isZipDownloading}
-                    className="inline-flex items-center gap-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-5 py-2.5 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition active:scale-95 border border-amber-500/60"
+                    className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-4 py-3 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition"
                   >
                     {isZipDownloading ? (
                       <>
-                        <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                        <span>নতুন জিপ ফাইল ডাউনলোড হচ্ছে...</span>
+                        <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                        <span>ডাউনলোড হচ্ছে...</span>
                       </>
                     ) : (
                       <>
-                        <Download className="w-4 h-4 text-slate-950" />
-                        <span>📥 সম্পূর্ণ প্রজেক্ট জিপ ডাউনলোড করুন (৬.২৭ MB • ক্লাউডফ্লেয়ার ও গিটহাবে ১০০% এররমুক্ত)</span>
+                        <Download className="w-3.5 h-3.5 text-slate-600" />
+                        <span>বিকল্প ডাউনলোড লিঙ্ক</span>
                       </>
                     )}
                   </button>
-
-                  <a
-                    href="/safar-gafargaon-clean-source.zip"
-                    download="safar-gafargaon-clean-source.zip"
-                    className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-3.5 py-2.5 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition"
-                  >
-                    <Download className="w-3.5 h-3.5 text-slate-600" />
-                    <span>সরাসরি লিঙ্ক (৬.২৭ MB)</span>
-                  </a>
 
                   {onOpenSourceCodeModal && (
                     <button
                       type="button"
                       onClick={onOpenSourceCodeModal}
-                      className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-3.5 py-2.5 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition"
+                      className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-4 py-3 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition"
                     >
                       <span>ডিপ্লয় গাইড ও বিবরণ</span>
                     </button>
                   )}
+                </div>
+
+                {/* Direct Link Copy Bar */}
+                <div className="bg-white/90 p-2.5 rounded-xl border border-amber-300/80 flex items-center justify-between gap-2 mt-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="text-[11px] font-bold text-amber-900 shrink-0">সরাসরি লিঙ্ক:</span>
+                    <input
+                      type="text"
+                      readOnly
+                      value={typeof window !== 'undefined' ? `${window.location.origin}/safar-gafargaon-clean-source.zip` : '/safar-gafargaon-clean-source.zip'}
+                      className="w-full bg-transparent text-[11px] font-mono text-slate-700 truncate outline-none select-all font-semibold"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        navigator.clipboard.writeText(`${window.location.origin}/safar-gafargaon-clean-source.zip`);
+                        showToast('📋 সরাসরি জিপ ডাউনলোড লিঙ্ক কপি করা হয়েছে!');
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-amber-200 hover:bg-amber-300 text-slate-900 rounded-lg text-xs font-bold shrink-0 transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                  >
+                    <Copy className="w-3 h-3 text-slate-800" />
+                    <span>কপি করুন</span>
+                  </button>
                 </div>
               </div>
 

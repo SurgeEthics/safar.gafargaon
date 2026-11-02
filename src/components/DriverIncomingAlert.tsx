@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bell, MapPin, Navigation, Check, X } from 'lucide-react';
 import { sounds } from '../utils/audio';
+import { highPriorityNotifications } from '../utils/highPriorityNotification';
 import { PauseMarqueeText } from './PauseMarqueeText';
 
 export interface DriverIncomingAlertProps {
@@ -48,6 +49,7 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       countdownIntervalRef.current = null;
     }
     sounds.stopAllAlarms();
+    highPriorityNotifications.clearIncomingRideAlert();
   };
 
   useEffect(() => {
@@ -61,18 +63,15 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
     setIsProcessing(false);
     setSecondsRemaining(25);
 
-    // 0. Trigger OS/Mobile Notification with high priority
-    try {
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        new Notification('নতুন যাত্রার অনুরোধ! (সফর)', {
-          body: `${request.pickupPoint} ➔ ${request.destination} (ভাড়া: ৳${request.estFare})`,
-          icon: '/safar-logo.png',
-          badge: '/safar-logo.png',
-          tag: 'driver-ride-alert',
-          requireInteraction: true
-        });
-      }
-    } catch {}
+    // 0. Trigger High-Priority OS/Mobile & Service Worker Notification with continuous vibration (works with screen off)
+    highPriorityNotifications.showIncomingRideAlert({
+      id: request.id,
+      pickupPoint: request.pickupPoint,
+      destination: request.destination,
+      estFare: request.estFare,
+      distanceKm: request.distanceKm,
+      passengerName: request.passengerName
+    });
 
     // 1. Start with clear, soft & loud Bengali male voice announcement:
     // "'সফর' অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
@@ -89,14 +88,14 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
     };
 
     sounds.speakDriverVoiceAlert(() => {
-      // Transition immediately into authentic repeating loud Arabic Daf alarm
+      // Transition cleanly into authentic repeating loud Arabic Daf alarm ONLY after the voice finishes
       startDafRhythm();
     });
 
-    // Safety fallback: ensure Duff drum begins ringing within 3.5s even if voice API is delayed
+    // Safety fallback: ensure Duff drum begins ringing if device has no TTS or speech hangs (7.0s)
     voiceTimeoutRef.current = setTimeout(() => {
       startDafRhythm();
-    }, 3500);
+    }, 7000);
 
     // 2. 25-second countdown timer
     countdownIntervalRef.current = setInterval(() => {

@@ -196,14 +196,18 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
 
             {/* Right: Route Details with Marquee */}
             <div className="min-w-0 flex-1">
-              <h3 className="font-extrabold text-base sm:text-lg text-white flex items-center gap-1.5 min-w-0">
-                <span className="text-white font-extrabold truncate">
-                  {categoryBengaliName ? `${categoryBengaliName} চালক খোঁজা হচ্ছে` : 'নিকটস্থ চালকের অনুসন্ধান'}
-                </span>
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-500/30 shrink-0 font-bold">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <PauseMarqueeText
+                    text={categoryBengaliName ? `${categoryBengaliName} চালক খোঁজা হচ্ছে` : 'নিকটস্থ চালকের অনুসন্ধান'}
+                    className="font-extrabold text-base sm:text-lg text-white"
+                    pauseSec={2}
+                  />
+                </div>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 shrink-0 font-bold whitespace-nowrap">
                   লাইভ অনুসন্ধান
                 </span>
-              </h3>
+              </div>
 
               <div className="text-xs text-slate-300 mt-2 space-y-1.5 min-w-0">
                 {/* Pickup Row with Marquee */}

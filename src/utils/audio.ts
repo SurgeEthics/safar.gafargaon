@@ -228,10 +228,10 @@ class SoundEffects {
       const ctx = this.getContext();
       if (!ctx) return;
 
-      // Re-enable alarm gain in case it was muted
+      // Re-enable alarm gain at full highest loud level (1.8x)
       if (this.alarmGain) {
         this.alarmGain.gain.cancelScheduledValues(ctx.currentTime);
-        this.alarmGain.gain.setValueAtTime(1.0, ctx.currentTime);
+        this.alarmGain.gain.setValueAtTime(1.8, ctx.currentTime);
       }
 
       this.isAlarmRinging = true;
@@ -294,12 +294,12 @@ class SoundEffects {
       utterance.onend = done;
       utterance.onerror = done;
 
-      // Fail-safe timeout in case speech engine hangs or is muted
+      // Generous fail-safe timeout (6.8s) so voice is never cut off prematurely
       setTimeout(() => {
         if (!finished) {
           done();
         }
-      }, 4200);
+      }, 6800);
 
       window.speechSynthesis.speak(utterance);
       return true;

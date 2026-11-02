@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Clock,
   UserCheck,
+  Bell,
   Check,
   ChevronRight,
   ChevronDown,
@@ -71,6 +72,9 @@ import { sounds } from './utils/audio';
 import { toBengaliNumber } from './utils/calculator';
 import { PassengerRideCockpit } from './components/PassengerRideCockpit';
 import { DriverIncomingAlert } from './components/DriverIncomingAlert';
+import { DriverScreenOpenNotificationPopup } from './components/DriverScreenOpenNotificationPopup';
+import { screenWakeLock } from './utils/wakeLockManager';
+import { highPriorityNotifications } from './utils/highPriorityNotification';
 import { SplashScreen } from './components/SplashScreen';
 import { AdminControlPanel, AppCustomSettings } from './components/AdminControlPanel';
 import { AutoMarqueeText } from './components/AutoMarqueeText';
@@ -779,31 +783,6 @@ export const INITIAL_DRIVERS: Driver[] = [
 
   // 6. Motorcycle Drivers
   {
-    id: 'drv-1793153816766',
-    name: 'TASNIMUL KABEER',
-    phone: '01304841550',
-    category: 'bike',
-    categoryBengali: 'মোটরসাইকেল',
-    vehicleModel: 'BAJAJ DISCOVER 125CC',
-    plateNumber: 'MYMENSINGH-HA-15-5206',
-    licenseNumber: 'MMS26010NP178',
-    licenseType: 'অপেশাদার (Non-Professional)',
-    nidNumber: '৮২৮৩৯৪১০৭৫',
-    nidVerified: true,
-    licenseVerified: true,
-    phoneVerified: true,
-    standName: 'ঈমামবাড়ি মোড় স্ট্যান্ড',
-    lat: 24.4518,
-    lng: 90.5512,
-    rating: 5.0,
-    totalTrips: 55,
-    avatarBg: 'bg-emerald-600',
-    driverPhoto: '/assets/drivers/tasnimul_kabeer.png',
-    photoUrl: '/assets/drivers/tasnimul_kabeer.png',
-    isOnline: true,
-    approxSpeedKmh: 35
-  },
-  {
     id: 'bike-1',
     name: 'মো. তারেক হাসান',
     phone: '01711998822',
@@ -1176,48 +1155,54 @@ export default function App() {
   // 4. Drivers State with LocalStorage Sync (Auto-migrated to exact Google Maps coordinates)
   const [drivers, setDrivers] = useState<Driver[]>(() => {
     try {
+      const deletedIds: string[] = JSON.parse(localStorage.getItem('safar_deleted_driver_ids_v1') || '[]');
       const saved = localStorage.getItem('safar_drivers_v5');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const hasOutdatedGps = parsed.some((d: any) => d.lat > 24.52 || d.lat < 24.2);
           if (!hasOutdatedGps) {
-            return parsed.map((d: any) => {
-              const isTasnimul = (d.phone && d.phone.includes('01304841550')) || (d.name && d.name.toUpperCase().includes('TASNIMUL'));
-              return {
-                ...d,
-                driverPhoto: d.driverPhoto || d.photoUrl || (isTasnimul ? '/assets/drivers/tasnimul_kabeer.png' : ''),
-                nidFrontPhoto: d.nidFrontPhoto || '',
-                nidBackPhoto: d.nidBackPhoto || '',
-                firstIssueDate: d.firstIssueDate || '',
-                regLastFour: d.regLastFour || (d.plateNumber ? d.plateNumber.replace(/[^0-9]/g, '').slice(-4) : '') || '',
-                manufacturingYear: d.manufacturingYear || '',
-                chassisNumber: d.chassisNumber || '',
-                engineNumber: d.engineNumber || '',
-                phoneVerified: d.phoneVerified !== undefined ? d.phoneVerified : (d.licenseVerified && d.nidVerified),
-                verificationStatus: (d.licenseVerified && (d.phoneVerified ?? true) && d.nidVerified) ? 'verified' : 'pending'
-              };
-            });
+            return parsed
+              .filter((d: any) => d.id !== 'drv-1793153816766' && !(d.name === 'TASNIMUL KABEER' && d.standName?.includes('ঈমামবাড়ি')) && !deletedIds.includes(d.id))
+              .map((d: any) => {
+                const isTasnimul = (d.phone && d.phone.includes('01304841550')) || (d.name && d.name.toUpperCase().includes('TASNIMUL'));
+                return {
+                  ...d,
+                  driverPhoto: d.driverPhoto || d.photoUrl || (isTasnimul ? '/assets/drivers/tasnimul_kabeer.png' : ''),
+                  nidFrontPhoto: d.nidFrontPhoto || '',
+                  nidBackPhoto: d.nidBackPhoto || '',
+                  firstIssueDate: d.firstIssueDate || '',
+                  regLastFour: d.regLastFour || (d.plateNumber ? d.plateNumber.replace(/[^0-9]/g, '').slice(-4) : '') || '',
+                  manufacturingYear: d.manufacturingYear || '',
+                  chassisNumber: d.chassisNumber || '',
+                  engineNumber: d.engineNumber || '',
+                  phoneVerified: d.phoneVerified !== undefined ? d.phoneVerified : (d.licenseVerified && d.nidVerified),
+                  verificationStatus: (d.licenseVerified && (d.phoneVerified ?? true) && d.nidVerified) ? 'verified' : 'pending'
+                };
+              });
           }
         }
       }
     } catch {}
-    return INITIAL_DRIVERS.map(d => {
-      const isLic = Boolean(d.licenseVerified);
-      const isNid = Boolean(d.nidVerified);
-      const isPhone = d.phoneVerified !== undefined ? Boolean(d.phoneVerified) : (isLic && isNid);
-      const all3 = isLic && isNid && isPhone;
-      return {
-        ...d,
-        firstIssueDate: d.firstIssueDate || '',
-        regLastFour: d.regLastFour || (d.plateNumber ? d.plateNumber.replace(/[^0-9]/g, '').slice(-4) : '') || '',
-        manufacturingYear: d.manufacturingYear || '',
-        chassisNumber: d.chassisNumber || '',
-        engineNumber: d.engineNumber || '',
-        phoneVerified: isPhone,
-        verificationStatus: all3 ? ('verified' as const) : ('pending' as const)
-      };
-    });
+    const deletedIds: string[] = JSON.parse(localStorage.getItem('safar_deleted_driver_ids_v1') || '[]');
+    return INITIAL_DRIVERS
+      .filter(d => d.id !== 'drv-1793153816766' && !deletedIds.includes(d.id))
+      .map(d => {
+        const isLic = Boolean(d.licenseVerified);
+        const isNid = Boolean(d.nidVerified);
+        const isPhone = d.phoneVerified !== undefined ? Boolean(d.phoneVerified) : (isLic && isNid);
+        const all3 = isLic && isNid && isPhone;
+        return {
+          ...d,
+          firstIssueDate: d.firstIssueDate || '',
+          regLastFour: d.regLastFour || (d.plateNumber ? d.plateNumber.replace(/[^0-9]/g, '').slice(-4) : '') || '',
+          manufacturingYear: d.manufacturingYear || '',
+          chassisNumber: d.chassisNumber || '',
+          engineNumber: d.engineNumber || '',
+          phoneVerified: isPhone,
+          verificationStatus: all3 ? ('verified' as const) : ('pending' as const)
+        };
+      });
   });
 
   // Automatically persist drivers & sync to live location edge service
@@ -1232,10 +1217,22 @@ export default function App() {
 
   // Real-time Firestore Sync for Drivers
   useEffect(() => {
+    // Permanently purge fake drv-1793153816766 from Firestore if it ever exists
+    deleteDoc(doc(db, 'drivers', 'drv-1793153816766')).catch(() => {});
+
     const unsubscribe = onSnapshot(collection(db, 'drivers'), (snapshot) => {
+      const deletedIds: string[] = JSON.parse(localStorage.getItem('safar_deleted_driver_ids_v1') || '[]');
       if (!snapshot.empty) {
         const firestoreDrivers: Driver[] = [];
         snapshot.forEach((docSnap) => {
+          // If this is the fake Tasnimul Kabeer duplicate card, permanently purge it
+          if (docSnap.id === 'drv-1793153816766' || (docSnap.data().name === 'TASNIMUL KABEER' && docSnap.data().standName?.includes('ঈমামবাড়ি'))) {
+            deleteDoc(doc(db, 'drivers', docSnap.id)).catch(() => {});
+            return;
+          }
+          if (deletedIds.includes(docSnap.id)) {
+            return;
+          }
           const data = docSnap.data();
           firestoreDrivers.push({
             id: docSnap.id,
@@ -1277,6 +1274,7 @@ export default function App() {
         setDrivers(prev => {
           const merged = [...firestoreDrivers];
           for (const initD of INITIAL_DRIVERS) {
+            if (initD.id === 'drv-1793153816766' || deletedIds.includes(initD.id)) continue;
             if (!merged.some(m => m.id === initD.id || m.phone === initD.phone)) {
               merged.push(initD);
             }
@@ -1285,7 +1283,7 @@ export default function App() {
         });
       } else {
         // First-time seed initial drivers to Firestore
-        INITIAL_DRIVERS.forEach(d => {
+        INITIAL_DRIVERS.filter(d => d.id !== 'drv-1793153816766').forEach(d => {
           setDoc(doc(db, 'drivers', d.id), {
             ...d,
             updatedAt: new Date().toISOString()
@@ -2113,12 +2111,12 @@ export default function App() {
       }
 
       const finalDriverData = firestoreDriver || foundDriver;
-      const driverName = finalDriverData?.name || finalDriverData?.nameBn || 'TASNIMUL KABEER';
+      const driverName = finalDriverData?.name || finalDriverData?.nameBn || 'নিবন্ধিত চালক';
       const driverPhone = finalDriverData?.phone || clean;
       const driverCategory = (finalDriverData?.category as VehicleCategory) || 'bike';
-      const driverVehicle = finalDriverData?.vehicleModel || finalDriverData?.vehicleName || 'BAJAJ DISCOVER 125CC';
-      const driverPlate = finalDriverData?.plateNumber || finalDriverData?.licensePlate || 'MYMENSINGH-HA-15-5206';
-      const driverStand = finalDriverData?.standName || 'ঈমামবাড়ি মোড় স্ট্যান্ড';
+      const driverVehicle = finalDriverData?.vehicleModel || finalDriverData?.vehicleName || 'মোটরসাইকেল';
+      const driverPlate = finalDriverData?.plateNumber || finalDriverData?.licensePlate || '';
+      const driverStand = finalDriverData?.standName || 'গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড';
       const isTasnimul = clean.endsWith('01304841550') || clean.endsWith('304841550') || driverName.toUpperCase().includes('TASNIMUL');
       const driverPhoto = finalDriverData?.driverPhoto || finalDriverData?.photoUrl || (isTasnimul ? '/assets/drivers/tasnimul_kabeer.png' : '');
       const driverRating = typeof finalDriverData?.rating === 'number' ? finalDriverData.rating : 5.0;
@@ -2587,10 +2585,10 @@ export default function App() {
       showAdminToastMessage(`স্বাগতম ${driverData.name || driverData.nameBn || 'চালক'}! আপনার ৪-ডিজিটের সিকিউরিটি পিন সফলভাবে সংরক্ষিত হয়েছে।`);
     }
 
-    const driverName = driverData.name || driverData.nameBn || 'TASNIMUL KABEER';
-    const driverVehicle = driverData.vehicleModel || driverData.vehicleName || 'BAJAJ DISCOVER 125CC';
-    const driverPlate = driverData.plateNumber || driverData.licensePlate || 'MYMENSINGH-HA-15-5206';
-    const driverStand = driverData.standName || 'ঈমামবাড়ি মোড় স্ট্যান্ড';
+    const driverName = driverData.name || driverData.nameBn || 'নিবন্ধিত চালক';
+    const driverVehicle = driverData.vehicleModel || driverData.vehicleName || 'মোটরসাইকেল';
+    const driverPlate = driverData.plateNumber || driverData.licensePlate || '';
+    const driverStand = driverData.standName || 'গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড';
     const driverCategory = (driverData.category as VehicleCategory) || 'bike';
     const driverRating = typeof driverData.rating === 'number' ? driverData.rating : 5.0;
     const driverTotalTrips = typeof driverData.totalTrips === 'number' ? driverData.totalTrips : (driverData.todayTrips || 0);
@@ -3235,42 +3233,80 @@ export default function App() {
     }
   }, [userRole, liveGps.isTracking, startGpsTracking]);
 
-  // Request Screen WakeLock in driver mode so device screen does not turn off while waiting for rides
-  useEffect(() => {
-    let wakeLockSentinel: any = null;
-    const requestWakeLock = async () => {
-      try {
-        if ('wakeLock' in navigator && userRole === 'driver') {
-          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
-        }
-      } catch {}
-    };
+  // Screen WakeLock State & Auto-Management for Driver Mode
+  const [isWakeLockActive, setIsWakeLockActive] = useState<boolean>(false);
+  const [showScreenOpenPopup, setShowScreenOpenPopup] = useState<boolean>(true);
 
+  // Subscribe to ScreenWakeLock status changes
+  useEffect(() => {
+    const unsub = screenWakeLock.subscribe((active) => {
+      setIsWakeLockActive(active);
+    });
+    return unsub;
+  }, []);
+
+  // Request Screen WakeLock & High-Priority Notification Permission when entering driver mode
+  useEffect(() => {
     if (userRole === 'driver') {
-      requestWakeLock();
-      const handleVisibilityChange = () => {
-        if (document.visibilityState === 'visible' && userRole === 'driver') {
-          requestWakeLock();
-        }
-      };
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      return () => {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        if (wakeLockSentinel && typeof wakeLockSentinel.release === 'function') {
-          wakeLockSentinel.release().catch(() => {});
-        }
-      };
+      screenWakeLock.requestLock().catch(() => {});
+      highPriorityNotifications.requestPermission().catch(() => {});
+    } else {
+      screenWakeLock.releaseLock();
     }
   }, [userRole]);
 
-  // Request Notification permission when switching to driver mode so incoming ride alerts notify even if minimized
+  // Screen unlock / screen turn-on / visibility change listener
   useEffect(() => {
-    if (userRole === 'driver' && typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
+    const handleScreenTurnOn = () => {
+      if (document.visibilityState === 'visible') {
+        // Driver turned on mobile screen or switched back to app!
+        setShowScreenOpenPopup(true);
+        if (userRole === 'driver') {
+          screenWakeLock.requestLock().catch(() => {});
+        }
       }
-    }
+    };
+    document.addEventListener('visibilitychange', handleScreenTurnOn);
+    window.addEventListener('focus', handleScreenTurnOn);
+    return () => {
+      document.removeEventListener('visibilitychange', handleScreenTurnOn);
+      window.removeEventListener('focus', handleScreenTurnOn);
+    };
   }, [userRole]);
+
+  // Compute Active Incoming Ride Request Matching Current Driver (Accessible anywhere in App)
+  const activeIncomingRideForDriver = useMemo(() => {
+    if (!driverProfile.phone && !driverProfile.isRegistered) return null;
+    const dismissed = getDismissedTripIds();
+    const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+    const hasActiveTrip = passengerRequests.some(r => 
+      (r.status === 'accepted' || r.status === 'in_transit') && 
+      !dismissed.has(r.id) &&
+      (
+        (driverProfile.id && r.driverId === driverProfile.id) ||
+        (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
+      )
+    );
+    if (hasActiveTrip) return null;
+
+    return passengerRequests.find(r => 
+      r.status === 'pending' && 
+      !dismissedAlertIds[r.id] &&
+      (
+        (r.driverId && (r.driverId === driverProfile.id || (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone))) ||
+        (!r.driverId && (!driverProfile.category || driverProfile.category === 'all' || r.category === driverProfile.category))
+      )
+    ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && userRole === 'driver' ? passengerPendingRequest : null);
+  }, [passengerRequests, dismissedAlertIds, driverProfile, passengerPendingRequest, userRole]);
+
+  // High-Priority push/vibration alert whenever an incoming ride is detected
+  useEffect(() => {
+    if (activeIncomingRideForDriver) {
+      highPriorityNotifications.showIncomingRideAlert(activeIncomingRideForDriver).catch(() => {});
+    } else {
+      highPriorityNotifications.clearIncomingRideAlert().catch(() => {});
+    }
+  }, [activeIncomingRideForDriver?.id]);
 
   // Throttled Real-time Driver GPS Broadcast to active accepted/in_transit trip in Firestore
   const lastGpsBroadcastRef = useRef<{ lat: number; lng: number; time: number }>({ lat: 0, lng: 0, time: 0 });
@@ -5182,7 +5218,14 @@ export default function App() {
   // Delete Driver
   const handleDeleteDriver = (driverId: string, driverName: string) => {
     setDrivers(prev => prev.filter(d => d.id !== driverId));
-    showAdminToastMessage(`চালক '${driverName}' রিমুভ করা হয়েছে`);
+    try {
+      const existingDeleted = JSON.parse(localStorage.getItem('safar_deleted_driver_ids_v1') || '[]');
+      if (!existingDeleted.includes(driverId)) {
+        existingDeleted.push(driverId);
+        localStorage.setItem('safar_deleted_driver_ids_v1', JSON.stringify(existingDeleted));
+      }
+    } catch {}
+    showAdminToastMessage(`চালক '${driverName}' স্থায়ীভাবে রিমুভ করা হয়েছে`);
 
     // Firestore delete
     deleteDoc(doc(db, 'drivers', driverId)).catch(err => console.warn('Firestore delete error:', err));
@@ -5637,52 +5680,53 @@ export default function App() {
           </div>
         )}
 
-        {/* DRIVER INCOMING RIDE REQUEST POPUP */}
-        {(() => {
-          if (userRole !== 'driver') return null;
-          // If driver already has an active accepted trip, don't show incoming popup
-          const dismissed = getDismissedTripIds();
-          const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
-          const hasActiveTrip = passengerRequests.some(r => 
-            (r.status === 'accepted' || r.status === 'in_transit') && 
-            !dismissed.has(r.id) &&
-            (
-              (driverProfile.id && r.driverId === driverProfile.id) ||
-              (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
-            )
-          );
-          if (hasActiveTrip) return null;
+        {/* SPECIAL FLOATING SCREEN-OPEN NOTIFICATION POPUP IN APP DEFAULT COLOR */}
+        {activeIncomingRideForDriver && showScreenOpenPopup && (
+          <DriverScreenOpenNotificationPopup
+            request={activeIncomingRideForDriver}
+            onOpenDashboard={() => {
+              setUserRole('driver');
+              setShowScreenOpenPopup(false);
+              window.scrollTo({ top: 120, behavior: 'smooth' });
+            }}
+            onAccept={(reqId) => {
+              setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
+              sounds.stopAllAlarms();
+              highPriorityNotifications.clearIncomingRideAlert();
+              setShowScreenOpenPopup(false);
+              handleDriverAcceptRequest(reqId);
+            }}
+            onDecline={(reqId) => {
+              setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
+              sounds.stopAllAlarms();
+              highPriorityNotifications.clearIncomingRideAlert();
+              setShowScreenOpenPopup(false);
+              showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
+            }}
+          />
+        )}
 
-          // Find pending request matching this driver:
-          // Either specifically targeted to this driver, or open broadcast matching driver's vehicle category
-          const incoming = passengerRequests.find(r => 
-            r.status === 'pending' && 
-            !dismissedAlertIds[r.id] &&
-            (
-              (r.driverId && (r.driverId === driverProfile.id || (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone))) ||
-              (!r.driverId && (!driverProfile.category || driverProfile.category === 'all' || r.category === driverProfile.category))
-            )
-          ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && userRole === 'driver' ? passengerPendingRequest : null);
-
-          if (!incoming) return null;
-
-          return (
-            <DriverIncomingAlert
-              key={incoming.id}
-              request={incoming}
-              onAccept={(reqId) => {
-                setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-                sounds.stopAllAlarms();
-                handleDriverAcceptRequest(reqId);
-              }}
-              onDecline={(reqId) => {
-                setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-                sounds.stopAllAlarms();
-                showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
-              }}
-            />
-          );
-        })()}
+        {/* DRIVER INCOMING RIDE REQUEST FULL COCKPIT CARD */}
+        {userRole === 'driver' && activeIncomingRideForDriver && (
+          <DriverIncomingAlert
+            key={activeIncomingRideForDriver.id}
+            request={activeIncomingRideForDriver}
+            onAccept={(reqId) => {
+              setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
+              sounds.stopAllAlarms();
+              highPriorityNotifications.clearIncomingRideAlert();
+              setShowScreenOpenPopup(false);
+              handleDriverAcceptRequest(reqId);
+            }}
+            onDecline={(reqId) => {
+              setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
+              sounds.stopAllAlarms();
+              highPriorityNotifications.clearIncomingRideAlert();
+              setShowScreenOpenPopup(false);
+              showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
+            }}
+          />
+        )}
 
         {/* ============================================================== */}
         {/* PASSENGER RIDE PLANNER & BOOKING HUB (SHOWN IN PASSENGER MODE) */}
@@ -6184,6 +6228,51 @@ export default function App() {
                         <Power className="w-3.5 h-3.5" />
                         <span>{isDriverOnline ? 'অনলাইনে আছেন (অনুরোধ আসবে)' : 'অফলাইন (অনুরোধ বন্ধ)'}</span>
                       </button>
+
+                      {/* Screen Wake-Lock Status & Manual Boost Toggle */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isWakeLockActive) {
+                            screenWakeLock.releaseLock();
+                            showAdminToastMessage('স্ক্রিন ওয়েক-লক সাময়িক নিষ্ক্রিয় করা হয়েছে');
+                          } else {
+                            screenWakeLock.requestLock().then(() => {
+                              showAdminToastMessage('📱 স্ক্রিন ওয়েক-লক সক্রিয়! স্ট্যান্ডে অপেক্ষারত অবস্থায় স্ক্রিন স্লিপে যাবে না।');
+                            });
+                          }
+                        }}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-xs cursor-pointer ${
+                          isWakeLockActive
+                            ? 'bg-amber-400 text-slate-950 border border-amber-500 shadow-amber-400/20'
+                            : 'bg-slate-200 text-slate-700 hover:bg-slate-300 border border-slate-300'
+                        }`}
+                        title="চালক মোডে ফোনের স্ক্রিন স্লিপে যাবে না—ট্যাপ করে চেক বা রিস্টার্ট করুন"
+                      >
+                        <span className={`w-2 h-2 rounded-full ${isWakeLockActive ? 'bg-emerald-600 animate-ping' : 'bg-slate-400'}`} />
+                        <span>{isWakeLockActive ? '📱 স্ক্রিন ওয়েক-লক: সক্রিয় 🟢' : '📱 স্ক্রিন ওয়েক-লক চালু'}</span>
+                      </button>
+
+                      {/* Push Notification Permission Button */}
+                      {typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            highPriorityNotifications.requestPermission().then((res) => {
+                              if (res === 'granted') {
+                                showAdminToastMessage('✅ পুশ নোটিফিকেশন সক্রিয়! স্ক্রিন অফ থাকলেও অ্যালার্ট আসবে');
+                              } else {
+                                showAdminToastMessage('⚠️ ব্রাউজার সেটিংসে গিয়ে নোটিফিকেশন Allow করুন');
+                              }
+                            });
+                          }}
+                          className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer animate-pulse"
+                          title="স্ক্রিন বন্ধ বা অ্যাপ ব্যাকগ্রাউন্ডে থাকলেও পুশ নোটিফিকেশন পেতে ট্যাপ করুন"
+                        >
+                          <Bell className="w-3.5 h-3.5" />
+                          <span>🔔 পুশ নোটিফিকেশন চালু করুন</span>
+                        </button>
+                      )}
 
                       <button
                         type="button"

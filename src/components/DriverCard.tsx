@@ -2,7 +2,6 @@ import React from 'react';
 import { Phone, Star, ShieldCheck, MapPin, Info, Ambulance, Flame, Bike } from 'lucide-react';
 import { Driver, VehicleCategory } from '../types';
 import { toBengaliNumber } from '../utils/calculator';
-import { PauseMarqueeText } from './PauseMarqueeText';
 
 interface DriverCardProps {
   driver: Driver;
@@ -62,7 +61,7 @@ export const DriverCard: React.FC<DriverCardProps> = ({
     }
   };
 
-  const badgeInfo = getCategoryBadge(driver.category as VehicleCategory);
+  const badgeInfo = getCategoryBadge(driver.category);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 hover:border-emerald-400 p-3.5 sm:p-4 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between group">
@@ -93,27 +92,25 @@ export const DriverCard: React.FC<DriverCardProps> = ({
         </div>
 
         {/* Driver Name & Vehicle Model */}
-        <div className="mb-2.5 min-w-0">
+        <div className="mb-2.5">
           <h4
             onClick={() => onViewDetails(driver)}
-            className="font-bold text-sm sm:text-base text-slate-900 leading-snug group-hover:text-emerald-800 transition cursor-pointer min-w-0"
+            className="font-bold text-sm sm:text-base text-slate-900 leading-snug group-hover:text-emerald-800 transition cursor-pointer"
           >
-            <PauseMarqueeText text={driver.nameBn || (driver as any).name || 'চালক'} className="font-bold text-sm sm:text-base text-slate-900 leading-snug" pauseSec={1.5} />
+            {driver.nameBn}
           </h4>
-          <div className="text-xs text-emerald-700 font-medium leading-normal mt-0.5 min-w-0">
-            <PauseMarqueeText text={driver.vehicleModel || driver.vehicleName || ''} className="text-xs text-emerald-700 font-medium" pauseSec={1.5} />
-          </div>
+          <p className="text-xs text-emerald-700 font-medium leading-normal mt-0.5">
+            {driver.vehicleModel || driver.vehicleName}
+          </p>
         </div>
 
         {/* Stand location */}
         <div
           onClick={() => onSelectOnMap(driver)}
-          className="flex items-center gap-1.5 text-xs text-slate-600 mb-2 cursor-pointer hover:text-emerald-700 group/stand min-w-0"
+          className="flex items-center gap-1.5 text-xs text-slate-600 mb-2 cursor-pointer hover:text-emerald-700 group/stand"
         >
           <MapPin className="w-3.5 h-3.5 text-slate-400 group-hover/stand:text-emerald-600 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <PauseMarqueeText text={driver.standName || 'গফরগাঁও স্ট্যান্ড'} className="text-xs text-slate-600" pauseSec={1.5} />
-          </div>
+          <span className="truncate">{driver.standName}</span>
         </div>
 
         {/* License & NID verification badges */}

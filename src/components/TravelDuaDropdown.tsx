@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { BookOpen, ChevronDown, ChevronRight, X, Copy, Check, Moon, Share2 } from 'lucide-react';
 import { TRAVEL_DUAS, TravelDuaItem, TravelDuaSubItem, formatDuaForCopy } from '../data/travelDuas';
-import { PauseMarqueeText } from './PauseMarqueeText';
 
 interface TravelDuaDropdownProps {
   className?: string;
@@ -216,34 +215,30 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
       </div>
 
       {/* ============================================================== */}
-      {/* DUA STICKER POPUP MODAL (Mobile-Optimized Balanced Layout) */}
+      {/* DUA STICKER POPUP MODAL (Exact Format as Screenshots 003508 / 003452) */}
       {/* ============================================================== */}
       {activeDua && (
         <div 
-          className="fixed inset-0 z-[80] flex items-center justify-center p-2.5 sm:p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-5 bg-slate-950/75 backdrop-blur-xs animate-in fade-in"
           onClick={() => setActiveDua(null)}
         >
           <div
-            className="bg-white w-full max-w-xl rounded-2xl border border-slate-200 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-150"
+            className="bg-white w-full max-w-2xl rounded-2xl sm:rounded-3xl border border-slate-200 shadow-2xl flex flex-col max-h-[92vh] overflow-hidden animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header with PauseMarqueeText */}
-            <div className="bg-gradient-to-r from-emerald-800 via-emerald-700 to-teal-800 text-white p-2.5 sm:p-3 flex items-center justify-between shrink-0 gap-2">
-              <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-                <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-white/20 border border-white/30 flex items-center justify-center font-bold text-white shrink-0">
-                  <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 fill-amber-300" />
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-emerald-800 via-emerald-700 to-teal-800 text-white p-3.5 sm:p-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-8 h-8 rounded-xl bg-white/20 border border-white/30 flex items-center justify-center font-bold text-white shrink-0">
+                  <Moon className="w-4 h-4 text-amber-300 fill-amber-300" />
                 </span>
-                <div className="min-w-0 flex-1 overflow-hidden">
-                  <span className="text-[9.5px] sm:text-[10px] font-bold text-emerald-200 uppercase tracking-wider block">
+                <div className="truncate">
+                  <span className="text-[10px] font-bold text-emerald-200 uppercase tracking-wider block">
                     সফরের দো'আ স্টিকার
                   </span>
-                  <div className="min-w-0 overflow-hidden">
-                    <PauseMarqueeText
-                      text={activeDua.title}
-                      className="font-extrabold text-xs sm:text-sm text-white"
-                      pauseSec={2}
-                    />
-                  </div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-white truncate">
+                    {activeDua.title}
+                  </h3>
                 </div>
               </div>
 
@@ -252,7 +247,7 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
                 <button
                   type="button"
                   onClick={handleCopy}
-                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95 ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95 ${
                     copied
                       ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300'
                       : 'bg-white/20 hover:bg-white/30 text-white border border-white/30'
@@ -260,14 +255,14 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
                   title="সম্পূর্ণ দো'আ কার্ড কপি করুন"
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-950" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'কপি হয়েছে' : 'কপি করুন'}</span>
+                  <span>{copied ? 'কপি হয়েছে!' : 'কপি করুন'}</span>
                 </button>
 
                 {/* Close Button */}
                 <button
                   type="button"
                   onClick={() => setActiveDua(null)}
-                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition cursor-pointer"
+                  className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition cursor-pointer ml-1"
                   title="বন্ধ করুন"
                 >
                   <X className="w-4 h-4" />
@@ -275,48 +270,48 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
               </div>
             </div>
 
-            {/* Sticker Body Content (Optimized Padding & Balanced Typography) */}
-            <div className="p-2.5 sm:p-4 overflow-y-auto space-y-3 text-slate-900 bg-slate-50/50 flex-1 font-['Hind_Siliguri',sans-serif]">
+            {/* Sticker Body Content (Faithful reproduction of format in Screenshot 003508 / 003452) */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 text-slate-900 bg-slate-50/50 flex-1 font-['Hind_Siliguri',sans-serif]">
               {/* Sticker Container with clean border & shadow */}
-              <div className="bg-white p-3 sm:p-4 rounded-xl border border-slate-200/90 shadow-xs space-y-2.5">
+              <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
                 {/* Title */}
-                <h2 className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
                   {activeDua.title}
                 </h2>
 
                 {/* Subtitle if available (e.g. দো'আ [০১.০১]:) */}
                 {activeDua.subTitle && (
-                  <p className="text-xs font-semibold text-slate-700">
+                  <p className="text-xs sm:text-sm font-semibold text-slate-700">
                     {activeDua.subTitle}
                   </p>
                 )}
 
                 {/* Narration intro if any */}
                 {activeDua.narration && (
-                  <p className="text-xs text-slate-700 leading-relaxed italic bg-emerald-50/60 p-2 rounded-lg border border-emerald-100">
+                  <p className="text-xs sm:text-sm text-slate-700 leading-relaxed italic bg-emerald-50/60 p-2.5 rounded-xl border border-emerald-100">
                     {activeDua.narration}
                   </p>
                 )}
 
-                {/* Arabic Text (Balanced font size text-[17px] sm:text-[19px], moderate line-height, compact padding) */}
+                {/* Arabic Text (Pure Arabic, Font Amiri / Scheherazade New, crisp, right-to-left with accurate vowel marks) */}
                 {activeDua.arabic && (
                   <div 
                     dir="rtl" 
-                    className="py-2.5 px-3 bg-amber-50/80 rounded-xl border border-amber-300/80 text-right mt-1.5 mb-3.5 shadow-2xs"
+                    className="py-3.5 px-4 bg-amber-50/70 rounded-2xl border-2 border-amber-300/60 text-right my-2 shadow-xs"
                   >
-                    <p className="font-['Amiri','Scheherazade_New','Noto_Naskh_Arabic',serif] text-[17px] sm:text-[19px] text-emerald-950 font-normal leading-[1.8] tracking-wide select-all antialiased text-right">
+                    <p className="font-['Amiri','Scheherazade_New','Noto_Naskh_Arabic',serif] text-2xl sm:text-3xl text-emerald-950 font-normal leading-[2.3] tracking-wide select-all antialiased">
                       {activeDua.arabic}
                     </p>
                   </div>
                 )}
 
-                {/* Pronunciation (উচ্চারণ) with harmonious top gap */}
+                {/* Pronunciation (উচ্চারণ) */}
                 {activeDua.transliteration && (
-                  <div className="space-y-1 pt-1">
+                  <div className="space-y-1">
                     <span className="font-bold text-xs sm:text-sm text-slate-900 block">
                       উচ্চারণ:
                     </span>
-                    <p className="text-xs sm:text-[13px] text-slate-800 leading-relaxed select-all">
+                    <p className="text-xs sm:text-sm text-slate-800 leading-relaxed select-all">
                       "{activeDua.transliteration}"
                     </p>
                   </div>
@@ -328,7 +323,7 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
                     <span className="font-bold text-xs sm:text-sm text-slate-900 block">
                       অর্থ:
                     </span>
-                    <p className="text-xs sm:text-[13px] text-slate-800 leading-relaxed select-all">
+                    <p className="text-xs sm:text-sm text-slate-800 leading-relaxed select-all">
                       "{activeDua.translation}"
                     </p>
                   </div>
@@ -336,14 +331,14 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
 
                 {/* Context (দোয়ার প্রেক্ষাপট) */}
                 {activeDua.context && (
-                  <div className="text-[11px] sm:text-xs text-slate-700 leading-relaxed bg-slate-100/70 p-2 rounded-lg border border-slate-200">
+                  <div className="text-xs sm:text-[13px] text-slate-700 leading-relaxed bg-slate-100/70 p-2.5 rounded-xl border border-slate-200">
                     {activeDua.context}
                   </div>
                 )}
 
                 {/* Reference & Hadith context */}
                 {activeDua.reference && (
-                  <div className="pt-2 border-t border-slate-100 text-[10.5px] sm:text-[11px] text-slate-500 leading-relaxed whitespace-pre-line">
+                  <div className="pt-2 border-t border-slate-100 text-[11px] sm:text-xs text-slate-600 leading-relaxed whitespace-pre-line">
                     {activeDua.reference}
                   </div>
                 )}
@@ -351,7 +346,7 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
             </div>
 
             {/* Modal Bottom Action Bar */}
-            <div className="bg-slate-100/90 px-3 py-2.5 border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+            <div className="bg-slate-100/90 px-4 py-3 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
               <span className="text-[11px] text-slate-500 hidden sm:inline">
                 সফরকালে দো'আ পাঠ করা সুন্নত ও নিরাপত্তার মাধ্যম
               </span>
@@ -360,20 +355,20 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
                 <button
                   type="button"
                   onClick={handleCopy}
-                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-bold text-xs transition cursor-pointer active:scale-95 shadow-xs ${
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs transition cursor-pointer active:scale-95 shadow-xs ${
                     copied
                       ? 'bg-emerald-600 text-white'
                       : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                   }`}
                 >
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'কপি হয়েছে!' : 'স্টিকার কপি করুন'}</span>
+                  <span>{copied ? 'সম্পূর্ণ লেখা কপি হয়েছে!' : 'স্টিকার কপি করুন'}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setActiveDua(null)}
-                  className="px-3 py-1.5 bg-white hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg border border-slate-300 transition cursor-pointer"
+                  className="px-4 py-2 bg-white hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-300 transition cursor-pointer"
                 >
                   বন্ধ করুন
                 </button>

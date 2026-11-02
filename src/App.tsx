@@ -2936,6 +2936,13 @@ export default function App() {
   // Deep-linking & Service Worker action button handler (e.g. from notification actions)
   useEffect(() => {
     try {
+      sounds.preloadVoiceAlert();
+      const handleFirstInteraction = () => {
+        sounds.preloadVoiceAlert();
+      };
+      window.addEventListener('click', handleFirstInteraction, { once: true, passive: true });
+      window.addEventListener('touchstart', handleFirstInteraction, { once: true, passive: true });
+
       const urlParams = new URLSearchParams(window.location.search);
       const openTripId = urlParams.get('openDriverTrip');
       const autoAccept = urlParams.get('autoAccept');
@@ -2960,6 +2967,8 @@ export default function App() {
         navigator.serviceWorker.addEventListener('message', handleSwMessage);
         return () => {
           navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+          window.removeEventListener('click', handleFirstInteraction);
+          window.removeEventListener('touchstart', handleFirstInteraction);
         };
       }
     } catch {}

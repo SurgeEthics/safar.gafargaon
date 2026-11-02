@@ -26,7 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Brand identity */}
         <div className="flex items-center gap-2.5 sm:gap-3 cursor-pointer select-none">
           <img 
-            src="/safar-logo.png" 
+            src="/safar-logo.svg" 
             alt="সফর লোগো" 
             className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl shadow-md border border-emerald-300/40 object-contain hover:scale-105 transition-transform" 
           />

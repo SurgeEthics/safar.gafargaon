@@ -6,6 +6,7 @@ export interface GafargaonPlace {
   bengaliName: string;
   category: 'স্ট্যান্ড' | 'মোড়' | 'বাজার' | 'হাসপাতাল' | 'শিক্ষা প্রতিষ্ঠান' | 'প্রশাসন' | 'ইউনিয়ন';
   area: string;
+  unionNameBengali?: string;
   lat: number;
   lng: number;
   isPopular?: boolean;
@@ -18,6 +19,7 @@ export const GAFARGAON_PLACES: GafargaonPlace[] = COMPREHENSIVE_UNION_PLACES.map
   bengaliName: p.bengaliName,
   category: p.category,
   area: `${p.unionNameBengali}, ${p.area}`,
+  unionNameBengali: p.unionNameBengali,
   lat: p.lat,
   lng: p.lng,
   isPopular: p.isPopular
@@ -29,41 +31,13 @@ export const GAFARGAON_PLACES: GafargaonPlace[] = COMPREHENSIVE_UNION_PLACES.map
  */
 export function resolveLocationCoordinates(
   locName: string,
-  isDestination: boolean = false,
-  customStands?: Array<{ name?: string; bengaliName?: string; lat?: number; lng?: number }>
-): { lat: number; lng: number; matchedPlace?: any } {
+  isDestination: boolean = false
+): { lat: number; lng: number; matchedPlace?: ComprehensivePlace | GafargaonPlace } {
   if (!locName || locName.trim() === '') {
     return isDestination ? { lat: 24.4515, lng: 90.5535 } : { lat: 24.4536, lng: 90.5479 };
   }
 
   const clean = locName.trim().toLowerCase();
-
-  // 0. Check dynamic / custom stands first (so user-updated coordinates from Google Maps take immediate effect)
-  let standList = customStands;
-  if (!standList && typeof window !== 'undefined') {
-    try {
-      const saved = localStorage.getItem('safar_stands_v6');
-      if (saved) {
-        standList = JSON.parse(saved);
-      }
-    } catch {}
-  }
-  if (Array.isArray(standList) && standList.length > 0) {
-    const standMatch = standList.find(s => {
-      const bn = (s.bengaliName || '').toLowerCase().trim();
-      const en = (s.name || '').toLowerCase().trim();
-      if (!bn && !en) return false;
-      const simpleBn = bn.replace(' স্ট্যান্ড', '').replace(' মোড়', '').replace(' বাজার', '').trim();
-      return (
-        (bn && (bn === clean || clean.includes(bn) || bn.includes(clean))) ||
-        (simpleBn && simpleBn.length >= 3 && clean.includes(simpleBn)) ||
-        (en && (en === clean || clean.includes(en) || en.includes(clean)))
-      );
-    });
-    if (standMatch && typeof standMatch.lat === 'number' && typeof standMatch.lng === 'number') {
-      return { lat: standMatch.lat, lng: standMatch.lng, matchedPlace: standMatch };
-    }
-  }
 
   // 1. Direct match in comprehensive places dataset
   const exact = COMPREHENSIVE_UNION_PLACES.find(

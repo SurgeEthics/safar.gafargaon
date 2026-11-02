@@ -18,7 +18,7 @@ interface UnionQuickDestinationsProps {
   selectedDestination: string;
   onSelectDestination: (name: string, coords?: { lat: number; lng: number }) => void;
   customQuickDestinations?: string[];
-  allPlaces?: Array<any>;
+  allPlaces?: any[];
 }
 
 export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
@@ -76,22 +76,18 @@ export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
             {/* Quick Union Directory Accordion */}
             {GAFARGAON_UNIONS.map((union: UnionInfo) => {
               const isUnionExpanded = activeUnionId === union.id;
-              const sourcePlaces = (allPlaces && allPlaces.length > 0) ? allPlaces : COMPREHENSIVE_UNION_PLACES;
-              const cleanTarget = union.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', '').trim().toLowerCase();
-              
-              const unionPlaces = sourcePlaces.filter(p => {
-                const bName = (p.bengaliName || p.name || '').trim();
-                // Filter out any fake Goyeshpur UP
-                if (bName.includes('গয়েশপুর ইউনিয়ন পরিষদ') || bName.includes('গয়েশপুর ইউপি') || bName.includes('Gayeshpur Union Parishad')) {
-                  return false;
-                }
-                if (p.unionId === union.id) return true;
-                if (p.unionNameBengali && p.unionNameBengali.trim() === union.nameBengali.trim()) return true;
-                const pArea = (p.area || '').toLowerCase();
-                const pUnion = (p.unionNameBengali || '').toLowerCase();
-                return pUnion.includes(cleanTarget) || pArea.includes(cleanTarget);
-              });
-
+              const unionPlaces = allPlaces && allPlaces.length > 0
+                ? allPlaces.filter(p => {
+                    const bn = p.bengaliName || p.name || '';
+                    if (bn.includes('গয়েশপুর ইউনিয়ন পরিষদ')) return false;
+                    const uBn = p.unionNameBengali || '';
+                    return (
+                      uBn === union.nameBengali ||
+                      (p.unionId && p.unionId === union.id) ||
+                      (p.area && (p.area.includes(union.nameBengali) || p.area.includes(union.nameBengali.replace(' ইউনিয়ন', ''))))
+                    );
+                  })
+                : COMPREHENSIVE_UNION_PLACES.filter(p => p.unionId === union.id && !p.bengaliName.includes('গয়েশপুর ইউনিয়ন পরিষদ'));
               const hasSelectedInside = unionPlaces.some(p => (p.bengaliName || p.name || '').trim() === selectedDestination.trim());
 
               return (
@@ -159,17 +155,15 @@ export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
                         <p className="text-[11px] text-slate-400 text-center py-2">কোনো স্থান অন্তর্ভুক্ত নেই</p>
                       ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                          {unionPlaces.map((place: any) => {
-                            const pName = place.bengaliName || place.name || 'স্থান';
-                            const pArea = place.area || place.categoryLabel || '';
-                            const isMatch = selectedDestination.trim() === pName.trim();
+                          {unionPlaces.map((place: ComprehensivePlace) => {
+                            const isMatch = selectedDestination.trim() === place.bengaliName.trim();
 
                             return (
                               <button
-                                key={place.id || `${pName}-${place.lat}-${place.lng}`}
+                                key={place.id}
                                 type="button"
                                 onClick={() => {
-                                  onSelectDestination(pName, { lat: place.lat, lng: place.lng });
+                                  onSelectDestination(place.bengaliName, { lat: place.lat, lng: place.lng });
                                   onToggle(); // Auto-fold on selection
                                 }}
                                 className={`flex items-center justify-between p-1.5 rounded-lg border text-left transition-all cursor-pointer ${
@@ -177,7 +171,7 @@ export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
                                     ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
                                     : 'bg-white hover:bg-emerald-50/80 text-slate-800 border-slate-200'
                                 }`}
-                                title={`${pName} (${pArea})`}
+                                title={`${place.bengaliName} (${place.area})`}
                               >
                                 <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
                                   {place.isStand ? (
@@ -189,12 +183,12 @@ export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
                                   {/* Mobile Responsive Marquee on Text Truncation with 1.5s Pause at the end */}
                                   <div className="min-w-0 flex-1 overflow-hidden space-y-0.5">
                                     <PauseMarqueeText
-                                      text={pName}
+                                      text={place.bengaliName}
                                       className={`text-[11px] font-bold ${isMatch ? 'text-white' : 'text-slate-800'}`}
                                       pauseSec={1.5}
                                     />
                                     <PauseMarqueeText
-                                      text={pArea}
+                                      text={place.area}
                                       className={`text-[9px] block ${isMatch ? 'text-emerald-100' : 'text-slate-500'}`}
                                       pauseSec={1.5}
                                     />

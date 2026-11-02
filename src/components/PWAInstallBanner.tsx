@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Share2, QrCode, Check, Copy, X, Sparkles, Smartphone, ExternalLink, ArrowUp } from 'lucide-react';
+import { Download, Share2, QrCode, Check, Copy, X, Sparkles, Smartphone, ExternalLink } from 'lucide-react';
 import QRCode from 'qrcode';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
@@ -18,19 +18,6 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
-  const [showScrollTop, setShowScrollTop] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setShowScrollTop(window.scrollY > 200);
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
 
   const getPublicShareUrl = (): string => {
     if (customAppUrl && customAppUrl.trim()) return customAppUrl.trim();
@@ -110,19 +97,19 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
           <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2 text-xs sm:text-sm">
             <div className="flex items-center gap-2 min-w-0">
               <img
-                src="/safar-logo.png"
+                src="/safar-logo.svg"
                 alt="সফর লোগো"
                 className="w-8 h-8 rounded-xl shadow-md border border-emerald-300/40 object-contain flex-shrink-0 hover:scale-105 transition-transform"
               />
               <div className="truncate">
                 <p className="font-semibold text-white flex items-center gap-1.5 truncate">
-                  <span>সফর অ্যাপ ইনস্টল করুন</span>
+                  <span>মোবাইলে আসল অ্যাপের মতো ব্যবহার করুন</span>
                   <span className="hidden md:inline-flex items-center gap-0.5 bg-amber-400 text-amber-950 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
                     <Sparkles className="w-2.5 h-2.5" /> ১০০% ফ্রি
                   </span>
                 </p>
                 <p className="text-[11px] text-emerald-100 hidden sm:block truncate">
-                  যেকোনো ডিভাইস ও ব্রাউজারে সহজে ১-ট্যাপে ইনস্টল করুন
+                  কোনো প্লেস্টোর খরচ নেই, ১-ট্যাপে সরাসরি অ্যান্ড্রয়েড ফোনে ইনস্টল
                 </p>
               </div>
             </div>
@@ -160,24 +147,12 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
         </aside>
       )}
 
-      {/* Floating Action Buttons: Scroll to Top & Share/QR */}
-      <div className="fixed bottom-20 right-4 z-40 flex flex-col items-end gap-2.5">
-        {showScrollTop && (
-          <button
-            type="button"
-            onClick={scrollToTop}
-            aria-label="সবার উপরে ফিরে যান"
-            className="bg-transparent hover:bg-emerald-600 active:bg-emerald-700 text-emerald-700 hover:text-white active:text-white p-2.5 sm:p-3 rounded-full hover:scale-105 active:scale-95 transition-all flex items-center justify-center border-2 border-emerald-600 cursor-pointer animate-in fade-in zoom-in duration-200 group"
-            title="সবার উপরে যান"
-          >
-            <ArrowUp className="w-5 h-5 text-emerald-700 group-hover:text-white group-active:text-white transition-colors" />
-          </button>
-        )}
-
+      {/* Floating Share / Quick Action Button for easy access even if banner closed */}
+      <div className="fixed bottom-20 right-4 z-40 flex flex-col gap-2">
         <button
           type="button"
           onClick={() => setShowShareModal(true)}
-          className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white p-3 rounded-full shadow-xl hover:shadow-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 font-semibold text-xs border-2 border-white/40 group cursor-pointer"
+          className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white p-3 rounded-full shadow-xl hover:shadow-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 font-semibold text-xs border-2 border-white/40 group"
           title="অ্যাপ লিংক ও কিউআর কোড"
         >
           <QrCode className="w-5 h-5 group-hover:rotate-12 transition-transform" />
@@ -196,7 +171,7 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-800 text-base">
-                    অ্যাপ ইনস্টল করার সহজ নিয়ম
+                    {isIOS ? 'আইফোন / আইপ্যাডে ইনস্টল করুন' : 'অ্যান্ড্রয়েড ফোনে ইনস্টল করার সহজ নিয়ম'}
                   </h3>
                   <p className="text-xs text-slate-500">এক ক্লিকেই এটি ফোনের হোম স্ক্রিনে সেভ হয়ে যাবে</p>
                 </div>
@@ -245,7 +220,7 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
                       ১
                     </span>
                     <p>
-                      আপনার ব্রাউজারের একদম উপরে ডানে <strong>তিনটি ডট (⋮ মেনু) বা অপশন</strong> বাটনে চাপ দিন।
+                      আপনার Chrome ব্রাউজারের একদম উপরে ডানে <strong>তিনটি ডট (⋮ মেনু)</strong> বাটনে চাপ দিন।
                     </p>
                   </div>
                   <div className="flex items-start gap-3 p-3 rounded-xl bg-emerald-50/70 border border-emerald-100">
@@ -261,15 +236,15 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
                       ৩
                     </span>
                     <p>
-                      <strong>&quot;Install&quot;</strong> কনফার্ম করুন। ব্যস! অ্যাপটি আপনার ফোনের হোম স্ক্রিনে আইকন হিসেবে চলে আসবে।
+                      <strong>&quot;Install&quot;</strong> কনফার্ম করুন। ব্যস! উবারের মতো অ্যাপটি আপনার ফোনের হোম স্ক্রিনে আইকন হিসেবে চলে আসবে।
                     </p>
                   </div>
                 </>
               )}
 
-              <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2 font-medium">
-                <Sparkles className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                <span>✨ সবসময় স্বয়ংক্রিয়ভাবে লাইভ আপডেট থাকবে।</span>
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <span>প্লে স্টোরের কোনো ২৫ ডলার ফি নেই, কোনো মেমোরি খরচ নেই এবং সবসময় লাইভ আপডেট থাকবে।</span>
               </div>
             </div>
 
@@ -293,9 +268,9 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
             <div className="flex items-start justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <img
-                  src="/safar-logo.png"
+                  src="/safar-logo.svg"
                   alt="সফর লোগো"
-                  className="w-12 h-12 rounded-2xl shadow-md object-contain hover:scale-105 transition-transform"
+                  className="w-12 h-12 rounded-2xl shadow-md border border-emerald-300/40 object-contain p-0.5 bg-white"
                 />
                 <div>
                   <h3 className="font-bold text-slate-900 text-base sm:text-lg">

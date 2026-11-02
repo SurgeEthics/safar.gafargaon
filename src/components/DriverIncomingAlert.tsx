@@ -92,10 +92,10 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       startDafRhythm();
     });
 
-    // Safety fallback: ensure Duff drum begins ringing if device has no TTS or speech hangs (7.0s)
+    // Safety fallback: ensure Duff drum begins ringing if audio is blocked (7.2s)
     voiceTimeoutRef.current = setTimeout(() => {
       startDafRhythm();
-    }, 7000);
+    }, 7200);
 
     // 2. 25-second countdown timer
     countdownIntervalRef.current = setInterval(() => {

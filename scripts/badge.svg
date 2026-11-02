@@ -1,0 +1,21 @@
+<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg">
+  <!-- Android Status Bar Notification Badge: ONLY white shapes on transparent background -->
+  <g transform="translate(6, 6) scale(0.875)">
+    <!-- Road 'স' curve -->
+    <path d="M 22,46 C 16,34 24,18 44,18 C 58,18 64,28 55,38 C 45,46 32,48 32,58 L 76,58" 
+          fill="none" stroke="#ffffff" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Vertical road line -->
+    <path d="M 76,18 L 76,64" 
+          fill="none" stroke="#ffffff" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- GPS Location Pin -->
+    <g transform="translate(44, 12)">
+      <path d="M 0,-13 C -7.5,-13 -13,-7.5 -13,0 C -13,7.5 0,16 0,16 C 0,16 13,7.5 13,0 C 13,-7.5 7.5,-13 0,-13 Z" 
+            fill="#ffffff"/>
+      <circle cx="0" cy="-1.5" r="4.2" fill="#000000"/>
+    </g>
+    <!-- Origin dot -->
+    <circle cx="22" cy="46" r="4.2" fill="#ffffff"/>
+    <!-- Destination dot -->
+    <circle cx="76" cy="64" r="4.2" fill="#ffffff"/>
+  </g>
+</svg>

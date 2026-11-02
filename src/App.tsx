@@ -2929,6 +2929,42 @@ export default function App() {
 
   // Track dismissed incoming driver alert IDs so driver doesn't see rejected/accepted popups again
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Record<string, boolean>>({});
+  // Track completed trip IDs to eliminate duplicates between passenger & driver completion events
+  const completedTripIdsRef = useRef<Set<string>>(new Set());
+  const completedDriverTripIdsRef = useRef<Set<string>>(new Set());
+
+  // Deep-linking & Service Worker action button handler (e.g. from notification actions)
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const openTripId = urlParams.get('openDriverTrip');
+      const autoAccept = urlParams.get('autoAccept');
+      if (openTripId) {
+        setUserRole('driver');
+        if (autoAccept === 'true') {
+          setTimeout(() => {
+            handleDriverAcceptRequest(openTripId);
+          }, 450);
+        }
+      }
+
+      if ('serviceWorker' in navigator) {
+        const handleSwMessage = (event: MessageEvent) => {
+          if (event.data?.type === 'ACCEPT_RIDE_REQUEST' && event.data?.requestId) {
+            setUserRole('driver');
+            handleDriverAcceptRequest(event.data.requestId);
+          } else if (event.data?.type === 'OPEN_DRIVER_TRIP') {
+            setUserRole('driver');
+          }
+        };
+        navigator.serviceWorker.addEventListener('message', handleSwMessage);
+        return () => {
+          navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+        };
+      }
+    } catch {}
+  }, []);
+
   // Splash screen state matching IMG-12
   const [showAppSplash, setShowAppSplash] = useState(true);
 
@@ -2977,11 +3013,13 @@ export default function App() {
 
         // If driver completed this trip, update passenger's history and reset state (only if matching current active booking)
         if (data.status === 'completed') {
+          completedTripIdsRef.current.add(docSnap.id);
           if (activeBooking && ((activeBooking as any).requestId === docSnap.id || (activeBooking as any).id === docSnap.id)) {
             const finalFare = data.estFare || activeBooking.fare || 40;
+            const deterministicId = `trip-${docSnap.id}`;
             if (passengerProfile.isLoggedIn) {
               const newTripRecord: PassengerTripRecord = {
-                id: `trip-${Date.now()}`,
+                id: deterministicId,
                 date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
                 pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
                 destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
@@ -2994,15 +3032,20 @@ export default function App() {
                 status: 'সম্পন্ন',
                 ratingGiven: 5.0
               };
-              setTripHistory(prev => [newTripRecord, ...prev]);
+              setTripHistory(prev => {
+                if (prev.some(t => t.id === deterministicId)) return prev;
+                return [newTripRecord, ...prev];
+              });
             }
             setActiveBooking(null);
+            setPassengerPendingRequest(null);
             setPickupCoords(null);
             setDestCoords(null);
             setPassengerPickup('');
             setPassengerDestination('');
             try {
               localStorage.removeItem('safar_active_booking_v2');
+              localStorage.removeItem('safar_passenger_pending_v2');
               localStorage.removeItem('safar_my_ride_request_id');
             } catch {}
             showAdminToastMessage(`🎉 চালক ট্রিপ সফলভাবে সম্পন্ন করেছেন! নির্ধারিত ভাড়া: ৳ ${finalFare}`);
@@ -3082,6 +3125,7 @@ export default function App() {
       const myActiveDoc = liveList.find(r => 
         (r.status === 'accepted' || r.status === 'in_transit') &&
         !dismissed.has(r.id) &&
+        !completedTripIdsRef.current.has(r.id) &&
         myTargetId && r.id === myTargetId
       );
 
@@ -4788,6 +4832,11 @@ export default function App() {
 
   // Driver Finishes the Active Trip
   const handleDriverCompleteActiveTrip = async (tripId: string, fare: number) => {
+    if (completedDriverTripIdsRef.current.has(tripId)) {
+      return;
+    }
+    completedDriverTripIdsRef.current.add(tripId);
+    completedTripIdsRef.current.add(tripId);
     try {
       await updateDoc(doc(db, 'ride_requests', tripId), {
         status: 'completed',
@@ -5632,10 +5681,19 @@ export default function App() {
               }}
               onCompleteRide={(fare) => {
                 if (activeBooking) {
+                  const bId = (activeBooking as any).requestId || (activeBooking as any).id;
+                  if (bId) {
+                    completedTripIdsRef.current.add(bId);
+                    updateDoc(doc(db, 'ride_requests', bId), {
+                      status: 'completed',
+                      completedAt: new Date().toISOString()
+                    }).catch(() => {});
+                  }
                   const matchedDriver = drivers.find(d => d.id === activeBooking.driver.id) || activeBooking.driver;
                   const finalFare = (fare && fare > 0) ? fare : (activeBooking.fare || 40);
+                  const deterministicId = bId ? `trip-${bId}` : `trip-${Date.now()}`;
                   const newTripRecord: PassengerTripRecord = {
-                    id: `trip-${Date.now()}`,
+                    id: deterministicId,
                     date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
                     pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
                     destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
@@ -5648,7 +5706,10 @@ export default function App() {
                     status: 'সম্পন্ন',
                     ratingGiven: 5.0
                   };
-                  setTripHistory(prev => [newTripRecord, ...prev]);
+                  setTripHistory(prev => {
+                    if (prev.some(t => t.id === deterministicId)) return prev;
+                    return [newTripRecord, ...prev];
+                  });
                   if (passengerProfile.phone) {
                     setDoc(doc(db, 'users', passengerProfile.phone, 'trips', newTripRecord.id), {
                       ...newTripRecord,
@@ -5667,7 +5728,25 @@ export default function App() {
                   }
                   return d;
                 }));
+                const bId = (activeBooking as any)?.requestId || (activeBooking as any)?.id;
+                if (bId) {
+                  completedTripIdsRef.current.add(bId);
+                  updateDoc(doc(db, 'ride_requests', bId), {
+                    status: 'completed',
+                    completedAt: new Date().toISOString()
+                  }).catch(() => {});
+                }
                 setActiveBooking(null);
+                setPassengerPendingRequest(null);
+                setPickupCoords(null);
+                setDestCoords(null);
+                setPassengerPickup('');
+                setPassengerDestination('');
+                try {
+                  localStorage.removeItem('safar_active_booking_v2');
+                  localStorage.removeItem('safar_passenger_pending_v2');
+                  localStorage.removeItem('safar_my_ride_request_id');
+                } catch {}
                 showAdminToastMessage('আপনার মূল্যবান ৫-স্টার রিভিউ ও রেটিং জমা নেওয়া হয়েছে!');
               }}
               onFocusMap={() => {

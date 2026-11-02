@@ -255,9 +255,44 @@ class SoundEffects {
   /**
    * Loud, clear, dignified Bengali male voice announcement for drivers:
    * "'সফর' অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
-   * Followed by the default loud Daf drum rhythm.
+   * Uses real studio recording '/driver_voice_alert.mp3' first with 0ms lag,
+   * with seamless fallback to SpeechSynthesis.
    */
   speakDriverVoiceAlert(onEnd?: () => void): boolean {
+    if (typeof window === 'undefined') {
+      if (onEnd) onEnd();
+      return false;
+    }
+
+    try {
+      const audio = new Audio('/driver_voice_alert.mp3');
+      audio.volume = 1.0;
+      let finished = false;
+      const done = () => {
+        if (!finished) {
+          finished = true;
+          if (onEnd) onEnd();
+        }
+      };
+
+      audio.onended = done;
+      audio.onerror = () => {
+        this.fallbackSpeechSynthesis(done);
+      };
+
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        playPromise.catch(() => {
+          this.fallbackSpeechSynthesis(done);
+        });
+      }
+      return true;
+    } catch {
+      return this.fallbackSpeechSynthesis(onEnd);
+    }
+  }
+
+  private fallbackSpeechSynthesis(onEnd?: () => void): boolean {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       if (onEnd) onEnd();
       return false;
@@ -294,12 +329,12 @@ class SoundEffects {
       utterance.onend = done;
       utterance.onerror = done;
 
-      // Generous fail-safe timeout (6.8s) so voice is never cut off prematurely
+      // Generous fail-safe timeout (3.5s) so voice is never hanging
       setTimeout(() => {
         if (!finished) {
           done();
         }
-      }, 6800);
+      }, 3500);
 
       window.speechSynthesis.speak(utterance);
       return true;

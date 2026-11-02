@@ -45,26 +45,29 @@ class HighPriorityNotificationEngine {
     const body = `📍 পিকআপ: ${request.pickupPoint}\n🎯 গন্তব্য: ${request.destination}\n💰 নির্ধারিত ভাড়া: ৳${request.estFare} (দূরত্ব: ${request.distanceKm} কিমি)`;
     const options: any = {
       body,
-      icon: '/safar-logo.png',
-      badge: '/safar-logo.png',
+      icon: '/pwa-192x192.png',
+      badge: '/notification-badge-96.png',
       tag: this.activeNotificationTag,
       renotify: true,
       requireInteraction: true,
-      vibrate: [500, 200, 500, 200, 800, 300, 500],
+      silent: false,
+      vibrate: [600, 200, 600, 200, 800, 300, 600],
       data: {
         requestId: request.id,
         url: `/?openDriverTrip=${request.id}&role=driver`
       },
       actions: [
-        { action: 'accept', title: '✅ গ্রহণ করুন (Accept)' },
+        { action: 'accept', title: '✅ গ্রহণ করুন (ACCEPT)' },
         { action: 'open', title: '📲 অ্যাপ খুলুন' }
       ]
     };
 
-    // 2. Try Service Worker showNotification first (Standard for Android Chrome & PWA)
+    // 2. Try Service Worker showNotification first with 1200ms timeout race (no waiting or freezing)
     if ('serviceWorker' in navigator) {
       try {
-        const registration = await navigator.serviceWorker.ready;
+        const swReadyPromise = navigator.serviceWorker.ready;
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200));
+        const registration = await Promise.race([swReadyPromise, timeoutPromise]);
         if (registration && typeof registration.showNotification === 'function') {
           await registration.showNotification(title, options);
           return;
@@ -79,8 +82,8 @@ class HighPriorityNotificationEngine {
       if ('Notification' in window && Notification.permission === 'granted') {
         const notif = new Notification(title, {
           body,
-          icon: '/safar-logo.png',
-          badge: '/safar-logo.png',
+          icon: '/pwa-192x192.png',
+          badge: '/notification-badge-96.png',
           tag: this.activeNotificationTag,
           requireInteraction: true
         });

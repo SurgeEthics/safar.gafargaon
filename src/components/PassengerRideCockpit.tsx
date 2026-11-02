@@ -161,18 +161,6 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
     setShowReviewModal(false);
   };
 
-  const handleSkipReview = () => {
-    if (activeBooking) {
-      onSubmitReview(
-        activeBooking.driver.id,
-        5,
-        [],
-        'পরিশোধ সম্পন্ন'
-      );
-    }
-    setShowReviewModal(false);
-  };
-
   return (
     <>
       {/* ============================================================== */}
@@ -633,7 +621,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
             <div className="flex items-center gap-2 pt-2">
               <button
                 type="button"
-                onClick={handleSkipReview}
+                onClick={() => setShowReviewModal(false)}
                 className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition"
               >
                 পরে দেব

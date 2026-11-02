@@ -46,7 +46,6 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          importScripts: ['/sw-notifications.js'],
           globIgnores: ['**/assets/aistudio/**', '**/*.zip'],
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           navigateFallbackDenylist: [/^\/.*\.zip$/, /^\/api\/.*/],

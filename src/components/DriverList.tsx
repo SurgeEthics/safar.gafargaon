@@ -5,6 +5,8 @@ import { VEHICLE_OPTIONS } from '../data/initialData';
 import { DriverCard } from './DriverCard';
 import { toBengaliNumber } from '../utils/calculator';
 
+import { PauseMarqueeText } from './PauseMarqueeText';
+
 interface DriverListProps {
   drivers: Driver[];
   selectedCategory: VehicleCategory | 'all';
@@ -32,15 +34,19 @@ export const DriverList: React.FC<DriverListProps> = ({
     <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-4 sm:p-5 space-y-4">
       {/* List Header matching screenshot */}
       <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-emerald-600 text-white flex items-center justify-center text-xs">
+        <div className="min-w-0 flex-1 max-w-full">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 rounded-md bg-emerald-600 text-white flex items-center justify-center text-xs shrink-0">
               <Users className="w-3.5 h-3.5" />
             </div>
-            <h3 className="text-sm sm:text-base font-bold text-slate-800">
-              {categoryTitle}
-            </h3>
-            <span className="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2 py-0.5 rounded-full">
+            <div className="min-w-0 flex-1">
+              <PauseMarqueeText
+                text={categoryTitle}
+                className="text-sm sm:text-base font-bold text-slate-800"
+                pauseSec={1.5}
+              />
+            </div>
+            <span className="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0">
               {toBengaliNumber(drivers.length)} জন
             </span>
           </div>

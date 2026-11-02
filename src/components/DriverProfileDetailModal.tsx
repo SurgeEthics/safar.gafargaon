@@ -44,22 +44,22 @@ export const DriverProfileDetailModal: React.FC<DriverProfileDetailModalProps> =
         <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
           <div className="flex items-center gap-3.5 pb-3 border-b border-slate-100">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-800 text-white font-black text-2xl flex items-center justify-center shadow-md shrink-0">
-              {driver.nameBn.charAt(0)}
+              {(driver.nameBn || driver.name || 'চ').charAt(0)}
             </div>
             <div>
               <h4 className="font-extrabold text-base text-slate-900">
-                {driver.nameBn}
+                {driver.nameBn || driver.name || 'সম্মানিত চালক'}
               </h4>
               <p className="text-xs text-emerald-700 font-semibold mt-0.5">
                 {driver.vehicleModel || driver.vehicleName}
               </p>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-amber-500 font-bold text-xs flex items-center gap-0.5">
-                  ★ {toBengaliNumber(driver.rating)} ({toBengaliNumber(driver.reviewCount)} রিভিউ)
+                  ★ {toBengaliNumber(driver.rating)} ({toBengaliNumber(driver.reviewCount || driver.totalTrips || 0)} রিভিউ)
                 </span>
                 <span className="text-slate-300">•</span>
                 <span className="text-slate-500 text-xs font-medium">
-                  {toBengaliNumber(driver.experienceYears)} বছরের অভিজ্ঞতা
+                  {toBengaliNumber(driver.experienceYears || 2)} বছরের অভিজ্ঞতা
                 </span>
               </div>
             </div>

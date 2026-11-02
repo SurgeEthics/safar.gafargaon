@@ -25,25 +25,6 @@ export interface ComprehensivePlace {
   searchKeywords: string[];
 }
 
-export const GAFARGAON_16_UNIONS_LIST: string[] = [
-  "গফরগাঁও পৌরসভা",
-  "সালটিয়া ইউনিয়ন",
-  "গফরগাঁও সদর ইউনিয়ন",
-  "যশরা ইউনিয়ন",
-  "রাওনা ইউনিয়ন",
-  "রসুলপুর ইউনিয়ন",
-  "বারবাড়িয়া ইউনিয়ন",
-  "চরআলগী ইউনিয়ন",
-  "পাঁচবাগ ইউনিয়ন (পাগলা)",
-  "উস্থি ইউনিয়ন (পাগলা)",
-  "মশাখালী ইউনিয়ন (পাগলা)",
-  "পাইথল ইউনিয়ন (পাগলা)",
-  "লংগাইর ইউনিয়ন (পাগলা)",
-  "দত্তেরবাজার ইউনিয়ন (পাগলা)",
-  "টাঙ্গাব ইউনিয়ন (পাগলা)",
-  "নিগুয়ারী ইউনিয়ন (পাগলা)"
-];
-
 export const GAFARGAON_UNIONS: UnionInfo[] = [
   {
     "id": "pourashava",
@@ -3458,7 +3439,36 @@ export const COMPREHENSIVE_UNION_PLACES: ComprehensivePlace[] = [
       "gayeshpur bazar"
     ]
   },
-
+  {
+    "id": "stand-gayeshpur-mouza",
+    "name": "Gayeshpur Mouza & Bazar Point",
+    "bengaliName": "গয়েশপুর মৌজা ও বাজার পয়েন্ট",
+    "unionId": "paithal",
+    "unionNameBengali": "পাইথল ইউনিয়ন (পাগলা)",
+    "thana": "পাগলা থানা",
+    "category": "বাজার",
+    "vehicleTypes": [
+      "auto",
+      "bike"
+    ],
+    "area": "পাইথল ইউনিয়ন, পাগলা (গয়েশপুর মৌজা ডিজিটাল পয়েন্ট)",
+    "lat": 24.342,
+    "lng": 90.552,
+    "isStand": false,
+    "isPopular": true,
+    "searchKeywords": [
+      "পাইথল ইউনিয়ন (পাগলা)",
+      "পাইথল",
+      "মৌজা",
+      "গয়েশপুর মৌজা ও বাজার পয়েন্ট",
+      "গয়েশপুর",
+      "goyeshpur",
+      "গয়েশপুর",
+      "pagla",
+      "paithal",
+      "gayeshpur"
+    ]
+  },
   {
     "id": "stand-parshabari-mor",
     "name": "Parshabari Mor Stand",

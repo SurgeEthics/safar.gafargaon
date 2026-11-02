@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
-/* Global Bengali Font & Typography */
-*, *::before, *::after, input, button, select, textarea, optgroup {
+/* Global styles */
+*, *::before, *::after {
   box-sizing: border-box;
-  font-family: var(--app-font-family, 'Hind Siliguri', 'Inter', system-ui, -apple-system, sans-serif);
+  font-family: 'Hind Siliguri', sans-serif !important;
 }
 
 html, body {
@@ -14,8 +14,6 @@ html, body {
   overflow-x: hidden;
   background-color: #f8fafc;
   color: #1e293b;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
@@ -24,73 +22,4 @@ html, body {
   margin: 0;
   padding: 0;
   text-align: left;
-}
-
-/* Custom leaflet marker styling */
-.custom-leaflet-marker {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.custom-leaflet-marker:hover {
-  transform: scale(1.18);
-  z-index: 1000 !important;
-}
-
-.leaflet-control-attribution {
-  font-size: 10px !important;
-  background: rgba(255, 255, 255, 0.85) !important;
-  border-radius: 4px;
-  padding: 2px 6px !important;
-}
-
-/* Radar pulse animation */
-@keyframes radarPing {
-  0% {
-    transform: scale(0.95);
-    opacity: 0.8;
-  }
-  50% {
-    transform: scale(1.4);
-    opacity: 0.2;
-  }
-  100% {
-    transform: scale(1.9);
-    opacity: 0;
-  }
-}
-
-.animate-radar-ring {
-  animation: radarPing 2s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-
-/* Running Bulletin / Marquee Ticker */
-@keyframes bulletinMarquee {
-  0% {
-    transform: translateX(0%);
-  }
-  100% {
-    transform: translateX(-50%);
-  }
-}
-
-.animate-bulletin-marquee {
-  display: inline-flex;
-  white-space: nowrap;
-  animation: bulletinMarquee 12s linear infinite;
-  will-change: transform;
-}
-
-.animate-bulletin-marquee:hover,
-.animate-bulletin-marquee:active {
-  animation-play-state: paused;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .animate-bulletin-marquee {
-    animation: none;
-    transform: none;
-  }
 }

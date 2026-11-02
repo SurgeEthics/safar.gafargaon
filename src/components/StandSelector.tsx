@@ -40,7 +40,7 @@ export const StandSelector: React.FC<StandSelectorProps> = ({
               </option>
               {stands.map((stand) => (
                 <option key={stand.id} value={stand.id}>
-                  {stand.nameBn} ({toBengaliNumber(stand.driverCount)} জন চালক)
+                  {stand.nameBn || stand.bengaliName} ({toBengaliNumber(stand.driverCount || stand.activeDrivers || 0)} জন চালক)
                 </option>
               ))}
             </select>
@@ -94,7 +94,7 @@ export const StandSelector: React.FC<StandSelectorProps> = ({
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200 font-medium'
                 }`}
               >
-                {stand.nameBn} ({toBengaliNumber(stand.driverCount)})
+                {stand.nameBn || stand.bengaliName} ({toBengaliNumber(stand.driverCount || stand.activeDrivers || 0)})
               </button>
             );
           })}

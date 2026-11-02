@@ -65,7 +65,8 @@ export const DriverSearchAutocomplete: React.FC<DriverSearchAutocompleteProps> =
 
     // 1. চালকের নাম (Driver Name)
     for (const d of drivers) {
-      const matchName = d.name.toLowerCase().includes(q);
+      const dName = d.name || d.nameBn || 'চালক';
+      const matchName = dName.toLowerCase().includes(q);
       const matchPhone = d.phone.includes(q);
       if (matchName || matchPhone) {
         const key = `drv-${d.id}`;
@@ -75,11 +76,11 @@ export const DriverSearchAutocomplete: React.FC<DriverSearchAutocompleteProps> =
             id: key,
             type: 'driver',
             typeLabel: 'চালক',
-            title: d.name,
-            subTitle: `${d.vehicleModel || 'বাহন'} • ${d.standName || 'স্ট্যান্ড'}`,
+            title: dName,
+            subTitle: `${d.vehicleModel || d.vehicleName || 'বাহন'} • ${d.standName || 'স্ট্যান্ড'}`,
             badge: d.rating ? `★ ${d.rating}` : 'ভেরিফাইড',
             badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-            targetQuery: d.name,
+            targetQuery: dName,
             standName: d.standName,
             categoryId: d.category
           });
@@ -89,7 +90,8 @@ export const DriverSearchAutocomplete: React.FC<DriverSearchAutocompleteProps> =
 
     // 2. গাড়ি / মডেল (Vehicle Model or Category)
     for (const d of drivers) {
-      const model = d.vehicleModel || '';
+      const dName = d.name || d.nameBn || 'চালক';
+      const model = d.vehicleModel || d.vehicleName || '';
       const catBn = d.categoryBengali || '';
       if (
         (model && model.toLowerCase().includes(q)) ||
@@ -104,8 +106,8 @@ export const DriverSearchAutocomplete: React.FC<DriverSearchAutocompleteProps> =
             type: 'vehicle',
             typeLabel: 'গাড়ি / বাহন',
             title: title,
-            subTitle: `চালক: ${d.name} • ${d.standName || ''}`,
-            badge: d.categoryBengali || 'যানবাহন',
+            subTitle: `চালক: ${dName} • ${d.standName || ''}`,
+            badge: catBn || 'যানবাহন',
             badgeColor: 'bg-amber-100 text-amber-800 border-amber-200',
             targetQuery: title,
             categoryId: d.category
@@ -116,8 +118,9 @@ export const DriverSearchAutocomplete: React.FC<DriverSearchAutocompleteProps> =
 
     // 3. লাইসেন্স ও প্লেট নম্বর (License / Number Plate)
     for (const d of drivers) {
+      const dName = d.name || d.nameBn || 'চালক';
       const license = d.licenseNumber || '';
-      const plate = d.plateNumber || '';
+      const plate = d.plateNumber || d.licensePlate || '';
       if (
         (license && license.toLowerCase().includes(q)) ||
         (plate && plate.toLowerCase().includes(q))
@@ -131,7 +134,7 @@ export const DriverSearchAutocomplete: React.FC<DriverSearchAutocompleteProps> =
             type: 'license',
             typeLabel: 'লাইসেন্স / প্লেট',
             title: displayCode,
-            subTitle: `${d.name} (${d.vehicleModel})`,
+            subTitle: `${dName} (${d.vehicleModel || d.vehicleName || 'বাহন'})`,
             badge: 'বিআরটিএ',
             badgeColor: 'bg-blue-100 text-blue-800 border-blue-200',
             targetQuery: displayCode,
@@ -143,8 +146,10 @@ export const DriverSearchAutocomplete: React.FC<DriverSearchAutocompleteProps> =
 
     // 4. স্ট্যান্ড (Stand Name)
     for (const s of stands) {
-      const matchBn = s.bengaliName.toLowerCase().includes(q);
-      const matchEn = s.name.toLowerCase().includes(q);
+      const sBn = s.bengaliName || s.nameBn || 'স্ট্যান্ড';
+      const sEn = s.name || s.nameEn || '';
+      const matchBn = sBn.toLowerCase().includes(q);
+      const matchEn = sEn.toLowerCase().includes(q);
       const matchLoc = s.location && s.location.toLowerCase().includes(q);
       if (matchBn || matchEn || matchLoc) {
         const key = `std-${s.id}`;
@@ -154,12 +159,12 @@ export const DriverSearchAutocomplete: React.FC<DriverSearchAutocompleteProps> =
             id: key,
             type: 'stand',
             typeLabel: 'স্ট্যান্ড',
-            title: s.bengaliName,
-            subTitle: s.location || 'গফরগাঁও / পাগলা এলাকা',
+            title: sBn,
+            subTitle: s.location || s.description || 'গফরগাঁও / পাগলা এলাকা',
             badge: `${toBengaliNumber(s.driverCount || s.activeDrivers || 0)} চালক`,
             badgeColor: 'bg-teal-100 text-teal-800 border-teal-200',
-            targetQuery: s.bengaliName.replace(' স্ট্যান্ড', ''),
-            standName: s.bengaliName
+            targetQuery: sBn.replace(' স্ট্যান্ড', ''),
+            standName: sBn
           });
         }
       }

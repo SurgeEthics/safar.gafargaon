@@ -644,7 +644,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
         window.URL.revokeObjectURL(url);
         document.body.removeChild(link);
       }, 2000);
-      showToast('🎉 সফলভাবে সম্পূর্ণ ফ্রেশ ও ক্লিন সোর্স কোড জিপ (৪.০৭ MB) ডাউনলোড হয়েছে!');
+      showToast('🎉 সফলভাবে সম্পূর্ণ ফ্রেশ ও ক্লিন সোর্স কোড জিপ (৩.২৭ MB) ডাউনলোড হয়েছে!');
     } catch (err: any) {
       console.error('ZIP download error:', err);
       showToast('সরাসরি ডাউনলোড লিঙ্ক ওপেন করা হচ্ছে...');
@@ -2419,7 +2419,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </h3>
                   <span className="inline-flex items-center gap-1.5 bg-emerald-600 text-white font-black text-[11px] px-2.5 py-0.5 rounded-full shadow-xs self-start sm:self-auto">
                     <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                    লেটেস্ট ফ্রেশ প্যাকেজ • ৪.০৭ MB
+                    লেটেস্ট ফ্রেশ প্যাকেজ • ৩.২৭ MB
                   </span>
                 </div>
 
@@ -2433,12 +2433,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     href="/safar-gafargaon-clean-source.zip"
                     download="safar-gafargaon-clean-source.zip"
                     onClick={() => {
-                      showToast('🎉 সফর সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ (৪.০৭ MB) ডাউনলোড শুরু হয়েছে!');
+                      showToast('🎉 সফর সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ (৩.২৭ MB) ডাউনলোড শুরু হয়েছে!');
                     }}
                     className="inline-flex items-center gap-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black px-5 py-3 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition border-2 border-amber-500/80"
                   >
                     <Download className="w-4 h-4 text-slate-950" />
-                    <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৪.০৭ MB)</span>
+                    <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৩.২৭ MB)</span>
                   </a>
 
                   <button

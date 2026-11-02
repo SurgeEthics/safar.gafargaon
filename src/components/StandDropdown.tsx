@@ -39,11 +39,12 @@ export const StandDropdown: React.FC<StandDropdownProps> = ({
   const filteredStands = useMemo(() => {
     if (!filterQuery.trim()) return stands;
     const q = filterQuery.toLowerCase().trim();
-    return stands.filter(s =>
-      s.bengaliName.toLowerCase().includes(q) ||
-      (s.location && s.location.toLowerCase().includes(q)) ||
-      s.name.toLowerCase().includes(q)
-    );
+    return stands.filter(s => {
+      const bn = (s.bengaliName || s.nameBn || '').toLowerCase();
+      const loc = (s.location || s.description || '').toLowerCase();
+      const en = (s.name || s.nameEn || '').toLowerCase();
+      return bn.includes(q) || loc.includes(q) || en.includes(q);
+    });
   }, [stands, filterQuery]);
 
   // Current selected display label & count
@@ -185,14 +186,15 @@ export const StandDropdown: React.FC<StandDropdownProps> = ({
 
             {/* 2. Filtered Stands */}
             {filteredStands.map((stand) => {
-              const isSelected = selectedStand === stand.bengaliName;
-              const count = getStandDriverCount(stand.bengaliName);
+              const standBn = stand.bengaliName || stand.nameBn || 'স্ট্যান্ড';
+              const isSelected = selectedStand === standBn;
+              const count = getStandDriverCount(standBn);
 
               return (
                 <button
                   key={stand.id}
                   type="button"
-                  onClick={() => handleSelect(stand.bengaliName)}
+                  onClick={() => handleSelect(standBn)}
                   className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                     isSelected
                       ? 'bg-emerald-50 border-emerald-500 shadow-xs ring-1 ring-emerald-400'
@@ -209,9 +211,9 @@ export const StandDropdown: React.FC<StandDropdownProps> = ({
                       <span className={`text-xs font-black block truncate ${
                         isSelected ? 'text-emerald-950' : 'text-slate-900'
                       }`}>
-                        {stand.bengaliName}
+                        {standBn}
                       </span>
-                      {stand.location && stand.location !== stand.bengaliName && (
+                      {stand.location && stand.location !== standBn && (
                         <span className="text-[10px] text-slate-500 block truncate">
                           {stand.location}
                         </span>

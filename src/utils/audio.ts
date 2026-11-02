@@ -62,15 +62,10 @@ class SoundEffects {
   stopAllAlarms() {
     this.isAlarmRinging = false;
 
-    // 0. Cancel speech synthesis & active voice audio immediately
+    // 0. Cancel speech synthesis immediately
     try {
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
-      }
-      if (this.activeAudioElement) {
-        this.activeAudioElement.pause();
-        this.activeAudioElement.currentTime = 0;
-        this.activeAudioElement = null;
       }
     } catch {}
 
@@ -257,100 +252,59 @@ class SoundEffects {
     }
   }
 
-  private activeAudioElement: HTMLAudioElement | null = null;
-  private voiceAlertBuffer: AudioBuffer | null = null;
-  private isPreloadingVoice = false;
-
   /**
-   * Pre-fetch and decode the authentic Bengali Male voice alert into memory.
-   * Ensures 0ms latency and eliminates any browser network or autoplay delay.
-   */
-  preloadVoiceAlert() {
-    if (typeof window === 'undefined' || this.voiceAlertBuffer || this.isPreloadingVoice) return;
-    this.isPreloadingVoice = true;
-    fetch('/driver_voice_alert.mp3')
-      .then(res => res.arrayBuffer())
-      .then(arrayBuffer => {
-        const ctx = this.getContext();
-        if (ctx) {
-          return ctx.decodeAudioData(arrayBuffer).then(decoded => {
-            this.voiceAlertBuffer = decoded;
-          });
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        this.isPreloadingVoice = false;
-      });
-  }
-
-  /**
-   * Loud, clear, dignified Bangladeshi Bengali MALE voice announcement for drivers:
-   * "সফর! সম্মানিত চালক, নতুন যাত্রার অনুরোধ এসেছে! দ্রুত রিকোয়েস্ট গ্রহণ করুন!"
-   * Strictly uses authentic male voice studio recording '/driver_voice_alert.mp3'.
-   * Zero robotic tone and zero female voice!
+   * Loud, clear, dignified Bengali male voice announcement for drivers:
+   * "'সফর' অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
+   * Followed by the default loud Daf drum rhythm.
    */
   speakDriverVoiceAlert(onEnd?: () => void): boolean {
-    if (typeof window === 'undefined') {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       if (onEnd) onEnd();
       return false;
     }
 
-    let finished = false;
-    const done = () => {
-      if (!finished) {
-        finished = true;
-        this.activeAudioElement = null;
-        if (onEnd) onEnd();
-      }
-    };
-
-    // 1. If Web Audio buffer is preloaded and ready, play instantly via AudioContext (0ms lag, loud 1.8x punch)
-    const ctx = this.getContext();
-    if (ctx && this.voiceAlertBuffer) {
-      try {
-        if (ctx.state === 'suspended') {
-          ctx.resume().catch(() => {});
-        }
-        const source = ctx.createBufferSource();
-        source.buffer = this.voiceAlertBuffer;
-        const gain = ctx.createGain();
-        gain.gain.setValueAtTime(1.8, ctx.currentTime);
-        source.connect(gain);
-        gain.connect(this.getDestinationNode(ctx));
-        source.onended = done;
-        source.start(0);
-        this.activeSources.push(source);
-        return true;
-      } catch (e) {}
-    }
-
-    // 2. Play via HTML5 Audio element with loud broadcast volume
     try {
-      if (this.activeAudioElement) {
-        try {
-          this.activeAudioElement.pause();
-        } catch {}
-      }
-      const audio = new Audio('/driver_voice_alert.mp3');
-      audio.volume = 1.0;
-      this.activeAudioElement = audio;
+      window.speechSynthesis.cancel();
+      const text = 'সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।';
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'bn-BD';
+      utterance.rate = 0.95; // clear, deliberate pace
+      utterance.pitch = 0.88; // masculine tone
+      utterance.volume = 1.0; // highest loudness
 
-      audio.onended = done;
-      audio.onerror = () => {
-        // Fallback: proceed to Daf drums, NEVER use robotic female voice
-        done();
+      // Prefer Bengali voices if available in device/OS
+      const voices = window.speechSynthesis.getVoices();
+      const bnVoice = voices.find(v => 
+        (v.lang && (v.lang.toLowerCase().startsWith('bn') || v.lang.toLowerCase().includes('bd'))) ||
+        v.name.toLowerCase().includes('bangla') ||
+        v.name.toLowerCase().includes('bengali')
+      );
+      if (bnVoice) {
+        utterance.voice = bnVoice;
+      }
+
+      let finished = false;
+      const done = () => {
+        if (!finished) {
+          finished = true;
+          if (onEnd) onEnd();
+        }
       };
 
-      const playPromise = audio.play();
-      if (playPromise && typeof playPromise.then === 'function') {
-        playPromise.catch(() => {
+      utterance.onend = done;
+      utterance.onerror = done;
+
+      // Generous fail-safe timeout (6.8s) so voice is never cut off prematurely
+      setTimeout(() => {
+        if (!finished) {
           done();
-        });
-      }
+        }
+      }, 6800);
+
+      window.speechSynthesis.speak(utterance);
       return true;
     } catch {
-      done();
+      if (onEnd) onEnd();
       return false;
     }
   }

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { MapPin, Navigation, X, Search, Check, Truck, Building2 } from 'lucide-react';
 import { PauseMarqueeText } from './PauseMarqueeText';
-import { GAFARGAON_UNIONS, GAFARGAON_16_UNIONS_LIST } from '../data/gafargaonUnionData';
+import { GAFARGAON_UNIONS } from '../data/gafargaonUnionData';
 
 export interface LocationAutocompleteProps {
   label: string;
@@ -79,40 +79,31 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
     };
   }, []);
 
-  // Map incoming items to unified structure, filtering out fake/invalid places
+  // Map incoming items to unified structure
   const unifiedPlaces: UnifiedPlaceItem[] = places
     .filter(p => {
-      const bnName = p.bengaliName || p.name || '';
-      return !bnName.includes('গয়েশপুর ইউনিয়ন পরিষদ') && !bnName.toLowerCase().includes('gayeshpur union');
+      const name = (p.bengaliName || p.name || '').trim();
+      // Permanently remove any fictitious Goyeshpur UP bhaban
+      if (name.includes('গয়েশপুর ইউনিয়ন পরিষদ') || name.includes('গয়েশপুর ইউপি') || name.includes('Gayeshpur Union Parishad')) {
+        return false;
+      }
+      return true;
     })
     .map((p, idx) => {
-      let resolvedUnion = p.unionNameBengali;
-      if (!resolvedUnion) {
-        if (p.area) {
-          if (p.area.includes('গয়েশপুর') || p.area.includes('gayeshpur')) {
-            resolvedUnion = 'পাইথল ইউনিয়ন (পাগলা)';
-          } else {
-            const matched = GAFARGAON_16_UNIONS_LIST.find(u => p.area!.includes(u));
-            resolvedUnion = matched || (p.area.includes('পাগলা') ? 'পাঁচবাগ ইউনিয়ন (পাগলা)' : 'গফরগাঁও পৌরসভা');
-          }
-        } else {
-          resolvedUnion = 'গফরগাঁও পৌরসভা';
-        }
+      let rawUnion = p.unionNameBengali || (p.area && p.area.includes('ইউনিয়ন') ? p.area.split(',')[0].trim() : '');
+      // If place mistakenly claims Goyeshpur is a union, assign to Paithol Union (Pagla)
+      if (rawUnion.includes('গয়েশপুর')) {
+        rawUnion = 'পাইথল ইউনিয়ন (পাগলা)';
+      }
+      if (!rawUnion || rawUnion === 'গফরগাঁও') {
+        rawUnion = 'গফরগাঁও পৌরসভা';
       }
 
-      // Eliminate any rogue bare 'গফরগাঁও' or 'গয়েশপুর' as union
-      if (resolvedUnion === 'গফরগাঁও' || resolvedUnion.includes('পৌরসভা')) {
-        resolvedUnion = 'গফরগাঁও পৌরসভা';
-      } else if (resolvedUnion.includes('গয়েশপুর') || resolvedUnion.includes('gayeshpur')) {
-        resolvedUnion = 'পাইথল ইউনিয়ন (পাগলা)';
-      }
-
-      // Clean area text: if it displays 'গয়েশপুর ইউনিয়ন', normalize to 'পাইথল ইউনিয়ন (পাগলা)'
       let cleanArea = p.area || '';
       if (cleanArea.includes('গয়েশপুর ইউনিয়ন (পাগলা)')) {
-        cleanArea = cleanArea.replace('গয়েশপুর ইউনিয়ন (পাগলা)', 'পাইথল ইউনিয়ন, পাগলা');
+        cleanArea = cleanArea.replace(/গয়েশপুর ইউনিয়ন \(পাগলা\)/g, 'পাইথল ইউনিয়ন, পাগলা');
       } else if (cleanArea.includes('গয়েশপুর ইউনিয়ন')) {
-        cleanArea = cleanArea.replace('গয়েশপুর ইউনিয়ন', 'পাইথল ইউনিয়ন');
+        cleanArea = cleanArea.replace(/গয়েশপুর ইউনিয়ন/g, 'পাইথল ইউনিয়ন, পাগলা');
       }
 
       return {
@@ -121,7 +112,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         englishName: p.name || '',
         category: p.category || (p.isStand ? 'স্ট্যান্ড' : 'স্থান'),
         categoryLabel: p.categoryLabel || p.category || (p.isStand ? 'স্ট্যান্ড' : 'জনপ্রিয় স্থান'),
-        unionName: resolvedUnion,
+        unionName: rawUnion,
         area: cleanArea,
         isStand: Boolean(p.isStand || (p.category && p.category.includes('স্ট্যান্ড'))),
         searchKeywords: p.searchKeywords || [],
@@ -130,9 +121,11 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
       };
     });
 
-  // Canonical list of all 15 unions + Pourashava (strictly the official 16 jurisdictions, no bare or rogue tags)
+  // Canonical list of all 15 unions + Pourashava (including all Pagla thana unions)
+  // Exactly 16 legitimate administrative entities (Gafargaon Pourashava + 15 Unions)
+  // NEVER add arbitrary/redundant chips like bare 'গফরগাঁও' or non-existent 'গয়েশপুর (পাগলা)'
   const availableUnions = useMemo(() => {
-    return GAFARGAON_16_UNIONS_LIST;
+    return GAFARGAON_UNIONS.map(u => u.nameBengali);
   }, []);
 
   // Filter based on search query and union filter

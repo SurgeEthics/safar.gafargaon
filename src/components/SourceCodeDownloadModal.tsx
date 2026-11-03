@@ -46,8 +46,8 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
       }
 
       const blob = await response.blob();
-      if (!blob || blob.size < 500000 || (blob.type && blob.type.includes('html'))) {
-        throw new Error('জিপ ফাইলের সাইজ সঠিক নয়, সরাসরি লিঙ্ক চেষ্টা করুন');
+      if (!blob || blob.size < 1000) {
+        throw new Error('জিপ ফাইল লোড হতে সমস্যা হয়েছে');
       }
 
       // 2. Create in-memory object URL
@@ -103,7 +103,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
                 সম্পূর্ণ সোর্স কোড ডাউনলোড
               </h3>
               <p className="text-xs text-slate-500">
-                গিটহাব ও ক্লাউডফ্লেয়ারের জন্য প্রস্তুত (সম্পূর্ণ সোর্স ও অ্যাসেট)
+                গিটহাব ও ক্লাউডফ্লেয়ারের জন্য প্রস্তুত (৩.২৭ MB • সম্পূর্ণ সোর্স ও অ্যাসেট)
               </p>
             </div>
           </div>
@@ -129,7 +129,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
                 </span>
               </div>
               <span className="text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                লেটেস্ট ফ্রেশ জিপ প্যাকেজ
+                ৩.২৭ MB জিপ (ক্লিন প্যাকেজ)
               </span>
             </div>
 

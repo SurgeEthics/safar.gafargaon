@@ -46,17 +46,17 @@ class HighPriorityNotificationEngine {
     const options: any = {
       body,
       icon: '/safar-logo.png',
-      badge: '/safar-logo.png',
+      badge: '/safar-badge-mono.png',
       tag: this.activeNotificationTag,
       renotify: true,
       requireInteraction: true,
-      vibrate: [500, 200, 500, 200, 800, 300, 500],
+      vibrate: [600, 250, 600, 250, 800, 300, 600],
       data: {
         requestId: request.id,
         url: `/?openDriverTrip=${request.id}&role=driver`
       },
       actions: [
-        { action: 'accept', title: '✅ গ্রহণ করুন (Accept)' },
+        { action: 'accept', title: '✓ গ্রহণ করুন (ACCEPT)' },
         { action: 'open', title: '📲 অ্যাপ খুলুন' }
       ]
     };

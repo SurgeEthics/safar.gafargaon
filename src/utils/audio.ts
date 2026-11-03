@@ -13,6 +13,8 @@ class SoundEffects {
   private activeInterval: any = null;
   private activeSources: (AudioNode & { stop?: (when?: number) => void })[] = [];
   private isAlarmRinging = false;
+  private activeVoiceAudio: HTMLAudioElement | null = null;
+  private activeVoiceTimeout: any = null;
 
   private getContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -62,7 +64,20 @@ class SoundEffects {
   stopAllAlarms() {
     this.isAlarmRinging = false;
 
-    // 0. Cancel speech synthesis immediately
+    // 0a. Stop active male voice audio and pause timeout immediately
+    if (this.activeVoiceTimeout) {
+      clearTimeout(this.activeVoiceTimeout);
+      this.activeVoiceTimeout = null;
+    }
+    if (this.activeVoiceAudio) {
+      try {
+        this.activeVoiceAudio.pause();
+        this.activeVoiceAudio.currentTime = 0;
+      } catch {}
+      this.activeVoiceAudio = null;
+    }
+
+    // 0b. Cancel speech synthesis immediately
     try {
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
@@ -253,14 +268,71 @@ class SoundEffects {
   }
 
   /**
-   * Loud, clear, dignified Bengali male voice announcement for drivers:
-   * "'সফর' অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
-   * Followed by the default loud Daf drum rhythm.
+   * Loud, crystal-clear, dignified Bengali male voice announcement for drivers:
+   * "সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে"
+   * Followed by exactly 1-second pause, then triggers the authentic loud Daf drum rhythm.
    */
   speakDriverVoiceAlert(onEnd?: () => void): boolean {
+    if (this.activeVoiceTimeout) {
+      clearTimeout(this.activeVoiceTimeout);
+      this.activeVoiceTimeout = null;
+    }
+    if (this.activeVoiceAudio) {
+      try {
+        this.activeVoiceAudio.pause();
+        this.activeVoiceAudio.currentTime = 0;
+      } catch {}
+      this.activeVoiceAudio = null;
+    }
+
+    let finished = false;
+    const triggerEnd = () => {
+      if (!finished) {
+        finished = true;
+        if (onEnd) onEnd();
+      }
+    };
+
+    // Try high-clarity dedicated male voice audio file first (100% reliable across all Android/iOS models)
+    if (typeof window !== 'undefined' && typeof Audio !== 'undefined') {
+      try {
+        const audio = new Audio('/driver_voice_male.mp3');
+        audio.preload = 'auto';
+        audio.volume = 1.0;
+        this.activeVoiceAudio = audio;
+
+        audio.onended = () => {
+          // Requirement: "bola sheshey 1 sec pause hoye then duff sound alarm/music bajbey"
+          this.activeVoiceTimeout = setTimeout(() => {
+            triggerEnd();
+          }, 1000);
+        };
+
+        audio.onerror = () => {
+          this.fallbackSpeechSynthesis(triggerEnd);
+        };
+
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(() => {
+            this.fallbackSpeechSynthesis(triggerEnd);
+          });
+        }
+        return true;
+      } catch {
+        this.fallbackSpeechSynthesis(triggerEnd);
+        return true;
+      }
+    }
+
+    this.fallbackSpeechSynthesis(triggerEnd);
+    return false;
+  }
+
+  private fallbackSpeechSynthesis(onEnd: () => void) {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      if (onEnd) onEnd();
-      return false;
+      onEnd();
+      return;
     }
 
     try {
@@ -268,11 +340,10 @@ class SoundEffects {
       const text = 'সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।';
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'bn-BD';
-      utterance.rate = 0.95; // clear, deliberate pace
-      utterance.pitch = 0.88; // masculine tone
-      utterance.volume = 1.0; // highest loudness
+      utterance.rate = 0.95;
+      utterance.pitch = 0.88;
+      utterance.volume = 1.0;
 
-      // Prefer Bengali voices if available in device/OS
       const voices = window.speechSynthesis.getVoices();
       const bnVoice = voices.find(v => 
         (v.lang && (v.lang.toLowerCase().startsWith('bn') || v.lang.toLowerCase().includes('bd'))) ||
@@ -283,29 +354,27 @@ class SoundEffects {
         utterance.voice = bnVoice;
       }
 
-      let finished = false;
+      let doneCalled = false;
       const done = () => {
-        if (!finished) {
-          finished = true;
-          if (onEnd) onEnd();
+        if (!doneCalled) {
+          doneCalled = true;
+          this.activeVoiceTimeout = setTimeout(() => {
+            onEnd();
+          }, 1000);
         }
       };
 
       utterance.onend = done;
       utterance.onerror = done;
 
-      // Generous fail-safe timeout (6.8s) so voice is never cut off prematurely
+      // Fail-safe
       setTimeout(() => {
-        if (!finished) {
-          done();
-        }
-      }, 6800);
+        if (!doneCalled) done();
+      }, 7500);
 
       window.speechSynthesis.speak(utterance);
-      return true;
     } catch {
-      if (onEnd) onEnd();
-      return false;
+      onEnd();
     }
   }
 

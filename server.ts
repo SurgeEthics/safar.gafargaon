@@ -251,22 +251,39 @@ app.post('/api/live/remove', (req, res) => {
   res.json({ success: true });
 });
 
-// Direct Force-Download endpoint for ZIP file (sets Content-Disposition: attachment)
-app.get(['/api/download-zip', '/download-zip', '/safar-gafargaon-final.zip'], (req, res) => {
-  const publicPath = path.resolve(__dirname, 'public', 'safar-gafargaon-final.zip');
-  const distPath = path.resolve(__dirname, 'dist', 'safar-gafargaon-final.zip');
-  const filePath = fs.existsSync(publicPath) ? publicPath : (fs.existsSync(distPath) ? distPath : null);
+// Direct Force-Download endpoint for ALL ZIP files (sets Content-Disposition: attachment)
+app.get([
+  '/safar-gafargaon-clean-source.zip',
+  '/safar-gafargaon-latest.zip',
+  '/safar-gafargaon-final.zip',
+  '/api/download-zip',
+  '/download-zip',
+  '/download/project.zip'
+], (req, res) => {
+  const candidatePaths = [
+    path.resolve(__dirname, 'public', 'safar-gafargaon-clean-source.zip'),
+    path.resolve(__dirname, 'dist', 'safar-gafargaon-clean-source.zip'),
+    path.resolve(__dirname, 'public', 'safar-gafargaon-latest.zip'),
+    path.resolve(__dirname, 'dist', 'safar-gafargaon-latest.zip'),
+    path.resolve(__dirname, 'public', 'safar-gafargaon-final.zip'),
+    path.resolve(__dirname, 'dist', 'safar-gafargaon-final.zip'),
+  ];
 
-  if (filePath) {
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename="safar-gafargaon-final.zip"');
-    return res.download(filePath, 'safar-gafargaon-final.zip', (err) => {
-      if (err && !res.headersSent) {
-        console.error('Download error:', err);
-        res.status(500).send('Download error');
-      }
-    });
+  for (const filePath of candidatePaths) {
+    if (fs.existsSync(filePath)) {
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.size > 100000) { // Must be the real >100KB zip file!
+          res.setHeader('Content-Type', 'application/zip');
+          res.setHeader('Content-Length', stat.size);
+          res.setHeader('Content-Disposition', 'attachment; filename="safar-gafargaon-clean-source.zip"');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.sendFile(filePath);
+        }
+      } catch (e) {}
+    }
   }
+
   return res.status(404).send('ZIP file not found');
 });
 
@@ -287,8 +304,14 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
+    const publicPath = path.resolve(__dirname, 'public');
+    app.use(express.static(publicPath));
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
+      // Never send index.html for .zip or .mp3 files
+      if (req.path.endsWith('.zip') || req.path.endsWith('.mp3')) {
+        return res.status(404).send('File not found');
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

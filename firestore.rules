@@ -1,46 +1,108 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Drivers collection (Viewable by all passengers, editable by admin/drivers)
-    match /drivers/{driverId} {
-      allow read: if true;
-      allow write: if true;
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    // Stands collection (Viewable by all, editable from Super Admin Control Panel)
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.email == 'akmmusharrofhossain@gmail.com' ||
+        request.auth.token.email == 'safar.gafargaon@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidDriver(data) {
+      return data.nameBn is string && data.nameBn.size() <= 100 &&
+             data.phone is string && data.phone.size() <= 20 &&
+             data.category is string &&
+             data.standName is string && data.standName.size() <= 100;
+    }
+
+    function isValidRideRequest(data) {
+      return data.passengerName is string && data.passengerName.size() <= 100 &&
+             data.passengerPhone is string && data.passengerPhone.size() <= 20 &&
+             data.pickupLocation is string && data.pickupLocation.size() <= 150 &&
+             data.destinationLocation is string && data.destinationLocation.size() <= 150 &&
+             data.vehicleCategory is string &&
+             data.status in ['pending', 'accepted', 'completed', 'cancelled'];
+    }
+
+    // Drivers collection (Registration, verification, online status & GPS updates)
+    match /drivers/{driverId} {
+      allow read, write: if true;
+    }
+
+    // Ride Requests collection (Live real-time passenger & driver requests)
+    match /ride_requests/{requestId} {
+      allow read, write: if true;
+    }
+
+    // Past Trips history
+    match /trips/{tripId} {
+      allow read, write: if true;
+    }
+
+    // Passengers profile and data
+    match /passengers/{passengerId} {
+      allow read, write: if true;
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Users profile and trips subcollections
+    match /users/{userId} {
+      allow read, write: if true;
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // WhatsApp OTP & PIN verification sessions
+    match /whatsapp_verifications/{phone} {
+      allow read, write: if true;
+    }
+
+    // Admins collection
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Stands collection (Real-time stand directory)
     match /stands/{standId} {
       allow read: if true;
       allow write: if true;
     }
 
-    // Categories collection (Viewable by all, editable from Super Admin Control Panel)
+    // Vehicle categories collection
     match /categories/{categoryId} {
       allow read: if true;
       allow write: if true;
     }
 
-    // App Settings collection (Colors, themes, density, widgets, URLs)
+    // App settings and customization
     match /settings/{settingId} {
       allow read: if true;
       allow write: if true;
     }
 
-    // Hotlines collection (Hospital, Fire, Police, National emergency numbers)
+    // Emergency Hotlines
     match /hotlines/{hotlineId} {
       allow read: if true;
       allow write: if true;
     }
 
-    // Ride Requests collection (Passengers create, drivers update status)
-    match /ride_requests/{requestId} {
+    // Popular Places
+    match /places/{placeId} {
       allow read: if true;
       allow write: if true;
-    }
-
-    // Admins collection
-    match /admins/{adminId} {
-      allow read, write: if true;
     }
   }
 }

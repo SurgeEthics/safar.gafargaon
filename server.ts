@@ -252,20 +252,34 @@ app.post('/api/live/remove', (req, res) => {
 });
 
 // Direct Force-Download endpoint for ZIP file (sets Content-Disposition: attachment)
-app.get(['/api/download-zip', '/download-zip', '/safar-gafargaon-final.zip'], (req, res) => {
-  const publicPath = path.resolve(__dirname, 'public', 'safar-gafargaon-final.zip');
-  const distPath = path.resolve(__dirname, 'dist', 'safar-gafargaon-final.zip');
-  const filePath = fs.existsSync(publicPath) ? publicPath : (fs.existsSync(distPath) ? distPath : null);
+app.get([
+  '/safar-gafargaon-clean-source.zip',
+  '/safar-gafargaon-latest.zip',
+  '/safar-gafargaon-final.zip',
+  '/safar-gafargaon-source-final.zip',
+  '/safar-gafargaon.zip',
+  '/safar-app.zip',
+  '/api/download-zip',
+  '/download-zip'
+], (req, res) => {
+  const possiblePaths = [
+    path.resolve(__dirname, 'public', 'safar-gafargaon-clean-source.zip'),
+    path.resolve(__dirname, 'dist', 'safar-gafargaon-clean-source.zip'),
+    path.resolve(__dirname, 'public', 'safar-gafargaon-latest.zip'),
+    path.resolve(__dirname, 'dist', 'safar-gafargaon-latest.zip'),
+    path.resolve(__dirname, 'public', 'safar-app.zip'),
+  ];
+  const filePath = possiblePaths.find(p => fs.existsSync(p));
 
   if (filePath) {
+    const stat = fs.statSync(filePath);
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename="safar-gafargaon-final.zip"');
-    return res.download(filePath, 'safar-gafargaon-final.zip', (err) => {
-      if (err && !res.headersSent) {
-        console.error('Download error:', err);
-        res.status(500).send('Download error');
-      }
-    });
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', 'attachment; filename="safar-gafargaon-clean-source.zip"');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    return fs.createReadStream(filePath).pipe(res);
   }
   return res.status(404).send('ZIP file not found');
 });

@@ -46,6 +46,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          importScripts: ['/custom-sw-notifications.js'],
           globIgnores: ['**/assets/aistudio/**', '**/*.zip'],
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           navigateFallbackDenylist: [/^\/.*\.zip$/, /^\/api\/.*/],
@@ -94,12 +95,17 @@ export default defineConfig(() => {
             if (
               urlPath === '/safar-app.zip' || 
               urlPath === '/safar-gafargaon-clean-source.zip' ||
+              urlPath === '/safar-gafargaon-latest.zip' ||
+              urlPath === '/safar-gafargaon-final.zip' ||
+              urlPath === '/safar-gafargaon-source-final.zip' ||
+              urlPath === '/safar-gafargaon.zip' ||
               urlPath === '/download-zip' ||
               urlPath === '/api/download-zip'
             ) {
               const primaryZip = path.resolve(process.cwd(), 'public', 'safar-gafargaon-clean-source.zip');
+              const distZip = path.resolve(process.cwd(), 'dist', 'safar-gafargaon-clean-source.zip');
               const fallbackZip = path.resolve(process.cwd(), 'public', 'safar-app.zip');
-              const zipPath = fs.existsSync(primaryZip) ? primaryZip : fallbackZip;
+              const zipPath = [primaryZip, distZip, fallbackZip].find(p => fs.existsSync(p));
               if (fs.existsSync(zipPath)) {
                 const stat = fs.statSync(zipPath);
                 res.writeHead(200, {

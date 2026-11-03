@@ -2445,7 +2445,16 @@ export default function App() {
             ratingGiven: d.ratingGiven || 5.0
           });
         });
-        setTripHistory(cloudTrips);
+        const uniqueCloudTrips: PassengerTripRecord[] = [];
+        const seenKeys = new Set<string>();
+        for (const trip of cloudTrips) {
+          const tripKey = trip.id || `${trip.date}_${trip.pickupPoint}_${trip.destination}_${trip.driverPhone}`;
+          if (!seenKeys.has(tripKey)) {
+            seenKeys.add(tripKey);
+            uniqueCloudTrips.push(trip);
+          }
+        }
+        setTripHistory(uniqueCloudTrips);
       }
     }, (err) => {
       console.warn('Firestore passenger trips sync fallback:', err);
@@ -2979,9 +2988,10 @@ export default function App() {
         if (data.status === 'completed') {
           if (activeBooking && ((activeBooking as any).requestId === docSnap.id || (activeBooking as any).id === docSnap.id)) {
             const finalFare = data.estFare || activeBooking.fare || 40;
+            const tripDeterministicId = `trip-${docSnap.id}`;
             if (passengerProfile.isLoggedIn) {
               const newTripRecord: PassengerTripRecord = {
-                id: `trip-${Date.now()}`,
+                id: tripDeterministicId,
                 date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
                 pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
                 destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
@@ -2994,7 +3004,16 @@ export default function App() {
                 status: 'সম্পন্ন',
                 ratingGiven: 5.0
               };
-              setTripHistory(prev => [newTripRecord, ...prev]);
+              setTripHistory(prev => {
+                if (prev.some(t => t.id === newTripRecord.id)) return prev;
+                return [newTripRecord, ...prev];
+              });
+              if (passengerProfile.phone) {
+                setDoc(doc(db, 'users', passengerProfile.phone, 'trips', newTripRecord.id), {
+                  ...newTripRecord,
+                  createdAt: new Date().toISOString()
+                }).catch(() => {});
+              }
             }
             setActiveBooking(null);
             setPickupCoords(null);
@@ -3915,6 +3934,54 @@ export default function App() {
       ));
     }
   };
+
+  // Listen to Service Worker Push Notification Action clicks (Accept / Open) & URL query
+  useEffect(() => {
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data) return;
+
+      if (data.type === 'SAFAR_DRIVER_ACCEPT_RIDE' || (data.type === 'SAFAR_NOTIFICATION_ACTION' && data.action === 'accept')) {
+        const reqId = data.requestId;
+        setUserRole('driver');
+        window.scrollTo({ top: 120, behavior: 'smooth' });
+        if (reqId) {
+          handleDriverAcceptRequest(reqId);
+        }
+      } else if (data.type === 'SAFAR_NOTIFICATION_ACTION' && data.action === 'open') {
+        setUserRole('driver');
+        window.scrollTo({ top: 120, behavior: 'smooth' });
+      }
+    };
+
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const openTripId = params.get('openDriverTrip');
+        const role = params.get('role');
+        const autoAccept = params.get('autoAccept') === 'true' || params.get('action') === 'accept';
+        if (role === 'driver') {
+          setUserRole('driver');
+        }
+        if (openTripId) {
+          setUserRole('driver');
+          if (autoAccept) {
+            handleDriverAcceptRequest(openTripId);
+          }
+        }
+      } catch {}
+    }
+
+    return () => {
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+      }
+    };
+  }, []);
 
   // Refs & Synchronized Height State for Category and Active Drivers
   const categorySectionRef = useRef<HTMLDivElement>(null);
@@ -5634,8 +5701,10 @@ export default function App() {
                 if (activeBooking) {
                   const matchedDriver = drivers.find(d => d.id === activeBooking.driver.id) || activeBooking.driver;
                   const finalFare = (fare && fare > 0) ? fare : (activeBooking.fare || 40);
+                  const bookingReqId = (activeBooking as any).requestId || (activeBooking as any).id || (passengerPendingRequest?.id);
+                  const tripDeterministicId = bookingReqId ? `trip-${bookingReqId}` : `trip-${Date.now()}`;
                   const newTripRecord: PassengerTripRecord = {
-                    id: `trip-${Date.now()}`,
+                    id: tripDeterministicId,
                     date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
                     pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
                     destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
@@ -5648,11 +5717,20 @@ export default function App() {
                     status: 'সম্পন্ন',
                     ratingGiven: 5.0
                   };
-                  setTripHistory(prev => [newTripRecord, ...prev]);
+                  setTripHistory(prev => {
+                    if (prev.some(t => t.id === newTripRecord.id)) return prev;
+                    return [newTripRecord, ...prev];
+                  });
                   if (passengerProfile.phone) {
                     setDoc(doc(db, 'users', passengerProfile.phone, 'trips', newTripRecord.id), {
                       ...newTripRecord,
                       createdAt: new Date().toISOString()
+                    }).catch(() => {});
+                  }
+                  if (bookingReqId) {
+                    updateDoc(doc(db, 'ride_requests', bookingReqId), {
+                      status: 'completed',
+                      completedAt: new Date().toISOString()
                     }).catch(() => {});
                   }
                   showAdminToastMessage(`ট্রিপ সম্পন্ন হয়েছে! নির্ধারিত ভাড়া: ৳ ${finalFare}`);
@@ -5668,6 +5746,16 @@ export default function App() {
                   return d;
                 }));
                 setActiveBooking(null);
+                setPassengerPendingRequest(null);
+                setPickupCoords(null);
+                setDestCoords(null);
+                setPassengerPickup('');
+                setPassengerDestination('');
+                try {
+                  localStorage.removeItem('safar_active_booking_v2');
+                  localStorage.removeItem('safar_my_ride_request_id');
+                  localStorage.removeItem('safar_passenger_pending_v2');
+                } catch {}
                 showAdminToastMessage('আপনার মূল্যবান ৫-স্টার রিভিউ ও রেটিং জমা নেওয়া হয়েছে!');
               }}
               onFocusMap={() => {

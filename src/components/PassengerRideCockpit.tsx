@@ -84,6 +84,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
 }) => {
   // Review modal state
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const [completedBooking, setCompletedBooking] = useState<any>(null);
   const [reviewRating, setReviewRating] = useState(5);
   const [selectedReviewTags, setSelectedReviewTags] = useState<string[]>(['নিরাপদ ড্রাইভিং', 'ভদ্র আচরণ']);
   const [reviewComment, setReviewComment] = useState('');
@@ -136,6 +137,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
 
   const handleFinishAndShowReview = () => {
     if (activeBooking) {
+      setCompletedBooking(activeBooking);
       try {
         confetti({
           particleCount: 90,
@@ -150,15 +152,31 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
   };
 
   const handleFinalSubmitReview = () => {
-    if (activeBooking) {
+    const targetDriver = completedBooking?.driver || activeBooking?.driver;
+    if (targetDriver) {
       onSubmitReview(
-        activeBooking.driver.id,
+        targetDriver.id,
         reviewRating,
         selectedReviewTags,
         reviewComment
       );
     }
     setShowReviewModal(false);
+    setCompletedBooking(null);
+  };
+
+  const handleSkipReview = () => {
+    const targetDriver = completedBooking?.driver || activeBooking?.driver;
+    if (targetDriver) {
+      onSubmitReview(
+        targetDriver.id,
+        5,
+        [],
+        ''
+      );
+    }
+    setShowReviewModal(false);
+    setCompletedBooking(null);
   };
 
   return (
@@ -507,136 +525,139 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
       {/* ============================================================== */}
       {/* 3. TRIP COMPLETED & 5-STAR RATING REVIEW MODAL                 */}
       {/* ============================================================== */}
-      {showReviewModal && activeBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900">
-            {/* Header */}
-            <div className="text-center pb-3 border-b border-slate-100">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 mx-auto flex items-center justify-center font-bold text-2xl shadow-inner mb-2">
-                🎉
+      {showReviewModal && (completedBooking || activeBooking) && (() => {
+        const displayBooking = completedBooking || activeBooking;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+            <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900">
+              {/* Header */}
+              <div className="text-center pb-3 border-b border-slate-100">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 mx-auto flex items-center justify-center font-bold text-2xl shadow-inner mb-2">
+                  🎉
+                </div>
+                <h3 className="text-lg font-black text-slate-900">
+                  যাত্রা সফলভাবে সম্পন্ন হয়েছে!
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {displayBooking.pickupTitle} ➔ {displayBooking.destTitle}
+                </p>
               </div>
-              <h3 className="text-lg font-black text-slate-900">
-                যাত্রা সফলভাবে সম্পন্ন হয়েছে!
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                {activeBooking.pickupTitle} ➔ {activeBooking.destTitle}
-              </p>
-            </div>
 
-            {/* Receipt Summary */}
-            <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 my-4">
-              <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
-                <span>চালকের নাম:</span>
-                <strong className="text-slate-900">{activeBooking.driver.name}</strong>
+              {/* Receipt Summary */}
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 my-4">
+                <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
+                  <span>চালকের নাম:</span>
+                  <strong className="text-slate-900">{displayBooking.driver.name}</strong>
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
+                  <span>বাহন ও লাইসেন্স:</span>
+                  <span className="font-mono text-slate-800">{displayBooking.driver.plateNumber}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
+                  <span>মোট দূরত্ব:</span>
+                  <span className="text-slate-800">{displayBooking.distanceKm} কিমি</span>
+                </div>
+                <div className="pt-2 border-t border-emerald-200 flex items-center justify-between">
+                  <span className="font-bold text-slate-800 text-sm">পরিশোধযোগ্য নির্ধারিত ভাড়া:</span>
+                  <span className="text-xl font-black text-emerald-700">৳ {displayBooking.fare}</span>
+                </div>
+                <p className="text-[10px] text-emerald-800 text-center mt-1 font-semibold">
+                  (চালককে নগদ অথবা বিকাশ/নগদে ভাড়া পরিশোধ করুন)
+                </p>
               </div>
-              <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
-                <span>বাহন ও লাইসেন্স:</span>
-                <span className="font-mono text-slate-800">{activeBooking.driver.plateNumber}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
-                <span>মোট দূরত্ব:</span>
-                <span className="text-slate-800">{activeBooking.distanceKm} কিমি</span>
-              </div>
-              <div className="pt-2 border-t border-emerald-200 flex items-center justify-between">
-                <span className="font-bold text-slate-800 text-sm">পরিশোধযোগ্য নির্ধারিত ভাড়া:</span>
-                <span className="text-xl font-black text-emerald-700">৳ {activeBooking.fare}</span>
-              </div>
-              <p className="text-[10px] text-emerald-800 text-center mt-1 font-semibold">
-                (চালককে নগদ অথবা বিকাশ/নগদে ভাড়া পরিশোধ করুন)
-              </p>
-            </div>
 
-            {/* Star Rating Selector */}
-            <div className="text-center my-3">
-              <label className="text-xs font-bold text-slate-700 block mb-2">
-                চালক কেমন সেবা দিলেন? স্টার রেটিং দিন:
-              </label>
-              <div className="flex items-center justify-center gap-2">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button
-                    key={star}
-                    type="button"
-                    onClick={() => setReviewRating(star)}
-                    className="p-1 cursor-pointer transition transform hover:scale-125 focus:outline-none"
-                  >
-                    <Star
-                      className={`w-8 h-8 ${
-                        star <= reviewRating
-                          ? 'fill-amber-400 text-amber-400 drop-shadow-xs'
-                          : 'text-slate-300'
-                      }`}
-                    />
-                  </button>
-                ))}
-              </div>
-              <span className="text-xs font-bold text-amber-600 mt-1 block">
-                {reviewRating === 5
-                  ? 'চমৎকার! (৫ স্টার)'
-                  : reviewRating === 4
-                  ? 'খুব ভালো (৪ স্টার)'
-                  : reviewRating === 3
-                  ? 'মোটামুটি (৩ স্টার)'
-                  : 'উন্নতি প্রয়োজন'}
-              </span>
-            </div>
-
-            {/* Quick Tag Pills */}
-            <div className="my-3">
-              <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                ফিডব্যাক ট্যাগ নির্বাচন করুন:
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {reviewTagOptions.map((tag) => {
-                  const isSelected = selectedReviewTags.includes(tag);
-                  return (
+              {/* Star Rating Selector */}
+              <div className="text-center my-3">
+                <label className="text-xs font-bold text-slate-700 block mb-2">
+                  চালক কেমন সেবা দিলেন? স্টার রেটিং দিন:
+                </label>
+                <div className="flex items-center justify-center gap-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
                     <button
-                      key={tag}
+                      key={star}
                       type="button"
-                      onClick={() => handleToggleReviewTag(tag)}
-                      className={`text-xs px-2.5 py-1 rounded-xl font-medium border transition cursor-pointer ${
-                        isSelected
-                          ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs'
-                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
-                      }`}
+                      onClick={() => setReviewRating(star)}
+                      className="p-1 cursor-pointer transition transform hover:scale-125 focus:outline-none"
                     >
-                      {isSelected ? '✓ ' : ''}{tag}
+                      <Star
+                        className={`w-8 h-8 ${
+                          star <= reviewRating
+                            ? 'fill-amber-400 text-amber-400 drop-shadow-xs'
+                            : 'text-slate-300'
+                        }`}
+                      />
                     </button>
-                  );
-                })}
+                  ))}
+                </div>
+                <span className="text-xs font-bold text-amber-600 mt-1 block">
+                  {reviewRating === 5
+                    ? 'চমৎকার! (৫ স্টার)'
+                    : reviewRating === 4
+                    ? 'খুব ভালো (৪ স্টার)'
+                    : reviewRating === 3
+                    ? 'মোটামুটি (৩ স্টার)'
+                    : 'উন্নতি প্রয়োজন'}
+                </span>
               </div>
-            </div>
 
-            {/* Optional Comment */}
-            <div className="my-3">
-              <input
-                type="text"
-                value={reviewComment}
-                onChange={(e) => setReviewComment(e.target.value)}
-                placeholder="মন্তব্য লিখুন (ঐচ্ছিক)..."
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
+              {/* Quick Tag Pills */}
+              <div className="my-3">
+                <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                  ফিডব্যাক ট্যাগ নির্বাচন করুন:
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {reviewTagOptions.map((tag) => {
+                    const isSelected = selectedReviewTags.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => handleToggleReviewTag(tag)}
+                        className={`text-xs px-2.5 py-1 rounded-xl font-medium border transition cursor-pointer ${
+                          isSelected
+                            ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs'
+                            : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                        }`}
+                      >
+                        {isSelected ? '✓ ' : ''}{tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-            {/* Actions */}
-            <div className="flex items-center gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowReviewModal(false)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition"
-              >
-                পরে দেব
-              </button>
-              <button
-                type="button"
-                onClick={handleFinalSubmitReview}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md cursor-pointer transition active:scale-95"
-              >
-                রিভিউ জমা দিন
-              </button>
+              {/* Optional Comment */}
+              <div className="my-3">
+                <input
+                  type="text"
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="মন্তব্য লিখুন (ঐচ্ছিক)..."
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={handleSkipReview}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition"
+                >
+                  পরে দেব
+                </button>
+                <button
+                  type="button"
+                  onClick={handleFinalSubmitReview}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md cursor-pointer transition active:scale-95"
+                >
+                  রিভিউ জমা দিন
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </>
   );
 };

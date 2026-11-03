@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Transparent background: only white pixels will be rendered by Android status bar -->
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Stylized Bengali 'Sa' (স) route loop -->
+    <path d="M 22 46 C 16 32 24 16 44 16 C 60 16 66 28 56 40 C 44 49 32 52 32 64 L 76 64" stroke-width="8"/>
+    <!-- Top Destination Pin -->
+    <path d="M 44 8 C 36 8 32 13 32 18 C 32 24 44 32 44 32 C 44 32 56 24 56 18 C 56 13 52 8 44 8 Z" fill="#ffffff" stroke-width="2"/>
+    <circle cx="44" cy="18" r="3" fill="#000000"/>
+    <!-- Small Start Point -->
+    <circle cx="22" cy="46" r="4" fill="#ffffff"/>
+  </g>
+</svg>

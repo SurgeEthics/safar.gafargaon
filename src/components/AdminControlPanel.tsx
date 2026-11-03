@@ -631,8 +631,8 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       const res = await fetch(`/safar-gafargaon-clean-source.zip?t=${Date.now()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`সার্ভার এরর: HTTP ${res.status}`);
       const blob = await res.blob();
-      if (!blob || blob.size < 1000) {
-        throw new Error('জিপ ফাইল লোড হতে সমস্যা হয়েছে');
+      if (!blob || blob.size < 500000 || (blob.type && blob.type.includes('html'))) {
+        throw new Error('জিপ ফাইলের সাইজ সঠিক নয়, সরাসরি লিঙ্ক চেষ্টা করুন');
       }
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -644,11 +644,11 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
         window.URL.revokeObjectURL(url);
         document.body.removeChild(link);
       }, 2000);
-      showToast('🎉 সফলভাবে সম্পূর্ণ ফ্রেশ ও ক্লিন সোর্স কোড জিপ (৩.২৭ MB) ডাউনলোড হয়েছে!');
+      showToast('🎉 সফলভাবে সম্পূর্ণ ফ্রেশ ও ক্লিন সোর্স কোড জিপ (৪.১৪ MB) ডাউনলোড হয়েছে!');
     } catch (err: any) {
-      console.error('ZIP download error:', err);
-      showToast('সরাসরি ডাউনলোড লিঙ্ক ওপেন করা হচ্ছে...');
-      window.location.href = '/safar-gafargaon-clean-source.zip';
+      console.warn('ZIP download fallback:', err);
+      showToast('সরাসরি ডাউনলোড উইন্ডো ওপেন করা হচ্ছে...');
+      window.open('/safar-gafargaon-clean-source.zip', '_blank');
     } finally {
       setIsZipDownloading(false);
     }
@@ -2419,7 +2419,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </h3>
                   <span className="inline-flex items-center gap-1.5 bg-emerald-600 text-white font-black text-[11px] px-2.5 py-0.5 rounded-full shadow-xs self-start sm:self-auto">
                     <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                    লেটেস্ট ফ্রেশ প্যাকেজ • ৩.২৭ MB
+                    লেটেস্ট ফ্রেশ প্যাকেজ
                   </span>
                 </div>
 
@@ -2432,13 +2432,15 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   <a
                     href="/safar-gafargaon-clean-source.zip"
                     download="safar-gafargaon-clean-source.zip"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     onClick={() => {
-                      showToast('🎉 সফর সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ (৩.২৭ MB) ডাউনলোড শুরু হয়েছে!');
+                      showToast('🎉 সফর সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ (৪.১৪ MB) ডাউনলোড শুরু হয়েছে!');
                     }}
                     className="inline-flex items-center gap-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black px-5 py-3 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition border-2 border-amber-500/80"
                   >
                     <Download className="w-4 h-4 text-slate-950" />
-                    <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৩.২৭ MB)</span>
+                    <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৪.১৪ MB)</span>
                   </a>
 
                   <button

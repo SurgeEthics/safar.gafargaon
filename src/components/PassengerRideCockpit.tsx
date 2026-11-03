@@ -67,7 +67,7 @@ export interface PassengerRideCockpitProps {
   onStartRide?: () => void;
   onCompleteRide: (fare: number) => void;
   onSubmitReview: (driverId: string, rating: number, tags: string[], feedback: string) => void;
-  onDismissCompletedTrip?: () => void;
+  onDismissCockpit?: () => void;
   onFocusMap: () => void;
   categoryBengaliName?: string;
 }
@@ -80,7 +80,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
   onStartRide,
   onCompleteRide,
   onSubmitReview,
-  onDismissCompletedTrip,
+  onDismissCockpit,
   onFocusMap,
   categoryBengaliName = 'অটো'
 }) => {
@@ -161,18 +161,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
       );
     }
     setShowReviewModal(false);
-    if (onDismissCompletedTrip) {
-      onDismissCompletedTrip();
-    }
-  };
-
-  const handleSkipReview = () => {
-    setShowReviewModal(false);
-    if (onDismissCompletedTrip) {
-      onDismissCompletedTrip();
-    } else {
-      onCancelBooking();
-    }
+    if (onDismissCockpit) onDismissCockpit();
   };
 
   return (
@@ -523,16 +512,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
       {/* ============================================================== */}
       {showReviewModal && activeBooking && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900 relative">
-            <button
-              type="button"
-              onClick={handleSkipReview}
-              className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
-              title="বন্ধ করুন"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900">
             {/* Header */}
             <div className="text-center pb-3 border-b border-slate-100">
               <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 mx-auto flex items-center justify-center font-bold text-2xl shadow-inner mb-2">
@@ -644,7 +624,10 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
             <div className="flex items-center gap-2 pt-2">
               <button
                 type="button"
-                onClick={handleSkipReview}
+                onClick={() => {
+                  setShowReviewModal(false);
+                  if (onDismissCockpit) onDismissCockpit();
+                }}
                 className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition"
               >
                 পরে দেব

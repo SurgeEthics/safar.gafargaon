@@ -129,7 +129,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
                 </span>
               </div>
               <span className="text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                ৪.০৮ MB জিপ (ক্লিন প্যাকেজ)
+                ৩.২৭ MB জিপ (ক্লিন প্যাকেজ)
               </span>
             </div>
 

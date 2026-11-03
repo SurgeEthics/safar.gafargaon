@@ -2419,12 +2419,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </h3>
                   <span className="inline-flex items-center gap-1.5 bg-emerald-600 text-white font-black text-[11px] px-2.5 py-0.5 rounded-full shadow-xs self-start sm:self-auto">
                     <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                    লেটেস্ট ফ্রেশ প্যাকেজ • ৪.০৮ MB
+                    লেটেস্ট ফ্রেশ প্যাকেজ • ৩.৩০ MB
                   </span>
                 </div>
 
                 <p className="text-xs text-slate-700 leading-relaxed">
-                  আপনার সম্পূর্ণ অ্যাপের রিয়্যাক্ট ১৯, টাইপস্ক্রিপ্ট সোর্স কোড, চালক ও যাত্রী ড্যাশবোর্ড, লাইভ ম্যাপ ট্র্যাকিং, সার্ভিস ওয়ার্কার অ্যাকশন বাটন, স্পষ্ট পুরুষ ভয়েস অ্যালার্ট ও সকল আইকন সহ সম্পূর্ণ অফিশিয়াল ত্রুটিমুক্ত ফ্রেশ জিপ প্যাকেজ।
+                  আপনার সম্পূর্ণ অ্যাপের রিয়্যাক্ট ১৯, টাইপস্ক্রিপ্ট সোর্স কোড, চালক ও যাত্রী ড্যাশবোর্ড, লাইভ ম্যাপ ট্র্যাকিং, সকল আইকন এবং প্রস্তুতকৃত <strong>dist/</strong> প্রোডাকশন বিল্ড ফাইল সহ সম্পূর্ণ অফিশিয়াল ত্রুটিমুক্ত ফ্রেশ জিপ প্যাকেজ।
                 </p>
 
                 {/* Primary Yellow 1-Click Download Button */}
@@ -2433,12 +2433,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     href="/safar-gafargaon-clean-source.zip"
                     download="safar-gafargaon-clean-source.zip"
                     onClick={() => {
-                      showToast('🎉 সফর সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ (৪.০৮ MB) ডাউনলোড শুরু হয়েছে!');
+                      showToast('🎉 সফর সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ (৩.৩০ MB) ডাউনলোড শুরু হয়েছে!');
                     }}
                     className="inline-flex items-center gap-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black px-5 py-3 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition border-2 border-amber-500/80"
                   >
                     <Download className="w-4 h-4 text-slate-950" />
-                    <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৪.০৮ MB)</span>
+                    <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৩.৩০ MB)</span>
                   </a>
 
                   <button

@@ -167,10 +167,10 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
             type="button"
             onClick={scrollToTop}
             aria-label="সবার উপরে ফিরে যান"
-            className="bg-transparent hover:bg-emerald-600 active:bg-emerald-700 text-emerald-700 hover:text-white active:text-white p-2.5 sm:p-3 rounded-full hover:scale-105 active:scale-95 transition-all flex items-center justify-center border-2 border-emerald-600 cursor-pointer animate-in fade-in zoom-in duration-200 group"
+            className="bg-transparent text-emerald-600 hover:text-emerald-700 active:text-emerald-800 p-2.5 sm:p-3 rounded-full hover:scale-110 active:scale-95 transition-all flex items-center justify-center border-2 border-emerald-600/70 hover:border-emerald-700 cursor-pointer animate-in fade-in zoom-in duration-200 backdrop-blur-none shadow-none"
             title="সবার উপরে যান"
           >
-            <ArrowUp className="w-5 h-5 text-emerald-700 group-hover:text-white group-active:text-white transition-colors" />
+            <ArrowUp className="w-5 h-5 text-emerald-600 hover:text-emerald-700 stroke-[2.5]" />
           </button>
         )}
 

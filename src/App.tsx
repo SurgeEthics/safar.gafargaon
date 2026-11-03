@@ -2386,23 +2386,6 @@ export default function App() {
     showAdminToastMessage('যাত্রী প্রোফাইল থেকে লগআউট সম্পন্ন হয়েছে');
   };
 
-  // Helper to deduplicate past trips by ID and identical trip signature
-  const deduplicateTrips = (trips: PassengerTripRecord[]): PassengerTripRecord[] => {
-    const seenIds = new Set<string>();
-    const seenSignatures = new Set<string>();
-    const result: PassengerTripRecord[] = [];
-    for (const t of trips) {
-      if (!t) continue;
-      // Signature based on pickup, destination, fare, and date/time
-      const sig = `${t.pickupPoint || ''}|${t.destination || ''}|${t.fare || 0}|${t.driverPhone || t.driverName || ''}`;
-      if (seenIds.has(t.id) || seenSignatures.has(sig)) continue;
-      seenIds.add(t.id);
-      seenSignatures.add(sig);
-      result.push(t);
-    }
-    return result;
-  };
-
   // Past Trip History with LocalStorage Auto-Sync (Real, Dynamic & Synced with Firestore)
   // Default is clean [] - No dummy/fake past trips for unregistered users
   const [tripHistory, setTripHistory] = useState<PassengerTripRecord[]>(() => {
@@ -2414,8 +2397,7 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           const cleared = getClearedTripIds();
-          const valid = parsed.filter(p => p && !cleared.has(p.id));
-          return deduplicateTrips(valid);
+          return parsed.filter(p => p && !cleared.has(p.id));
         }
       }
     } catch (e) {}
@@ -2427,7 +2409,7 @@ export default function App() {
     try {
       const cleared = getClearedTripIds();
       const valid = tripHistory.filter(p => p && !cleared.has(p.id));
-      localStorage.setItem('safar_trip_history_v7', JSON.stringify(deduplicateTrips(valid)));
+      localStorage.setItem('safar_trip_history_v7', JSON.stringify(valid));
     } catch (e) {}
   }, [tripHistory, getClearedTripIds]);
 
@@ -2463,7 +2445,7 @@ export default function App() {
             ratingGiven: d.ratingGiven || 5.0
           });
         });
-        setTripHistory(deduplicateTrips(cloudTrips));
+        setTripHistory(cloudTrips);
       }
     }, (err) => {
       console.warn('Firestore passenger trips sync fallback:', err);
@@ -2997,10 +2979,10 @@ export default function App() {
         if (data.status === 'completed') {
           if (activeBooking && ((activeBooking as any).requestId === docSnap.id || (activeBooking as any).id === docSnap.id)) {
             const finalFare = data.estFare || activeBooking.fare || 40;
-            const targetTripId = (activeBooking as any).requestId || (activeBooking as any).id || docSnap.id;
+            const tripDocId = `trip-${docSnap.id}`;
             if (passengerProfile.isLoggedIn) {
               const newTripRecord: PassengerTripRecord = {
-                id: `trip-${targetTripId}`,
+                id: tripDocId,
                 date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
                 pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
                 destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
@@ -3013,9 +2995,12 @@ export default function App() {
                 status: 'সম্পন্ন',
                 ratingGiven: 5.0
               };
+              (newTripRecord as any).requestId = docSnap.id;
               setTripHistory(prev => {
-                const filtered = prev.filter(t => t.id !== newTripRecord.id && !(t.pickupPoint === newTripRecord.pickupPoint && t.destination === newTripRecord.destination && Math.abs(t.fare - newTripRecord.fare) < 1));
-                return [newTripRecord, ...filtered];
+                if (prev.some(t => t.id === tripDocId || (t as any).requestId === docSnap.id)) {
+                  return prev;
+                }
+                return [newTripRecord, ...prev];
               });
             }
             setActiveBooking(null);
@@ -3938,6 +3923,56 @@ export default function App() {
     }
   };
 
+  // Handle Android Notification Action Buttons [✅ গ্রহণ করুন (ACCEPT)] & [📲 অ্যাপ খুলুন]
+  useEffect(() => {
+    // 1. Check URL parameters on mount / app open
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const reqId = params.get('openDriverTrip');
+      const roleParam = params.get('role');
+      const actionParam = params.get('action');
+
+      if (roleParam === 'driver') {
+        setUserRole('driver');
+      }
+
+      if (reqId) {
+        if (actionParam === 'accept') {
+          setUserRole('driver');
+          handleDriverAcceptRequest(reqId);
+          showAdminToastMessage('নোটিফিকেশন থেকে ট্রিপ গ্রহণ করা হয়েছে!');
+        } else {
+          setUserRole('driver');
+          window.scrollTo({ top: 120, behavior: 'smooth' });
+        }
+        // Clean URL parameters from address bar to prevent replay on reload
+        try {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } catch {}
+      }
+    }
+
+    // 2. Listen to postMessage from Service Worker when action button is tapped in notification shade
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      const handleSwMessage = (event: MessageEvent) => {
+        if (event.data?.type === 'SAFAR_NOTIFICATION_ACTION') {
+          const { action, requestId } = event.data;
+          setUserRole('driver');
+          if (action === 'accept' && requestId) {
+            handleDriverAcceptRequest(requestId);
+            showAdminToastMessage('নোটিফিকেশন থেকে ট্রিপ গ্রহণ করা হয়েছে!');
+          } else {
+            window.scrollTo({ top: 120, behavior: 'smooth' });
+          }
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      };
+    }
+  }, []);
+
   // Refs & Synchronized Height State for Category and Active Drivers
   const categorySectionRef = useRef<HTMLDivElement>(null);
   const driverListRef = useRef<HTMLDivElement>(null);
@@ -4042,52 +4077,6 @@ export default function App() {
       window.removeEventListener('hashchange', checkAdminTrigger);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
-
-  // Service Worker Notification Actions (ACCEPT / OPEN) & URL Direct Parameter Handling
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    // 1. Service Worker postMessage listener for direct notification button clicks
-    if ('serviceWorker' in navigator) {
-      const handleSwMessage = (event: MessageEvent) => {
-        const msg = event.data;
-        if (!msg) return;
-        if (msg.type === 'NOTIFICATION_ACTION_ACCEPT') {
-          setUserRole('driver');
-          if (msg.requestId) {
-            handleDriverAcceptRequest(msg.requestId);
-          }
-        } else if (msg.type === 'NOTIFICATION_ACTION_OPEN') {
-          setUserRole('driver');
-        } else if (msg.type === 'NOTIFICATION_ACTION_DISMISS') {
-          if (msg.requestId) {
-            setDismissedAlertIds(prev => ({ ...prev, [msg.requestId]: true }));
-            sounds.stopAllAlarms();
-            highPriorityNotifications.clearIncomingRideAlert();
-          }
-        }
-      };
-      navigator.serviceWorker.addEventListener('message', handleSwMessage);
-
-      // 2. Initial URL param check for app opened by notification click
-      const params = new URLSearchParams(window.location.search);
-      const autoAcceptId = params.get('autoAcceptTrip');
-      const openDriverId = params.get('openDriverTrip');
-      if (params.get('role') === 'driver' || autoAcceptId || openDriverId) {
-        setUserRole('driver');
-      }
-      if (autoAcceptId) {
-        handleDriverAcceptRequest(autoAcceptId);
-        window.history.replaceState({}, '', window.location.pathname);
-      } else if (openDriverId) {
-        window.history.replaceState({}, '', window.location.pathname);
-      }
-
-      return () => {
-        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
-      };
-    }
   }, []);
 
   const secretClickCountRef = useRef(0);
@@ -4855,29 +4844,35 @@ export default function App() {
   };
 
   // Driver Finishes the Active Trip
-  const completedDriverTripsRef = useRef<Set<string>>(new Set());
+  const completedDriverTripIdsRef = useRef<{ [tripId: string]: boolean }>({});
 
   const handleDriverCompleteActiveTrip = async (tripId: string, fare: number) => {
-    if (completedDriverTripsRef.current.has(tripId)) {
-      setPassengerRequests(prev => prev.filter(r => r.id !== tripId));
-      return;
-    }
-    completedDriverTripsRef.current.add(tripId);
+    const alreadyCounted = completedDriverTripIdsRef.current[tripId];
+    completedDriverTripIdsRef.current[tripId] = true;
 
     try {
       await updateDoc(doc(db, 'ride_requests', tripId), {
         status: 'completed',
         completedAt: new Date().toISOString()
       });
-      setDriverProfile(prev => ({
-        ...prev,
-        todayTrips: (prev.todayTrips || 0) + 1,
-        todayEarnings: (prev.todayEarnings || 0) + (fare || 40)
-      }));
+      if (!alreadyCounted) {
+        setDriverProfile(prev => ({
+          ...prev,
+          todayTrips: (prev.todayTrips || 0) + 1,
+          todayEarnings: (prev.todayEarnings || 0) + (fare || 40)
+        }));
+      }
       setPassengerRequests(prev => prev.filter(r => r.id !== tripId));
       showAdminToastMessage(`🎉 ট্রিপ সফলভাবে সম্পন্ন হয়েছে! ৳ ${fare} ভাড়া আয় হয়েছে।`);
     } catch (err) {
       console.warn('Failed to complete trip in Firestore:', err);
+      if (!alreadyCounted) {
+        setDriverProfile(prev => ({
+          ...prev,
+          todayTrips: (prev.todayTrips || 0) + 1,
+          todayEarnings: (prev.todayEarnings || 0) + (fare || 40)
+        }));
+      }
       setPassengerRequests(prev => prev.filter(r => r.id !== tripId));
     }
   };
@@ -5708,17 +5703,12 @@ export default function App() {
               }}
               onCompleteRide={(fare) => {
                 if (activeBooking) {
-                  const targetTripId = (activeBooking as any).requestId || (activeBooking as any).id || Date.now().toString();
-                  // Authoritatively mark ride_requests document as completed in Firestore
-                  updateDoc(doc(db, 'ride_requests', targetTripId), {
-                    status: 'completed',
-                    completedAt: new Date().toISOString()
-                  }).catch(() => {});
-
+                  const reqId = (activeBooking as any).requestId || activeBooking.id || `trip-${Date.now()}`;
+                  const tripDocId = `trip-${reqId}`;
                   const matchedDriver = drivers.find(d => d.id === activeBooking.driver.id) || activeBooking.driver;
                   const finalFare = (fare && fare > 0) ? fare : (activeBooking.fare || 40);
                   const newTripRecord: PassengerTripRecord = {
-                    id: `trip-${targetTripId}`,
+                    id: tripDocId,
                     date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
                     pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
                     destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
@@ -5731,16 +5721,30 @@ export default function App() {
                     status: 'সম্পন্ন',
                     ratingGiven: 5.0
                   };
+                  (newTripRecord as any).requestId = reqId;
+
                   setTripHistory(prev => {
-                    const filtered = prev.filter(t => t.id !== newTripRecord.id && !(t.pickupPoint === newTripRecord.pickupPoint && t.destination === newTripRecord.destination && Math.abs(t.fare - newTripRecord.fare) < 1));
-                    return [newTripRecord, ...filtered];
+                    if (prev.some(t => t.id === tripDocId || (t as any).requestId === reqId)) {
+                      return prev;
+                    }
+                    return [newTripRecord, ...prev];
                   });
+
                   if (passengerProfile.phone) {
                     setDoc(doc(db, 'users', passengerProfile.phone, 'trips', newTripRecord.id), {
                       ...newTripRecord,
                       createdAt: new Date().toISOString()
                     }).catch(() => {});
                   }
+
+                  // Also notify Firestore so driver's dashboard marks it completed
+                  if (reqId) {
+                    updateDoc(doc(db, 'ride_requests', reqId), {
+                      status: 'completed',
+                      completedAt: new Date().toISOString()
+                    }).catch(() => {});
+                  }
+
                   showAdminToastMessage(`ট্রিপ সম্পন্ন হয়েছে! নির্ধারিত ভাড়া: ৳ ${finalFare}`);
                 }
               }}
@@ -5764,7 +5768,7 @@ export default function App() {
                 } catch {}
                 showAdminToastMessage('আপনার মূল্যবান ৫-স্টার রিভিউ ও রেটিং জমা নেওয়া হয়েছে!');
               }}
-              onDismissCompletedTrip={() => {
+              onDismissCockpit={() => {
                 setActiveBooking(null);
                 setPickupCoords(null);
                 setDestCoords(null);

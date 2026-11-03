@@ -88,14 +88,14 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
     };
 
     sounds.speakDriverVoiceAlert(() => {
-      // Transition cleanly into authentic repeating loud Arabic Daf alarm ONLY after the voice finishes + 1s pause
+      // Transition cleanly into authentic repeating loud Arabic Daf alarm ONLY after the voice finishes
       startDafRhythm();
     });
 
-    // Safety fallback: ensure Duff drum begins ringing if audio autoplay was blocked (9.0s)
+    // Safety fallback: ensure Duff drum begins ringing if device has no TTS or speech hangs (7.0s)
     voiceTimeoutRef.current = setTimeout(() => {
       startDafRhythm();
-    }, 9000);
+    }, 7000);
 
     // 2. 25-second countdown timer
     countdownIntervalRef.current = setInterval(() => {

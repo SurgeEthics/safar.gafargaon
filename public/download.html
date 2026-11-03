@@ -92,31 +92,54 @@
       আপনার ব্রাউজারে স্বয়ংক্রিয়ভাবে জিপ ফাইলটি ডাউনলোড শুরু হবে। যদি নিজে নিজে ডাউনলোড শুরু না হয়, তবে নিচের সবুজ বাটনে ক্লিক করুন।
     </p>
 
-    <a id="downloadBtn" href="/safar-gafargaon-final.zip" download="safar-gafargaon-final.zip" class="btn-download">
+    <button id="downloadBtn" class="btn-download">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
         <polyline points="7 10 12 15 17 10"></polyline>
         <line x1="12" y1="15" x2="12" y2="3"></line>
       </svg>
-      সরাসরি জিপ ডাউনলোড করুন (ZIP)
-    </a>
+      <span id="btnText">সরাসরি জিপ ডাউনলোড করুন (৩.১৮ MB)</span>
+    </button>
 
     <div class="file-info">
-      ফাইল: <b>safar-gafargaon-final.zip</b> • সাইজ: <b>~5.8 MB</b> • রিঅ্যাক্ট + ফায়ারবেস সম্পূর্ণ কোডবেস
+      ফাইল: <b>safar-gafargaon-clean-source.zip</b> • সাইজ: <b>৩.১৮ MB</b> • রিঅ্যাক্ট ১৯ + টাইপস্ক্রিপ্ট সম্পূর্ণ কোডবেস
     </div>
   </div>
 
   <script>
-    // Trigger download automatically on page load
-    window.addEventListener('load', function() {
-      setTimeout(function() {
+    async function startDownload() {
+      const btn = document.getElementById('downloadBtn');
+      const text = document.getElementById('btnText');
+      if (btn) btn.disabled = true;
+      if (text) text.textContent = 'মেমোরিতে ফাইল লোড হচ্ছে...';
+      
+      try {
+        const res = await fetch('/safar-gafargaon-clean-source.zip', { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const buf = await res.arrayBuffer();
+        if (!buf || buf.byteLength < 500000) throw new Error('ফাইল সাইজ সঠিক নয়');
+        
+        const blob = new Blob([buf], { type: 'application/zip' });
+        const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
-        link.href = '/safar-gafargaon-final.zip';
-        link.download = 'safar-gafargaon-final.zip';
+        link.href = url;
+        link.download = 'safar-gafargaon-clean-source.zip';
         document.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
-      }, 500);
+        setTimeout(() => {
+          document.body.removeChild(link);
+        }, 3000);
+        if (text) text.textContent = '✅ ডাউনলোড সম্পন্ন হয়েছে! (পুনরায় ডাউনলোড)';
+      } catch (e) {
+        if (text) text.textContent = 'ডাউনলোড ব্যর্থ। পুনরায় চেষ্টা করুন';
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    document.getElementById('downloadBtn').addEventListener('click', startDownload);
+    window.addEventListener('load', function() {
+      setTimeout(startDownload, 600);
     });
   </script>
 </body>

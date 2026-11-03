@@ -3243,6 +3243,7 @@ export default function App() {
   // Screen WakeLock State & Auto-Management for Driver Mode
   const [isWakeLockActive, setIsWakeLockActive] = useState<boolean>(false);
   const [showScreenOpenPopup, setShowScreenOpenPopup] = useState<boolean>(true);
+  const [skipVoiceForCurrentAlert, setSkipVoiceForCurrentAlert] = useState<boolean>(false);
 
   // Subscribe to ScreenWakeLock status changes
   useEffect(() => {
@@ -3939,10 +3940,12 @@ export default function App() {
       if (reqId) {
         if (actionParam === 'accept') {
           setUserRole('driver');
+          setSkipVoiceForCurrentAlert(false);
           handleDriverAcceptRequest(reqId);
           showAdminToastMessage('নোটিফিকেশন থেকে ট্রিপ গ্রহণ করা হয়েছে!');
         } else {
           setUserRole('driver');
+          setSkipVoiceForCurrentAlert(true);
           window.scrollTo({ top: 120, behavior: 'smooth' });
         }
         // Clean URL parameters from address bar to prevent replay on reload
@@ -3959,9 +3962,12 @@ export default function App() {
           const { action, requestId } = event.data;
           setUserRole('driver');
           if (action === 'accept' && requestId) {
+            setSkipVoiceForCurrentAlert(false);
             handleDriverAcceptRequest(requestId);
             showAdminToastMessage('নোটিফিকেশন থেকে ট্রিপ গ্রহণ করা হয়েছে!');
           } else {
+            // Open app pressed: driver mode opened, voice skipped, Duff & vibration continues
+            setSkipVoiceForCurrentAlert(true);
             window.scrollTo({ top: 120, behavior: 'smooth' });
           }
         }
@@ -5796,6 +5802,7 @@ export default function App() {
             onOpenDashboard={() => {
               setUserRole('driver');
               setShowScreenOpenPopup(false);
+              setSkipVoiceForCurrentAlert(true);
               window.scrollTo({ top: 120, behavior: 'smooth' });
             }}
             onAccept={(reqId) => {
@@ -5803,6 +5810,7 @@ export default function App() {
               sounds.stopAllAlarms();
               highPriorityNotifications.clearIncomingRideAlert();
               setShowScreenOpenPopup(false);
+              setSkipVoiceForCurrentAlert(false);
               handleDriverAcceptRequest(reqId);
             }}
             onDecline={(reqId) => {
@@ -5810,6 +5818,7 @@ export default function App() {
               sounds.stopAllAlarms();
               highPriorityNotifications.clearIncomingRideAlert();
               setShowScreenOpenPopup(false);
+              setSkipVoiceForCurrentAlert(false);
               showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
             }}
           />
@@ -5820,11 +5829,13 @@ export default function App() {
           <DriverIncomingAlert
             key={activeIncomingRideForDriver.id}
             request={activeIncomingRideForDriver}
+            skipVoiceAnnouncement={skipVoiceForCurrentAlert}
             onAccept={(reqId) => {
               setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
               sounds.stopAllAlarms();
               highPriorityNotifications.clearIncomingRideAlert();
               setShowScreenOpenPopup(false);
+              setSkipVoiceForCurrentAlert(false);
               handleDriverAcceptRequest(reqId);
             }}
             onDecline={(reqId) => {
@@ -5832,6 +5843,7 @@ export default function App() {
               sounds.stopAllAlarms();
               highPriorityNotifications.clearIncomingRideAlert();
               setShowScreenOpenPopup(false);
+              setSkipVoiceForCurrentAlert(false);
               showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
             }}
           />

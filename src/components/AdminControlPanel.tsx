@@ -143,6 +143,9 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'stands' | 'categories' | 'appearance' | 'quick_chips' | 'drivers' | 'hotlines' | 'places' | 'backup'>('appearance');
   const [isZipDownloading, setIsZipDownloading] = useState(false);
+  const [downloadReadyUrl, setDownloadReadyUrl] = useState<string | null>(null);
+  const [downloadReadySize, setDownloadReadySize] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   // Stand Form Modal State
   const [editingStand, setEditingStand] = useState<Stand | null>(null);
@@ -624,31 +627,69 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     showToast('কনফিগারেশন ব্যাকআপ ডাউনলোড সম্পন্ন হয়েছে!');
   };
 
-  // Full Project Source Code 1-Click ZIP Download (Safe In-App Blob Download)
+  // Full Project Source Code 1-Click ZIP Download (Binary-Validated Safe In-App Blob Downloader)
   const handleDownloadZip = async () => {
     setIsZipDownloading(true);
+    setDownloadError(null);
     try {
-      const res = await fetch(`/safar-gafargaon-clean-source.zip?t=${Date.now()}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`সার্ভার এরর: HTTP ${res.status}`);
-      const blob = await res.blob();
-      if (!blob || blob.size < 1000) {
-        throw new Error('জিপ ফাইল লোড হতে সমস্যা হয়েছে');
+      showToast('⏳ সম্পূর্ণ প্রজেক্ট জিপ মেমোরিতে প্রস্তুত করা হচ্ছে (৩.১৮ MB)...');
+
+      const endpoints = [
+        `/safar-gafargaon-clean-source.zip?t=${Date.now()}`,
+        `/safar-gafargaon-final.zip?t=${Date.now()}`,
+        `/safar-gafargaon-latest.zip?t=${Date.now()}`,
+        `/api/download-zip?t=${Date.now()}`
+      ];
+
+      let validBuffer: ArrayBuffer | null = null;
+      let lastErrMsg = '';
+
+      for (const endpoint of endpoints) {
+        try {
+          const res = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store' });
+          if (res.ok) {
+            const buf = await res.arrayBuffer();
+            // Validate: Must be real zip binary (> 500KB and starts with PK header 0x50, 0x4B)
+            if (buf && buf.byteLength > 500000) {
+              const u8 = new Uint8Array(buf.slice(0, 4));
+              if (u8[0] === 0x50 && u8[1] === 0x4b) {
+                validBuffer = buf;
+                break;
+              }
+            }
+          }
+        } catch (e: any) {
+          lastErrMsg = e?.message || '';
+        }
       }
-      const url = window.URL.createObjectURL(blob);
+
+      if (!validBuffer) {
+        throw new Error(lastErrMsg || 'জিপ ফাইলটি প্রস্তুত করা সম্ভব হয়নি। ফাইল সাইজ অপর্যাপ্ত।');
+      }
+
+      const blob = new Blob([validBuffer], { type: 'application/zip' });
+      const sizeStr = (blob.size / (1024 * 1024)).toFixed(2) + ' MB';
+      const blobUrl = window.URL.createObjectURL(blob);
+      setDownloadReadyUrl(blobUrl);
+      setDownloadReadySize(sizeStr);
+
+      // Trigger automatic save to device
       const link = document.createElement('a');
-      link.href = url;
+      link.href = blobUrl;
       link.download = 'safar-gafargaon-clean-source.zip';
       document.body.appendChild(link);
       link.click();
       setTimeout(() => {
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(link);
-      }, 2000);
-      showToast('🎉 সফলভাবে সম্পূর্ণ ফ্রেশ ও ক্লিন সোর্স কোড জিপ (৩.২৭ MB) ডাউনলোড হয়েছে!');
+        try {
+          document.body.removeChild(link);
+        } catch {}
+      }, 3000);
+
+      showToast(`🎉 সফর সম্পূর্ণ প্রজেক্ট জিপ (${sizeStr}) ডাউনলোড শুরু হয়েছে!`);
     } catch (err: any) {
       console.error('ZIP download error:', err);
-      showToast('সরাসরি ডাউনলোড লিঙ্ক ওপেন করা হচ্ছে...');
-      window.location.href = '/safar-gafargaon-clean-source.zip';
+      setDownloadError(err?.message || 'ডাউনলোড সম্পন্ন করা যায়নি');
+      showToast(`ডাউনলোড সমস্যা: ${err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন'}`);
     } finally {
       setIsZipDownloading(false);
     }
@@ -2419,7 +2460,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </h3>
                   <span className="inline-flex items-center gap-1.5 bg-emerald-600 text-white font-black text-[11px] px-2.5 py-0.5 rounded-full shadow-xs self-start sm:self-auto">
                     <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                    লেটেস্ট ফ্রেশ প্যাকেজ • ৩.৩০ MB
+                    লেটেস্ট ফ্রেশ প্যাকেজ • ৩.১৮ MB
                   </span>
                 </div>
 
@@ -2427,35 +2468,23 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   আপনার সম্পূর্ণ অ্যাপের রিয়্যাক্ট ১৯, টাইপস্ক্রিপ্ট সোর্স কোড, চালক ও যাত্রী ড্যাশবোর্ড, লাইভ ম্যাপ ট্র্যাকিং, সকল আইকন এবং প্রস্তুতকৃত <strong>dist/</strong> প্রোডাকশন বিল্ড ফাইল সহ সম্পূর্ণ অফিশিয়াল ত্রুটিমুক্ত ফ্রেশ জিপ প্যাকেজ।
                 </p>
 
-                {/* Primary Yellow 1-Click Download Button */}
+                {/* Primary Yellow 1-Click Interactive In-Memory Download Button */}
                 <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                  <a
-                    href="/safar-gafargaon-clean-source.zip"
-                    download="safar-gafargaon-clean-source.zip"
-                    onClick={() => {
-                      showToast('🎉 সফর সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ (৩.৩০ MB) ডাউনলোড শুরু হয়েছে!');
-                    }}
-                    className="inline-flex items-center gap-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black px-5 py-3 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition border-2 border-amber-500/80"
-                  >
-                    <Download className="w-4 h-4 text-slate-950" />
-                    <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৩.৩০ MB)</span>
-                  </a>
-
                   <button
                     type="button"
                     onClick={handleDownloadZip}
                     disabled={isZipDownloading}
-                    className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-4 py-3 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition"
+                    className="inline-flex items-center gap-2 bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black px-6 py-3.5 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition border-2 border-amber-500/80 disabled:opacity-60"
                   >
                     {isZipDownloading ? (
                       <>
-                        <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                        <span>ডাউনলোড হচ্ছে...</span>
+                        <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                        <span>মেমোরিতে প্যাকেজ প্রস্তুত হচ্ছে (৩.১৮ MB)...</span>
                       </>
                     ) : (
                       <>
-                        <Download className="w-3.5 h-3.5 text-slate-600" />
-                        <span>বিকল্প ডাউনলোড লিঙ্ক</span>
+                        <Download className="w-4 h-4 text-slate-950" />
+                        <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৩.১৮ MB)</span>
                       </>
                     )}
                   </button>
@@ -2470,6 +2499,38 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     </button>
                   )}
                 </div>
+
+                {/* Download Ready Banner (Appears as soon as Blob is generated in memory) */}
+                {downloadReadyUrl && (
+                  <div className="w-full bg-emerald-50 border-2 border-emerald-500/80 p-3.5 rounded-xl flex flex-wrap items-center justify-between gap-3 animate-fadeIn shadow-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <p className="font-black text-xs text-emerald-950">
+                          সম্পূর্ণ জিপ প্যাকেজ প্রস্তুত ({downloadReadySize || '৩.১৮ MB'})
+                        </p>
+                        <p className="text-[11px] text-emerald-700">
+                          স্বয়ংক্রিয় সেভ শুরু না হয়ে থাকলে নিচের বাটনে ক্লিক করে সরাসরি সেভ করুন:
+                        </p>
+                      </div>
+                    </div>
+                    <a
+                      href={downloadReadyUrl}
+                      download="safar-gafargaon-clean-source.zip"
+                      className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs px-4 py-2.5 rounded-lg shadow-sm transition shrink-0"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>💾 সরাসরি ফাইলে সেভ করুন ({downloadReadySize})</span>
+                    </a>
+                  </div>
+                )}
+
+                {downloadError && (
+                  <div className="text-xs text-rose-700 bg-rose-50 border border-rose-300 p-2.5 rounded-lg flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{downloadError}</span>
+                  </div>
+                )}
 
                 {/* Direct Link Copy Bar */}
                 <div className="bg-white/90 p-2.5 rounded-xl border border-amber-300/80 flex items-center justify-between gap-2 mt-2">
@@ -2487,13 +2548,13 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     onClick={() => {
                       if (typeof window !== 'undefined') {
                         navigator.clipboard.writeText(`${window.location.origin}/safar-gafargaon-clean-source.zip`);
-                        showToast('📋 সরাসরি জিপ ডাউনলোড লিঙ্ক কপি করা হয়েছে!');
+                        showToast('📋 সরাসরি জিপ লিঙ্ক কপি করা হয়েছে!');
                       }
                     }}
-                    className="px-2.5 py-1 bg-amber-200 hover:bg-amber-300 text-slate-900 rounded-lg text-xs font-bold shrink-0 transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                    className="inline-flex items-center gap-1 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition shrink-0"
                   >
-                    <Copy className="w-3 h-3 text-slate-800" />
-                    <span>কপি করুন</span>
+                    <Copy className="w-3 h-3" />
+                    <span>কপি</span>
                   </button>
                 </div>
               </div>

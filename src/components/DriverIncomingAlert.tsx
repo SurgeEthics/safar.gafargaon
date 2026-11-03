@@ -19,12 +19,14 @@ export interface DriverIncomingAlertProps {
   } | null;
   onAccept: (requestId: string) => void;
   onDecline: (requestId: string) => void;
+  skipVoiceAnnouncement?: boolean;
 }
 
 export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
   request,
   onAccept,
-  onDecline
+  onDecline,
+  skipVoiceAnnouncement = false
 }) => {
   const [secondsRemaining, setSecondsRemaining] = useState(25);
   const [isDismissed, setIsDismissed] = useState(false);
@@ -73,8 +75,9 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       passengerName: request.passengerName
     });
 
-    // 1. Start with clear, soft & loud Bengali male voice announcement:
-    // "'সফর' অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
+    // 1. Audio Sequence:
+    // If opened from notification, skip voice announcement and continue vibration + Duff alarm immediately.
+    // If fresh alert, speak loud clear male voice alert -> wait 1 sec pause -> start Duff rhythm alarm.
     let hasStartedDaf = false;
     const startDafRhythm = () => {
       if (hasStartedDaf) return;
@@ -87,15 +90,20 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       }
     };
 
-    sounds.speakDriverVoiceAlert(() => {
-      // Transition cleanly into authentic repeating loud Arabic Daf alarm ONLY after the voice finishes
+    if (skipVoiceAnnouncement) {
+      // Direct Duff alarm & continuous vibration when opened from notification
       startDafRhythm();
-    });
+    } else {
+      // Initial male voice alert -> 1.0s pause -> Duff alarm rhythm
+      sounds.speakDriverVoiceAlert(() => {
+        startDafRhythm();
+      });
 
-    // Safety fallback: ensure Duff drum begins ringing if device has no TTS or speech hangs (7.0s)
-    voiceTimeoutRef.current = setTimeout(() => {
-      startDafRhythm();
-    }, 7000);
+      // Safety fallback: ensure Duff drum begins ringing if audio is blocked (8.2s)
+      voiceTimeoutRef.current = setTimeout(() => {
+        startDafRhythm();
+      }, 8200);
+    }
 
     // 2. 25-second countdown timer
     countdownIntervalRef.current = setInterval(() => {

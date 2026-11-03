@@ -324,12 +324,12 @@ class SoundEffects {
         });
       }
 
-      // Safety timeout (6.5s) to guarantee pause + Duff alarm triggers
+      // Safety timeout (8.0s) to guarantee pause + Duff alarm triggers
       setTimeout(() => {
         if (!hasFinished) {
           finishAndPause();
         }
-      }, 6500);
+      }, 8000);
 
       return true;
     } catch {

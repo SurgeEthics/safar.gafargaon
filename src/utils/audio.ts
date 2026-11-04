@@ -198,6 +198,47 @@ class SoundEffects {
     } catch {}
 
     // 4. Cancel mobile vibration immediately
+    this.stopAlertVibration();
+  }
+
+  private alertVibrationInterval: any = null;
+  private alertVibrationTimeout: any = null;
+
+  /**
+   * Continuous repeating rhythmic haptic vibration across the full 25s alert duration.
+   * Completely rock-solid on Android Chrome and mobile PWAs.
+   */
+  startAlertVibration(durationMs = 25000) {
+    this.stopAlertVibration();
+    if (typeof window === 'undefined' || !('vibrate' in navigator)) return;
+
+    const pattern = [500, 150, 500, 150, 600];
+    try {
+      navigator.vibrate(pattern);
+    } catch {}
+
+    this.alertVibrationInterval = setInterval(() => {
+      try {
+        if ('vibrate' in navigator) {
+          navigator.vibrate(pattern);
+        }
+      } catch {}
+    }, 2000);
+
+    this.alertVibrationTimeout = setTimeout(() => {
+      this.stopAlertVibration();
+    }, durationMs);
+  }
+
+  stopAlertVibration() {
+    if (this.alertVibrationInterval) {
+      clearInterval(this.alertVibrationInterval);
+      this.alertVibrationInterval = null;
+    }
+    if (this.alertVibrationTimeout) {
+      clearTimeout(this.alertVibrationTimeout);
+      this.alertVibrationTimeout = null;
+    }
     try {
       if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
         navigator.vibrate(0);
@@ -338,12 +379,11 @@ class SoundEffects {
         this.alarmGain.gain.setValueAtTime(1.8, ctx.currentTime);
       }
 
+      // Continuous rhythmic vibration during the entire 25s alert period
+      // (Rhythmic pattern persists seamlessly into the Duff drum rhythm)
       this.isAlarmRinging = true;
       const now = ctx.currentTime;
       const targetNode = this.getDestinationNode(ctx);
-
-      // Mobile haptic vibration sync
-      this.triggerVibration([350, 120, 150, 100, 350]);
 
       // Rhythmic strokes: DUM (0.00s) -> TAK (0.22s) -> TAK (0.38s) -> DUM (0.58s) -> TAK (0.80s)
       this.playDafDum(ctx, targetNode, now, 1.0);
@@ -360,7 +400,7 @@ class SoundEffects {
    * Loud, clear, dignified Bangladeshi Bengali MALE voice announcement for drivers:
    * "সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
    * Strictly uses authentic male voice studio recording '/driver_voice_male.mp3'.
-   * Followed by a strict 1.0 second pause of silence before the loud Arabic Daf drum rhythm alarm begins!
+   * Immediately transitions into the loud Arabic Daf drum rhythm alarm without delay.
    * Zero robotic tone and zero female voice!
    */
   speakDriverVoiceAlert(onEnd?: () => void): boolean {
@@ -373,11 +413,11 @@ class SoundEffects {
       this.stopVoiceAndPause();
       this.isVoicePlaying = true;
 
-      // Trigger loud clear speech haptic vibration
-      this.triggerVibration([500, 200, 500, 200, 500]);
+      // Start full 25s continuous rhythmic vibration
+      this.startAlertVibration(25000);
 
       let hasFinished = false;
-      const finishAndPause = () => {
+      const finishAndTriggerAlarm = () => {
         if (hasFinished) return;
         hasFinished = true;
         this.isVoicePlaying = false;
@@ -387,22 +427,16 @@ class SoundEffects {
           this.currentVoiceSafetyTimer = null;
         }
 
-        // Distinct rhythmic vibration pulse during the 1.0 second pause
-        this.triggerVibration([300, 200, 300]);
-
-        // Exactly 1.0 second (1000ms) pause after speech completes before Duff drum rings
-        this.pauseTimeout = setTimeout(() => {
-          this.pauseTimeout = null;
-          if (onEnd) onEnd();
-        }, 1000);
+        // Direct immediate start of Arabic Daf alarm (0s delay, as required)
+        if (onEnd) onEnd();
       };
 
-      // Safety timeout: 5.5s (voice duration is ~4.68s) to guarantee 1s pause + Duff alarm triggers
+      // Safety timeout: 6.5s to guarantee Duff alarm triggers if audio is interrupted
       this.currentVoiceSafetyTimer = setTimeout(() => {
         if (!hasFinished) {
-          finishAndPause();
+          finishAndTriggerAlarm();
         }
-      }, 5500);
+      }, 6500);
 
       const ctx = this.getContext();
       if (ctx) {
@@ -421,7 +455,7 @@ class SoundEffects {
       this.currentVoiceAudio = audio;
 
       audio.onended = () => {
-        finishAndPause();
+        finishAndTriggerAlarm();
       };
       audio.onerror = () => {
         // Fallback to Web Audio if HTML5 audio fails
@@ -434,7 +468,7 @@ class SoundEffects {
             source.connect(gain);
             gain.connect(this.masterGain || ctx.destination);
             source.onended = () => {
-              finishAndPause();
+              finishAndTriggerAlarm();
             };
             this.currentWebAudioSource = source;
             source.start(0);
@@ -442,7 +476,7 @@ class SoundEffects {
             return;
           } catch (e) {}
         }
-        finishAndPause();
+        finishAndTriggerAlarm();
       };
 
       const playPromise = audio.play();
@@ -458,7 +492,7 @@ class SoundEffects {
               source.connect(gain);
               gain.connect(this.masterGain || ctx.destination);
               source.onended = () => {
-                finishAndPause();
+                finishAndTriggerAlarm();
               };
               this.currentWebAudioSource = source;
               source.start(0);

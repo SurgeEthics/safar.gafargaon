@@ -147,7 +147,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [downloadReadyUrl, setDownloadReadyUrl] = useState<string | null>(null);
   const [downloadReadySize, setDownloadReadySize] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.৩৮ MB');
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.৩৪ MB');
 
   useEffect(() => {
     // Dynamically fetch accurate zip file size on mount

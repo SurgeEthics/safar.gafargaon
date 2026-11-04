@@ -52,12 +52,12 @@ class HighPriorityNotificationEngine {
     const body = `📍 পিকআপ: ${request.pickupPoint}\n🎯 গন্তব্য: ${request.destination}\n💰 নির্ধারিত ভাড়া: ৳${request.estFare} (দূরত্ব: ${request.distanceKm} কিমি)`;
     const options: any = {
       body,
-      icon: '/pwa-192x192.png',
-      badge: '/pwa-192x192.png',
+      icon: '/safar-logo.png',
+      badge: '/notification-badge.png',
       tag: this.activeNotificationTag,
       renotify: true,
       requireInteraction: true,
-      silent: false,
+      silent: true,
       vibrate: [600, 200, 600, 200, 800, 300, 600],
       data: {
         requestId: request.id,
@@ -89,11 +89,12 @@ class HighPriorityNotificationEngine {
       if ('Notification' in window && Notification.permission === 'granted') {
         const notif = new Notification(title, {
           body,
-          icon: '/pwa-192x192.png',
-          badge: '/pwa-192x192.png',
+          icon: '/safar-logo.png',
+          badge: '/notification-badge.png',
           tag: this.activeNotificationTag,
-          requireInteraction: true
-        });
+          requireInteraction: true,
+          silent: true
+        } as any);
         notif.onclick = () => {
           window.focus();
           notif.close();

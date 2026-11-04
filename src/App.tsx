@@ -2393,13 +2393,13 @@ export default function App() {
       homeLocation: '',
       emergencyContact: ''
     });
-    setPassengerLoginPhone('');
-    setPassengerAuthError(null);
-    setTripHistory([]);
+    if (passengerProfile.phone) {
+      const clean = passengerProfile.phone.replace(/[^0-9]/g, '');
+      try {
+        localStorage.setItem(`safar_passenger_history_${clean}`, JSON.stringify(tripHistory));
+      } catch {}
+    }
     try {
-      localStorage.removeItem('safar_trip_history_v7');
-      localStorage.removeItem('safar_trip_history_v6');
-      localStorage.removeItem('safar_trip_history_v5');
       localStorage.removeItem('safar_passenger_profile_v5');
     } catch {}
     showAdminToastMessage('যাত্রী প্রোফাইল থেকে লগআউট সম্পন্ন হয়েছে');
@@ -2529,6 +2529,31 @@ export default function App() {
     } catch {}
   }, [driverProfile]);
 
+  // Dynamic Driver Reviews & Ratings (Loaded from LocalStorage & Firestore)
+  const [driverReviews, setDriverReviews] = useState<{
+    id: string;
+    driverId: string;
+    driverPhone?: string;
+    rating: number;
+    tags?: string[];
+    comment?: string;
+    passengerName?: string;
+    date: string;
+  }[]>(() => {
+    try {
+      const saved = localStorage.getItem('safar_driver_reviews_v2');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+  const [showDriverReviewsModal, setShowDriverReviewsModal] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('safar_driver_reviews_v2', JSON.stringify(driverReviews));
+    } catch {}
+  }, [driverReviews]);
+
   const [driverLoginPhoneInput, setDriverLoginPhoneInput] = useState('');
   const [driverLoginError, setDriverLoginError] = useState<string | null>(null);
 
@@ -2615,6 +2640,21 @@ export default function App() {
     const isTasnimul = clean.endsWith('01304841550') || clean.endsWith('304841550') || driverName.toUpperCase().includes('TASNIMUL');
     const resolvedPhoto = driverData.driverPhoto || driverData.photoUrl || (isTasnimul ? '/assets/drivers/tasnimul_kabeer.png' : '');
 
+    let savedTodayTrips = driverTotalTrips;
+    let savedTodayEarnings = driverTotalTrips * 40;
+    try {
+      const localStats = localStorage.getItem(`safar_driver_stats_${clean}`);
+      if (localStats) {
+        const parsed = JSON.parse(localStats);
+        if (typeof parsed.todayTrips === 'number' && parsed.todayTrips > 0) {
+          savedTodayTrips = parsed.todayTrips;
+        }
+        if (typeof parsed.todayEarnings === 'number' && parsed.todayEarnings > 0) {
+          savedTodayEarnings = parsed.todayEarnings;
+        }
+      }
+    } catch {}
+
     const active: typeof driverProfile = {
       id: driverDocId || `driver-${clean}`,
       name: driverName,
@@ -2625,8 +2665,8 @@ export default function App() {
       standName: driverStand,
       category: driverCategory,
       rating: driverRating,
-      todayTrips: driverTotalTrips,
-      todayEarnings: driverTotalTrips * 80,
+      todayTrips: savedTodayTrips,
+      todayEarnings: savedTodayEarnings,
       driverPhoto: resolvedPhoto,
       isRegistered: true
     };
@@ -2641,6 +2681,11 @@ export default function App() {
     setDriverProfile(active);
     try {
       localStorage.setItem('safar_active_driver_profile_v6', JSON.stringify(active));
+      localStorage.setItem(`safar_driver_stats_${clean}`, JSON.stringify({
+        todayTrips: savedTodayTrips,
+        todayEarnings: savedTodayEarnings,
+        rating: driverRating
+      }));
     } catch {}
     setDriverLoginError(null);
     setDriverLoginPhoneInput('');
@@ -2649,6 +2694,17 @@ export default function App() {
   };
 
   const handleDriverLogout = () => {
+    // Save driver stats to persistent local storage before clearing session
+    if (driverProfile.phone) {
+      const clean = driverProfile.phone.replace(/[^0-9]/g, '');
+      try {
+        localStorage.setItem(`safar_driver_stats_${clean}`, JSON.stringify({
+          todayTrips: driverProfile.todayTrips || 0,
+          todayEarnings: driverProfile.todayEarnings || 0,
+          rating: driverProfile.rating || 5.0
+        }));
+      } catch {}
+    }
     setDriverProfile({
       id: '',
       name: '',
@@ -4957,31 +5013,78 @@ export default function App() {
     const alreadyCounted = completedDriverTripIdsRef.current[tripId];
     completedDriverTripIdsRef.current[tripId] = true;
 
+    const matchedReq = passengerRequests.find(r => r.id === tripId);
+    const finalFare = (fare && fare > 0) ? fare : (matchedReq?.estFare || 40);
+
     try {
       await updateDoc(doc(db, 'ride_requests', tripId), {
         status: 'completed',
         completedAt: new Date().toISOString()
       });
-      if (!alreadyCounted) {
-        setDriverProfile(prev => ({
-          ...prev,
-          todayTrips: (prev.todayTrips || 0) + 1,
-          todayEarnings: (prev.todayEarnings || 0) + (fare || 40)
-        }));
-      }
-      setPassengerRequests(prev => prev.filter(r => r.id !== tripId));
-      showAdminToastMessage(`🎉 ট্রিপ সফলভাবে সম্পন্ন হয়েছে! ৳ ${fare} ভাড়া আয় হয়েছে।`);
     } catch (err) {
       console.warn('Failed to complete trip in Firestore:', err);
-      if (!alreadyCounted) {
-        setDriverProfile(prev => ({
-          ...prev,
-          todayTrips: (prev.todayTrips || 0) + 1,
-          todayEarnings: (prev.todayEarnings || 0) + (fare || 40)
-        }));
-      }
-      setPassengerRequests(prev => prev.filter(r => r.id !== tripId));
     }
+
+    if (!alreadyCounted) {
+      const newTrips = (driverProfile.todayTrips || 0) + 1;
+      const newEarnings = (driverProfile.todayEarnings || 0) + finalFare;
+      setDriverProfile(prev => ({
+        ...prev,
+        todayTrips: newTrips,
+        todayEarnings: newEarnings
+      }));
+      const cleanPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+      if (cleanPhone) {
+        try {
+          localStorage.setItem(`safar_driver_stats_${cleanPhone}`, JSON.stringify({
+            todayTrips: newTrips,
+            todayEarnings: newEarnings,
+            rating: driverProfile.rating || 5.0
+          }));
+        } catch {}
+      }
+    }
+
+    // Also record in passenger trip history
+    if (matchedReq) {
+      const tripDocId = `trip-${tripId}`;
+      const newTripRecord: PassengerTripRecord = {
+        id: tripDocId,
+        date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+        pickupPoint: matchedReq.pickupPoint || 'শুরুর স্থান',
+        destination: matchedReq.destination || 'গন্তব্য স্থান',
+        driverName: driverProfile.name || 'নিবন্ধিত চালক',
+        driverPhone: driverProfile.phone || '',
+        vehicleCategory: driverProfile.category || 'bike',
+        vehicleModel: driverProfile.vehicleModel || 'মোটরসাইকেল',
+        plateNumber: driverProfile.plateNumber || '',
+        fare: finalFare,
+        status: 'সম্পন্ন',
+        ratingGiven: 5.0
+      };
+      setTripHistory(prev => {
+        if (prev.some(t => t.id === tripDocId || (t as any).requestId === tripId)) return prev;
+        return [newTripRecord, ...prev];
+      });
+      if (passengerProfile.phone) {
+        setDoc(doc(db, 'users', passengerProfile.phone, 'trips', tripDocId), {
+          ...newTripRecord,
+          createdAt: new Date().toISOString()
+        }).catch(() => {});
+      }
+    }
+
+    // Clear active booking if it corresponds to this completed trip
+    if (activeBooking && ((activeBooking as any).requestId === tripId || activeBooking.id === tripId)) {
+      setActiveBooking(null);
+      try {
+        localStorage.removeItem('safar_active_booking_v2');
+        localStorage.removeItem('safar_my_ride_request_id');
+      } catch {}
+    }
+
+    setPassengerRequests(prev => prev.filter(r => r.id !== tripId));
+    showAdminToastMessage(`🎉 ট্রিপ সফলভাবে সম্পন্ন হয়েছে! ৳ ${finalFare} ভাড়া আয় হয়েছে।`);
   };
 
   // Driver Cancels an Accepted Trip
@@ -5856,28 +5959,56 @@ export default function App() {
                     }).catch(() => {});
                   }
 
+                  // Also update driver's stats if matching driver is logged in
+                  const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+                  const reqDriverPhone = (matchedDriver.phone || activeBooking.driver.phone || '').replace(/[^0-9]/g, '');
+                  if (driverProfile.isRegistered && (driverProfile.id === activeBooking.driver.id || cleanDriverPhone === reqDriverPhone)) {
+                    const newTrips = (driverProfile.todayTrips || 0) + 1;
+                    const newEarnings = (driverProfile.todayEarnings || 0) + finalFare;
+                    setDriverProfile(prev => ({
+                      ...prev,
+                      todayTrips: newTrips,
+                      todayEarnings: newEarnings
+                    }));
+                    if (cleanDriverPhone) {
+                      try {
+                        localStorage.setItem(`safar_driver_stats_${cleanDriverPhone}`, JSON.stringify({
+                          todayTrips: newTrips,
+                          todayEarnings: newEarnings,
+                          rating: driverProfile.rating || 5.0
+                        }));
+                      } catch {}
+                    }
+                  }
+
+                  // Remove from pending driver queue
+                  setPassengerRequests(prev => prev.filter(r => r.id !== reqId));
+
                   showAdminToastMessage(`ট্রিপ সম্পন্ন হয়েছে! নির্ধারিত ভাড়া: ৳ ${finalFare}`);
                 }
               }}
-              onSubmitReview={(driverId, rating) => {
+              onSubmitReview={(driverId, rating, tags, comment) => {
+                const newReview = {
+                  id: `rev-${Date.now()}`,
+                  driverId: driverId,
+                  rating: rating || 5.0,
+                  tags: tags || [],
+                  comment: comment || '',
+                  passengerName: passengerProfile.name || 'সম্মানিত যাত্রী',
+                  date: new Date().toLocaleDateString('bn-BD', { day: 'numeric', month: 'short', year: 'numeric' })
+                };
+                setDriverReviews(prev => [newReview, ...prev]);
+
                 setDrivers(prev => prev.map(d => {
                   if (d.id === driverId) {
-                    const newTotal = (d.totalTrips || 10) + 1;
+                    const newTotal = (d.totalTrips || 0) + 1;
                     const newRating = Number(((d.rating * (newTotal - 1) + rating) / newTotal).toFixed(1));
                     return { ...d, rating: newRating, totalTrips: newTotal };
                   }
                   return d;
                 }));
-                setActiveBooking(null);
-                setPickupCoords(null);
-                setDestCoords(null);
-                setPassengerPickup('');
-                setPassengerDestination('');
-                try {
-                  localStorage.removeItem('safar_active_booking_v2');
-                  localStorage.removeItem('safar_my_ride_request_id');
-                } catch {}
-                showAdminToastMessage('আপনার মূল্যবান ৫-স্টার রিভিউ ও রেটিং জমা নেওয়া হয়েছে!');
+
+                showAdminToastMessage(`আপনার মূল্যবান ${toBengaliNumber(rating)}-স্টার রিভিউ ও রেটিং জমা হয়েছে!`);
               }}
               onDismissCockpit={() => {
                 setActiveBooking(null);
@@ -6538,13 +6669,35 @@ export default function App() {
                       <span className="text-[10.5px] text-slate-500 block">আজকের আনুমানিক আয়</span>
                       <span className="font-extrabold text-xs text-emerald-800">৳ {driverProfile.todayEarnings}</span>
                     </div>
-                    <div className="bg-white/90 p-2 rounded-xl border border-slate-200">
-                      <span className="text-[10.5px] text-slate-500 block">ড্রাইভার রেটিং</span>
-                      <span className="font-bold text-xs text-amber-600 flex items-center gap-0.5">
-                        <Star className="w-3 h-3 fill-amber-500" />
-                        {driverProfile.rating} (৫৫+ যাত্রী রিভিউ)
-                      </span>
-                    </div>
+                    {(() => {
+                      const cleanPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+                      const matchingReviews = driverReviews.filter(r => 
+                        (driverProfile.id && r.driverId === driverProfile.id) ||
+                        (cleanPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanPhone) ||
+                        (cleanPhone && r.driverId && r.driverId.replace(/[^0-9]/g, '') === cleanPhone)
+                      );
+                      const reviewCount = matchingReviews.length;
+                      const avgRating = reviewCount > 0
+                        ? Number((matchingReviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount).toFixed(1))
+                        : (driverProfile.rating || 5.0);
+
+                      return (
+                        <div 
+                          className="bg-white/90 p-2 rounded-xl border border-slate-200 cursor-pointer hover:bg-amber-50/70 transition shadow-2xs group"
+                          onClick={() => setShowDriverReviewsModal(true)}
+                          title="ট্যাপ করে যাত্রীদের লাইভ রিভিউ ও রেটিং দেখুন"
+                        >
+                          <span className="text-[10.5px] text-slate-500 block">ড্রাইভার রেটিং</span>
+                          <span className="font-bold text-xs text-amber-600 flex items-center gap-1">
+                            <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                            <span>{toBengaliNumber(avgRating.toFixed(1))}</span>
+                            <span className="text-[10px] text-slate-600 font-bold group-hover:text-amber-700">
+                              ({reviewCount > 0 ? `${toBengaliNumber(reviewCount)} টি রিভিউ` : 'নতুন রেটিং'})
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -10823,6 +10976,131 @@ export default function App() {
               >
                 <Check className="w-4 h-4" />
                 <span>যাচাই ও লগইন</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 17. DRIVER REVIEWS & RATINGS MODAL */}
+      {showDriverReviewsModal && (
+        <div
+          className="fixed inset-0 z-[999999] bg-black/75 backdrop-blur-xs flex items-center justify-center p-3"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl border border-amber-300 text-slate-900 animate-in fade-in zoom-in-95 space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
+                  <Star className="w-5 h-5 fill-amber-500 text-amber-500" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-slate-900 leading-tight">
+                    যাত্রীদের লাইভ রিভিউ ও রেটিং
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {driverProfile.name || 'চালকের প্রোফাইল'} • {driverProfile.vehicleModel || 'বাহন'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDriverReviewsModal(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scorecard */}
+            {(() => {
+              const cleanPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+              const matchingReviews = driverReviews.filter(r => 
+                (driverProfile.id && r.driverId === driverProfile.id) ||
+                (cleanPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanPhone) ||
+                (cleanPhone && r.driverId && r.driverId.replace(/[^0-9]/g, '') === cleanPhone)
+              );
+              const count = matchingReviews.length;
+              const avg = count > 0
+                ? (matchingReviews.reduce((sum, r) => sum + r.rating, 0) / count).toFixed(1)
+                : (driverProfile.rating || 5.0).toFixed(1);
+
+              return (
+                <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 text-center shrink-0">
+                  <div className="flex items-center justify-center gap-1.5 mb-1">
+                    <Star className="w-6 h-6 fill-amber-500 text-amber-500" />
+                    <span className="text-2xl font-black text-slate-900">{toBengaliNumber(avg)}</span>
+                    <span className="text-xs text-slate-500 font-bold">/ ৫.০</span>
+                  </div>
+                  <p className="text-xs text-slate-700 font-semibold">
+                    সর্বমোট প্রাপ্ত যাত্রী ফিডব্যাক: <b>{toBengaliNumber(count)} টি</b>
+                  </p>
+                </div>
+              );
+            })()}
+
+            {/* Reviews List */}
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 min-h-[140px]">
+              {(() => {
+                const cleanPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+                const matchingReviews = driverReviews.filter(r => 
+                  (driverProfile.id && r.driverId === driverProfile.id) ||
+                  (cleanPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanPhone) ||
+                  (cleanPhone && r.driverId && r.driverId.replace(/[^0-9]/g, '') === cleanPhone)
+                );
+
+                if (matchingReviews.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-slate-400 space-y-2">
+                      <p className="text-xs font-semibold">এখনও কোনো যাত্রী রিভিউ জমা পড়েনি।</p>
+                      <p className="text-[11px] text-slate-400">যাত্রী রাইড সম্পন্ন করে রেটিং দিলে তা এখানে স্বয়ংক্রিয়ভাবে যুক্ত হবে।</p>
+                    </div>
+                  );
+                }
+
+                return matchingReviews.map((rev) => (
+                  <div key={rev.id} className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-800">{rev.passengerName || 'সম্মানিত যাত্রী'}</span>
+                      <div className="flex items-center gap-0.5 text-amber-500">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`w-3.5 h-3.5 ${i < rev.rating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    {rev.tags && rev.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {rev.tags.map((t, idx) => (
+                          <span key={idx} className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {rev.comment && (
+                      <p className="text-xs text-slate-600 italic bg-white p-2 rounded-xl border border-slate-100">
+                        "{rev.comment}"
+                      </p>
+                    )}
+                    <div className="text-[10px] text-slate-400 text-right">
+                      {rev.date}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowDriverReviewsModal(false)}
+                className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs cursor-pointer transition"
+              >
+                বন্ধ করুন
               </button>
             </div>
           </div>

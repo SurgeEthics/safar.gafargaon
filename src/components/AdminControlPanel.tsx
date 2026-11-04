@@ -632,7 +632,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     setIsZipDownloading(true);
     setDownloadError(null);
     try {
-      showToast('⏳ সম্পূর্ণ প্রজেক্ট জিপ মেমোরিতে প্রস্তুত করা হচ্ছে (৩.১৮ MB)...');
+      showToast('⏳ সম্পূর্ণ প্রজেক্ট জিপ মেমোরিতে প্রস্তুত করা হচ্ছে (৩.০৮ MB)...');
 
       const endpoints = [
         `/safar-gafargaon-clean-source.zip?t=${Date.now()}`,
@@ -2460,7 +2460,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </h3>
                   <span className="inline-flex items-center gap-1.5 bg-emerald-600 text-white font-black text-[11px] px-2.5 py-0.5 rounded-full shadow-xs self-start sm:self-auto">
                     <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                    লেটেস্ট ফ্রেশ প্যাকেজ • ৩.১৮ MB
+                    লেটেস্ট ফ্রেশ প্যাকেজ • ৩.০৮ MB
                   </span>
                 </div>
 
@@ -2479,12 +2479,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     {isZipDownloading ? (
                       <>
                         <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                        <span>মেমোরিতে প্যাকেজ প্রস্তুত হচ্ছে (৩.১৮ MB)...</span>
+                        <span>মেমোরিতে প্যাকেজ প্রস্তুত হচ্ছে (৩.০৮ MB)...</span>
                       </>
                     ) : (
                       <>
                         <Download className="w-4 h-4 text-slate-950" />
-                        <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৩.১৮ MB)</span>
+                        <span>📥 সম্পূর্ণ ফ্রেশ প্রজেক্ট জিপ ডাউনলোড করুন (৩.০৮ MB)</span>
                       </>
                     )}
                   </button>
@@ -2507,7 +2507,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                       <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
                       <div>
                         <p className="font-black text-xs text-emerald-950">
-                          সম্পূর্ণ জিপ প্যাকেজ প্রস্তুত ({downloadReadySize || '৩.১৮ MB'})
+                          সম্পূর্ণ জিপ প্যাকেজ প্রস্তুত ({downloadReadySize || '৩.০৮ MB'})
                         </p>
                         <p className="text-[11px] text-emerald-700">
                           স্বয়ংক্রিয় সেভ শুরু না হয়ে থাকলে নিচের বাটনে ক্লিক করে সরাসরি সেভ করুন:

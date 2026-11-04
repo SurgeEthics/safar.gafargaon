@@ -14,7 +14,23 @@ class SoundEffects {
   private activeSources: (AudioNode & { stop?: (when?: number) => void })[] = [];
   private isAlarmRinging = false;
   private currentVoiceAudio: HTMLAudioElement | null = null;
+  private preloadedVoiceAudio: HTMLAudioElement | null = null;
   private pauseTimeout: any = null;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      this.preloadVoiceAlert();
+      const autoUnlock = () => {
+        this.unlockAudio();
+        window.removeEventListener('click', autoUnlock);
+        window.removeEventListener('touchstart', autoUnlock);
+        window.removeEventListener('pointerdown', autoUnlock);
+      };
+      window.addEventListener('click', autoUnlock, { once: true, passive: true });
+      window.addEventListener('touchstart', autoUnlock, { once: true, passive: true });
+      window.addEventListener('pointerdown', autoUnlock, { once: true, passive: true });
+    }
+  }
 
   private getContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -268,9 +284,39 @@ class SoundEffects {
   }
 
   /**
-   * Loud, clear, dignified human male voice announcement in Bengali:
-   * "সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
-   * Followed by a strict 1-second pause before the loud Arabic Daf drum rhythm alarm begins!
+   * Explicitly preloads the Bengali male voice alert audio into browser memory.
+   * Eliminates any network latency or decoding lag when an incoming ride arrives.
+   */
+  preloadVoiceAlert(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      if (!this.preloadedVoiceAudio) {
+        this.preloadedVoiceAudio = new Audio('/driver_voice_male.mp3');
+        this.preloadedVoiceAudio.preload = 'auto';
+        this.preloadedVoiceAudio.volume = 1.0;
+        this.preloadedVoiceAudio.load();
+      }
+    } catch {}
+  }
+
+  /**
+   * Preload and unlock audio context on user gesture (click/touch).
+   */
+  unlockAudio(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      const ctx = this.getContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      this.preloadVoiceAlert();
+    } catch {}
+  }
+
+  /**
+   * Loud, authentic, natural human male voice announcement in Bengali (Microsoft Pradeep Neural):
+   * "সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।" (Duration: 5.01s)
+   * Followed by a strict 1.0-second pause before the loud Arabic Daf drum rhythm alarm begins!
    */
   speakDriverVoiceAlert(onEnd?: () => void): boolean {
     if (typeof window === 'undefined') {
@@ -279,6 +325,7 @@ class SoundEffects {
     }
 
     try {
+      // 1. Hard stop any previous voice audio
       if (this.currentVoiceAudio) {
         try {
           this.currentVoiceAudio.pause();
@@ -291,6 +338,14 @@ class SoundEffects {
         clearTimeout(this.pauseTimeout);
         this.pauseTimeout = null;
       }
+
+      // Also ensure AudioContext is warm
+      try {
+        const ctx = this.getContext();
+        if (ctx && ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+      } catch {}
 
       let hasFinished = false;
       const finishAndPause = () => {
@@ -305,85 +360,39 @@ class SoundEffects {
         }, 1000);
       };
 
-      // 1. Play high-fidelity male Bengali announcement file
-      const audio = new Audio('/driver_voice_male.mp3');
+      // 2. Play high-fidelity authentic male Bengali announcement file
+      const audio = this.preloadedVoiceAudio || new Audio('/driver_voice_male.mp3');
+      audio.currentTime = 0;
       audio.volume = 1.0;
       this.currentVoiceAudio = audio;
 
       audio.onended = finishAndPause;
       audio.onerror = () => {
-        // Fallback to Web Speech if audio loading fails
-        this.speakDriverVoiceWebSpeechFallback(onEnd);
+        // If file fails, transition straight to 1.0s pause + Duff alarm (NEVER play robotic female TTS)
+        finishAndPause();
       };
 
       const playPromise = audio.play();
       if (playPromise !== undefined) {
-        playPromise.catch(() => {
-          // If browser blocked audio without user gesture, try Web Speech fallback
-          this.speakDriverVoiceWebSpeechFallback(onEnd);
+        playPromise.catch((err: unknown) => {
+          console.warn('Male audio autoplay blocked by browser policy:', err);
+          // If browser blocked audio without user gesture, proceed to 1.0s pause + Duff
+          finishAndPause();
         });
       }
 
-      // Safety timeout (8.0s) to guarantee pause + Duff alarm triggers
+      // Safety timeout (5.8s) to guarantee 1.0s pause + Duff alarm triggers even on slow decoders
       setTimeout(() => {
         if (!hasFinished) {
           finishAndPause();
         }
-      }, 8000);
+      }, 5800);
 
       return true;
     } catch {
-      return this.speakDriverVoiceWebSpeechFallback(onEnd);
-    }
-  }
-
-  /**
-   * Web Speech API fallback for device environments where audio asset is unreachable
-   */
-  private speakDriverVoiceWebSpeechFallback(onEnd?: () => void): boolean {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      if (onEnd) onEnd();
-      return false;
-    }
-
-    try {
-      window.speechSynthesis.cancel();
-      const text = 'সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।';
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'bn-BD';
-      utterance.rate = 0.92;
-      utterance.pitch = 0.85; // Deep masculine tone
-      utterance.volume = 1.0;
-
-      const voices = window.speechSynthesis.getVoices();
-      const maleBnVoice = voices.find(v => 
-        (v.lang && (v.lang.toLowerCase().startsWith('bn') || v.lang.toLowerCase().includes('bd'))) &&
-        (v.name.toLowerCase().includes('male') || !v.name.toLowerCase().includes('female'))
-      ) || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('bn'));
-
-      if (maleBnVoice) {
-        utterance.voice = maleBnVoice;
+      if (onEnd) {
+        setTimeout(onEnd, 1000);
       }
-
-      let finished = false;
-      const done = () => {
-        if (!finished) {
-          finished = true;
-          this.pauseTimeout = setTimeout(() => {
-            this.pauseTimeout = null;
-            if (onEnd) onEnd();
-          }, 1000);
-        }
-      };
-
-      utterance.onend = done;
-      utterance.onerror = done;
-      setTimeout(() => { if (!finished) done(); }, 6000);
-
-      window.speechSynthesis.speak(utterance);
-      return true;
-    } catch {
-      if (onEnd) onEnd();
       return false;
     }
   }

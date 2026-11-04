@@ -32,20 +32,10 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
   const [isDismissed, setIsDismissed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const ringIntervalRef = useRef<any>(null);
   const countdownIntervalRef = useRef<any>(null);
-  const voiceTimeoutRef = useRef<any>(null);
 
   // Clear all running timers and stop Daf alarm sound & speech
   const cleanupTimersAndAudio = () => {
-    if (voiceTimeoutRef.current) {
-      clearTimeout(voiceTimeoutRef.current);
-      voiceTimeoutRef.current = null;
-    }
-    if (ringIntervalRef.current) {
-      clearInterval(ringIntervalRef.current);
-      ringIntervalRef.current = null;
-    }
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
@@ -65,47 +55,7 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
     setIsProcessing(false);
     setSecondsRemaining(25);
 
-    // 0. Trigger High-Priority OS/Mobile & Service Worker Notification with continuous vibration (works with screen off)
-    highPriorityNotifications.showIncomingRideAlert({
-      id: request.id,
-      pickupPoint: request.pickupPoint,
-      destination: request.destination,
-      estFare: request.estFare,
-      distanceKm: request.distanceKm,
-      passengerName: request.passengerName
-    });
-
-    // 1. Audio Sequence:
-    // If opened from notification, skip voice announcement and continue vibration + Duff alarm immediately.
-    // If fresh alert, speak loud clear male voice alert -> wait 1 sec pause -> start Duff rhythm alarm.
-    let hasStartedDaf = false;
-    const startDafRhythm = () => {
-      if (hasStartedDaf) return;
-      hasStartedDaf = true;
-      sounds.playIncomingRideAlert();
-      if (!ringIntervalRef.current) {
-        ringIntervalRef.current = setInterval(() => {
-          sounds.playIncomingRideAlert();
-        }, 2000);
-      }
-    };
-
-    if (skipVoiceAnnouncement) {
-      // Direct Duff alarm & continuous vibration when opened from notification
-      startDafRhythm();
-    } else {
-      // Initial male voice alert -> 1.0s pause -> Duff alarm rhythm
-      sounds.speakDriverVoiceAlert(() => {
-        startDafRhythm();
-      });
-
-      // Safety fallback: ensure Duff drum begins ringing if audio is blocked (8.2s)
-      voiceTimeoutRef.current = setTimeout(() => {
-        startDafRhythm();
-      }, 8200);
-    }
-
-    // 2. 25-second countdown timer
+    // 25-second countdown timer
     countdownIntervalRef.current = setInterval(() => {
       setSecondsRemaining((prev) => {
         if (prev <= 1) {

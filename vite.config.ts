@@ -50,7 +50,7 @@ export default defineConfig(() => {
           globIgnores: ['**/assets/aistudio/**', '**/*.zip'],
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           navigateFallbackDenylist: [/^\/.*\.zip$/, /^\/api\/.*/],
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,mp3}'],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

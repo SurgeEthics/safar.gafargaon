@@ -9,7 +9,6 @@ output_zip = 'public/safar-gafargaon-clean-source.zip'
 secondary_zip = 'public/safar-gafargaon-latest.zip'
 exclude_dirs = {'node_modules', '.git', '.aistudio', 'dev-dist', 'aistudio', 'dist'}
 exclude_extensions = {'.zip', '.log', '.map'}
-exclude_files = {'bun.lock', 'bun.lockb', 'safar-official-logo-1024.png'}
 
 for target in [output_zip, secondary_zip]:
     if os.path.exists(target):
@@ -25,7 +24,7 @@ with zipfile.ZipFile(output_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
         # Modify dirs in-place to skip excluded directories
         dirs[:] = [d for d in dirs if d not in exclude_dirs and not d.startswith('.') and d != 'aistudio']
         for file in files:
-            if any(file.endswith(ext) for ext in exclude_extensions) or file in exclude_files:
+            if any(file.endswith(ext) for ext in exclude_extensions):
                 continue
             # Also exclude chat attachments
             if 'public/assets/aistudio' in root or 'assets/aistudio' in root:
@@ -35,9 +34,10 @@ with zipfile.ZipFile(output_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.write(full_path, arcname)
             count += 1
 
-# Copy to secondary and to dist
+# Copy to secondary, final, and to dist
 shutil.copyfile(output_zip, secondary_zip)
-shutil.copyfile(output_zip, 'public/safar-gafargaon-final.zip')
+final_zip = 'public/safar-gafargaon-final.zip'
+shutil.copyfile(output_zip, final_zip)
 if os.path.exists('dist'):
     shutil.copyfile(output_zip, os.path.join('dist', 'safar-gafargaon-clean-source.zip'))
     shutil.copyfile(output_zip, os.path.join('dist', 'safar-gafargaon-latest.zip'))

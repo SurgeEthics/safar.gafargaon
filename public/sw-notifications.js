@@ -10,11 +10,11 @@ self.addEventListener('notificationclick', (event) => {
   
   const targetUrl = action === 'accept'
     ? `/?openDriverTrip=${requestId}&role=driver&action=accept`
-    : (data.url || `/?openDriverTrip=${requestId}&role=driver`);
+    : `/?openDriverTrip=${requestId}&role=driver&action=open`;
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // 1. If Safar is already open in a tab or PWA window, focus it, postMessage and navigate
+      // 1. If Safar is already open in a tab or PWA window, focus and navigate it
       for (const client of clientList) {
         if ('focus' in client) {
           client.focus();
@@ -25,10 +25,10 @@ self.addEventListener('notificationclick', (event) => {
               requestId: requestId,
               url: targetUrl
             });
-            if ('navigate' in client && targetUrl) {
-              client.navigate(targetUrl);
-            }
           } catch (e) {}
+          if ('navigate' in client) {
+            return client.navigate(targetUrl);
+          }
           return client;
         }
       }

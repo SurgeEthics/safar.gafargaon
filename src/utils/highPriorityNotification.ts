@@ -1,7 +1,7 @@
 /**
  * High-Priority Mobile Push/Local Notification & Haptic Vibration Engine for Safar Drivers.
  * Ensures that even when the driver's phone screen is locked/off or the app is minimized in the background,
- * high-priority notifications alert the driver with continuous 25-second vibration and direct actions.
+ * high-priority notifications alert the driver with distinct vibration and direct actions.
  */
 
 class HighPriorityNotificationEngine {
@@ -26,17 +26,6 @@ class HighPriorityNotificationEngine {
   }
 
   /**
-   * Full 25-second continuous vibration pattern (34 cycles of 500ms vibrate + 250ms gap = 25,500ms)
-   */
-  private get25SecondVibrationPattern(): number[] {
-    const pattern: number[] = [];
-    for (let i = 0; i < 34; i++) {
-      pattern.push(500, 250);
-    }
-    return pattern;
-  }
-
-  /**
    * Trigger high-priority driver ride alert notification (Service Worker & Local)
    */
   async showIncomingRideAlert(request: {
@@ -49,23 +38,27 @@ class HighPriorityNotificationEngine {
   }) {
     if (typeof window === 'undefined') return;
 
-    // 1. Start continuous repeating haptic vibration for the full 25 seconds
+    // Request permission if default
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission();
+      } catch {}
+    }
+
+    // 1. Start continuous repeating haptic vibration (crucial when screen is off)
     this.startRepeatingVibration();
 
     const title = '🚖 নতুন যাত্রার অনুরোধ এসেছে! (সফর গফরগাঁও)';
     const body = `📍 পিকআপ: ${request.pickupPoint}\n🎯 গন্তব্য: ${request.destination}\n💰 নির্ধারিত ভাড়া: ৳${request.estFare} (দূরত্ব: ${request.distanceKm} কিমি)`;
-    const vibrate25s = this.get25SecondVibrationPattern();
-
     const options: any = {
       body,
-      icon: '/safar-logo.png',
-      badge: '/safar-logo.png',
-      image: '/safar-logo.png',
+      icon: '/pwa-192x192.png',
+      badge: '/pwa-192x192.png',
       tag: this.activeNotificationTag,
       renotify: true,
       requireInteraction: true,
       silent: false,
-      vibrate: vibrate25s,
+      vibrate: [600, 200, 600, 200, 800, 300, 600],
       data: {
         requestId: request.id,
         url: `/?openDriverTrip=${request.id}&role=driver`
@@ -76,10 +69,12 @@ class HighPriorityNotificationEngine {
       ]
     };
 
-    // 2. Try Service Worker showNotification first (Standard for Android Chrome & PWA)
+    // 2. Try Service Worker showNotification first with 1200ms timeout race (no waiting or freezing)
     if ('serviceWorker' in navigator) {
       try {
-        const registration = await navigator.serviceWorker.ready;
+        const swReadyPromise = navigator.serviceWorker.ready;
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200));
+        const registration = await Promise.race([swReadyPromise, timeoutPromise]);
         if (registration && typeof registration.showNotification === 'function') {
           await registration.showNotification(title, options);
           return;
@@ -94,15 +89,15 @@ class HighPriorityNotificationEngine {
       if ('Notification' in window && Notification.permission === 'granted') {
         const notif = new Notification(title, {
           body,
-          icon: '/safar-logo.png',
-          badge: '/safar-logo.png',
+          icon: '/pwa-192x192.png',
+          badge: '/pwa-192x192.png',
           tag: this.activeNotificationTag,
           requireInteraction: true
         });
         notif.onclick = () => {
           window.focus();
           notif.close();
-          window.location.href = `/?openDriverTrip=${request.id}&role=driver`;
+          window.location.href = `/?openDriverTrip=${request.id}&role=driver&action=open`;
         };
       }
     } catch {}
@@ -111,11 +106,11 @@ class HighPriorityNotificationEngine {
   /**
    * Continuous repeating vibration while incoming ride is awaiting driver response
    */
-  startRepeatingVibration() {
+  private startRepeatingVibration() {
     this.stopRepeatingVibration();
     if (typeof window === 'undefined' || !('vibrate' in navigator)) return;
 
-    const pattern = [600, 200, 500, 200];
+    const pattern = [500, 200, 500, 200, 700];
     try {
       navigator.vibrate(pattern);
     } catch {}
@@ -126,10 +121,10 @@ class HighPriorityNotificationEngine {
           navigator.vibrate(pattern);
         }
       } catch {}
-    }, 1500);
+    }, 2400);
   }
 
-  stopRepeatingVibration() {
+  private stopRepeatingVibration() {
     if (this.vibrationInterval) {
       clearInterval(this.vibrationInterval);
       this.vibrationInterval = null;

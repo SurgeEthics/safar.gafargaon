@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Download, 
@@ -13,6 +13,7 @@ import {
   Check,
   HardDrive
 } from 'lucide-react';
+import { toBengaliNumber } from '../utils/calculator';
 
 interface SourceCodeDownloadModalProps {
   isOpen: boolean;
@@ -27,6 +28,23 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.৩৮ MB');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch('/safar-gafargaon-clean-source.zip', { method: 'HEAD', cache: 'no-store' })
+      .then(res => {
+        const cl = res.headers.get('content-length');
+        if (cl) {
+          const bytes = parseInt(cl, 10);
+          if (bytes > 0) {
+            const mb = (bytes / (1024 * 1024)).toFixed(2);
+            setZipDisplaySize(`${toBengaliNumber(mb)} MB`);
+          }
+        }
+      })
+      .catch(() => {});
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -103,7 +121,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
                 সম্পূর্ণ সোর্স কোড ডাউনলোড
               </h3>
               <p className="text-xs text-slate-500">
-                গিটহাব ও ক্লাউডফ্লেয়ারের জন্য প্রস্তুত (৩.০৮ MB • সম্পূর্ণ সোর্স ও অ্যাসেট)
+                গিটহাব ও ক্লাউডফ্লেয়ারের জন্য প্রস্তুত ({zipDisplaySize} • সম্পূর্ণ সোর্স ও অ্যাসেট)
               </p>
             </div>
           </div>
@@ -129,7 +147,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
                 </span>
               </div>
               <span className="text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                ৩.০৮ MB জিপ (ক্লিন প্যাকেজ)
+                {zipDisplaySize} জিপ (ক্লিন প্যাকেজ)
               </span>
             </div>
 

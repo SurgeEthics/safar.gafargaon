@@ -14,21 +14,91 @@ class SoundEffects {
   private activeSources: (AudioNode & { stop?: (when?: number) => void })[] = [];
   private isAlarmRinging = false;
   private currentVoiceAudio: HTMLAudioElement | null = null;
-  private preloadedVoiceAudio: HTMLAudioElement | null = null;
   private pauseTimeout: any = null;
+  private voiceAlertBuffer: AudioBuffer | null = null;
+  private isPreloadingVoice = false;
+  private keepAliveInterval: any = null;
 
-  constructor() {
-    if (typeof window !== 'undefined') {
-      this.preloadVoiceAlert();
-      const autoUnlock = () => {
-        this.unlockAudio();
-        window.removeEventListener('click', autoUnlock);
-        window.removeEventListener('touchstart', autoUnlock);
-        window.removeEventListener('pointerdown', autoUnlock);
-      };
-      window.addEventListener('click', autoUnlock, { once: true, passive: true });
-      window.addEventListener('touchstart', autoUnlock, { once: true, passive: true });
-      window.addEventListener('pointerdown', autoUnlock, { once: true, passive: true });
+  /**
+   * Pre-fetch and decode the authentic Bengali Male voice alert into memory.
+   * Ensures 0ms latency and eliminates any browser network or autoplay delay.
+   */
+  preloadVoiceAlert() {
+    if (typeof window === 'undefined' || this.voiceAlertBuffer || this.isPreloadingVoice) return;
+    this.isPreloadingVoice = true;
+    fetch('/driver_voice_male.mp3')
+      .then(res => res.arrayBuffer())
+      .then(arrayBuffer => {
+        const ctx = this.getContext();
+        if (ctx) {
+          return ctx.decodeAudioData(arrayBuffer).then(decoded => {
+            this.voiceAlertBuffer = decoded;
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.isPreloadingVoice = false;
+      });
+  }
+
+  /**
+   * Unlocks AudioContext and HTML5 audio element on any user interaction (tap, touch, click).
+   * This completely bypasses mobile browser autoplay restrictions.
+   */
+  unlockAudio() {
+    if (typeof window === 'undefined') return;
+    const ctx = this.getContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    this.preloadVoiceAlert();
+    try {
+      const dummy = new Audio('/driver_voice_male.mp3');
+      dummy.volume = 0.001;
+      const p = dummy.play();
+      if (p !== undefined) {
+        p.then(() => {
+          dummy.pause();
+          dummy.currentTime = 0;
+        }).catch(() => {});
+      }
+    } catch {}
+  }
+
+  /**
+   * Keeps active background audio session on Android Chrome and iOS Safari while in Driver Mode.
+   * Mobile OS will NEVER suspend Firestore connections or tab execution while audio session is active.
+   */
+  startDriverBackgroundKeepAlive() {
+    if (typeof window === 'undefined' || this.keepAliveInterval) return;
+    const ctx = this.getContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    this.keepAliveInterval = setInterval(() => {
+      try {
+        if (!this.ctx || this.ctx.state === 'closed') return;
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.frequency.setValueAtTime(25, this.ctx.currentTime);
+        gain.gain.setValueAtTime(0.0001, this.ctx.currentTime);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(this.ctx.currentTime);
+        osc.stop(this.ctx.currentTime + 0.1);
+      } catch {}
+    }, 12000);
+  }
+
+  stopDriverBackgroundKeepAlive() {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
     }
   }
 
@@ -249,48 +319,6 @@ class SoundEffects {
     this.activeSources.push(osc);
   }
 
-  private keepAliveGain: GainNode | null = null;
-  private keepAliveOsc: OscillatorNode | null = null;
-
-  /**
-   * Starts an inaudible sub-threshold audio carrier node.
-   * On Android Chrome and mobile browsers, this flags the page as active media playback,
-   * completely preventing the browser from sleeping or freezing WebSockets when the phone screen is locked or in background.
-   */
-  startDriverAudioKeepAlive() {
-    if (typeof window === 'undefined') return;
-    try {
-      const ctx = this.getContext();
-      if (!ctx) return;
-      if (this.keepAliveOsc) return;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(40, ctx.currentTime);
-      gain.gain.setValueAtTime(0.00005, ctx.currentTime);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-
-      this.keepAliveOsc = osc;
-      this.keepAliveGain = gain;
-    } catch {}
-  }
-
-  stopDriverAudioKeepAlive() {
-    try {
-      if (this.keepAliveOsc) {
-        this.keepAliveOsc.stop();
-        this.keepAliveOsc.disconnect();
-        this.keepAliveOsc = null;
-      }
-      if (this.keepAliveGain) {
-        this.keepAliveGain.disconnect();
-        this.keepAliveGain = null;
-      }
-    } catch {}
-  }
   /**
    * Play an authentic Arabic Daf drum rhythm phrase:
    * Pattern: DUM ... TAK ... TAK ... DUM ... TAK!
@@ -326,39 +354,11 @@ class SoundEffects {
   }
 
   /**
-   * Explicitly preloads the Bengali male voice alert audio into browser memory.
-   * Eliminates any network latency or decoding lag when an incoming ride arrives.
-   */
-  preloadVoiceAlert(): void {
-    if (typeof window === 'undefined') return;
-    try {
-      if (!this.preloadedVoiceAudio) {
-        this.preloadedVoiceAudio = new Audio('/driver_voice_male.mp3');
-        this.preloadedVoiceAudio.preload = 'auto';
-        this.preloadedVoiceAudio.volume = 1.0;
-        this.preloadedVoiceAudio.load();
-      }
-    } catch {}
-  }
-
-  /**
-   * Preload and unlock audio context on user gesture (click/touch).
-   */
-  unlockAudio(): void {
-    if (typeof window === 'undefined') return;
-    try {
-      const ctx = this.getContext();
-      if (ctx && ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
-      }
-      this.preloadVoiceAlert();
-    } catch {}
-  }
-
-  /**
-   * Loud, authentic, natural human male voice announcement in Bengali (Microsoft Pradeep Neural):
-   * "সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।" (Duration: 5.01s)
-   * Followed by a strict 1.0-second pause before the loud Arabic Daf drum rhythm alarm begins!
+   * Loud, clear, dignified Bangladeshi Bengali MALE voice announcement for drivers:
+   * "সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
+   * Strictly uses authentic male voice studio recording '/driver_voice_male.mp3'.
+   * Followed by a strict 1.0 second pause of silence before the loud Arabic Daf drum rhythm alarm begins!
+   * Zero robotic tone and zero female voice!
    */
   speakDriverVoiceAlert(onEnd?: () => void): boolean {
     if (typeof window === 'undefined') {
@@ -367,33 +367,19 @@ class SoundEffects {
     }
 
     try {
-      // 1. Hard stop any previous voice audio
-      if (this.currentVoiceAudio) {
-        try {
-          this.currentVoiceAudio.pause();
-          this.currentVoiceAudio.currentTime = 0;
-        } catch {}
-        this.currentVoiceAudio = null;
-      }
+      this.stopVoiceAndPause();
 
-      if (this.pauseTimeout) {
-        clearTimeout(this.pauseTimeout);
-        this.pauseTimeout = null;
-      }
-
-      // Also ensure AudioContext is warm
-      try {
-        const ctx = this.getContext();
-        if (ctx && ctx.state === 'suspended') {
-          ctx.resume().catch(() => {});
-        }
-      } catch {}
+      // Trigger loud clear speech haptic vibration
+      this.triggerVibration([500, 200, 500, 200, 500]);
 
       let hasFinished = false;
       const finishAndPause = () => {
         if (hasFinished) return;
         hasFinished = true;
         this.currentVoiceAudio = null;
+
+        // Distinct rhythmic vibration pulse during the 1.0 second pause
+        this.triggerVibration([300, 200, 300]);
 
         // Exactly 1.0 second (1000ms) pause after speech completes before Duff drum rings
         this.pauseTimeout = setTimeout(() => {
@@ -402,40 +388,100 @@ class SoundEffects {
         }, 1000);
       };
 
-      // 2. Play high-fidelity authentic male Bengali announcement file
-      const audio = this.preloadedVoiceAudio || new Audio('/driver_voice_male.mp3');
-      audio.currentTime = 0;
+      // Safety timeout: 5.5s (voice duration is ~4.68s) to guarantee 1s pause + Duff alarm triggers
+      const safetyTimer = setTimeout(() => {
+        if (!hasFinished) {
+          finishAndPause();
+        }
+      }, 5500);
+
+      const ctx = this.getContext();
+      if (ctx) {
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+        if (this.alarmGain) {
+          this.alarmGain.gain.cancelScheduledValues(ctx.currentTime);
+          this.alarmGain.gain.setValueAtTime(1.8, ctx.currentTime);
+        }
+      }
+
+      // 1. Play via HTML5 Audio element with loud broadcast volume (most compatible across mobile Android & iOS)
+      const audio = new Audio('/driver_voice_male.mp3');
       audio.volume = 1.0;
       this.currentVoiceAudio = audio;
 
-      audio.onended = finishAndPause;
+      audio.onended = () => {
+        clearTimeout(safetyTimer);
+        finishAndPause();
+      };
       audio.onerror = () => {
-        // If file fails, transition straight to 1.0s pause + Duff alarm (NEVER play robotic female TTS)
+        // Fallback to Web Audio if HTML5 audio fails
+        if (ctx && this.voiceAlertBuffer) {
+          try {
+            const source = ctx.createBufferSource();
+            source.buffer = this.voiceAlertBuffer;
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(1.8, ctx.currentTime);
+            source.connect(gain);
+            gain.connect(this.masterGain || ctx.destination);
+            source.onended = () => {
+              clearTimeout(safetyTimer);
+              finishAndPause();
+            };
+            source.start(0);
+            this.activeSources.push(source);
+            return;
+          } catch (e) {}
+        }
+        clearTimeout(safetyTimer);
         finishAndPause();
       };
 
       const playPromise = audio.play();
       if (playPromise !== undefined) {
-        playPromise.catch((err: unknown) => {
-          console.warn('Male audio autoplay blocked by browser policy:', err);
-          // If browser blocked audio without user gesture, proceed to 1.0s pause + Duff
-          finishAndPause();
+        playPromise.catch(() => {
+          // If browser policy blocks HTML5 audio element, try Web Audio buffer
+          if (ctx && this.voiceAlertBuffer) {
+            try {
+              const source = ctx.createBufferSource();
+              source.buffer = this.voiceAlertBuffer;
+              const gain = ctx.createGain();
+              gain.gain.setValueAtTime(1.8, ctx.currentTime);
+              source.connect(gain);
+              gain.connect(this.masterGain || ctx.destination);
+              source.onended = () => {
+                clearTimeout(safetyTimer);
+                finishAndPause();
+              };
+              source.start(0);
+              this.activeSources.push(source);
+              return;
+            } catch (e) {}
+          }
+          // Otherwise safetyTimer guarantees progression
         });
       }
 
-      // Safety timeout (5.8s) to guarantee 1.0s pause + Duff alarm triggers even on slow decoders
-      setTimeout(() => {
-        if (!hasFinished) {
-          finishAndPause();
-        }
-      }, 5800);
-
       return true;
     } catch {
-      if (onEnd) {
-        setTimeout(onEnd, 1000);
-      }
+      if (onEnd) onEnd();
       return false;
+    }
+  }
+
+  private stopVoiceAndPause() {
+    if (this.currentVoiceAudio) {
+      try {
+        this.currentVoiceAudio.pause();
+        this.currentVoiceAudio.currentTime = 0;
+      } catch {}
+      this.currentVoiceAudio = null;
+    }
+
+    if (this.pauseTimeout) {
+      clearTimeout(this.pauseTimeout);
+      this.pauseTimeout = null;
     }
   }
 

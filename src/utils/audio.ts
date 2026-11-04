@@ -18,6 +18,9 @@ class SoundEffects {
   private voiceAlertBuffer: AudioBuffer | null = null;
   private isPreloadingVoice = false;
   private keepAliveInterval: any = null;
+  private isVoicePlaying = false;
+  private currentWebAudioSource: (AudioBufferSourceNode & { stop?: (when?: number) => void }) | null = null;
+  private currentVoiceSafetyTimer: any = null;
 
   /**
    * Pre-fetch and decode the authentic Bengali Male voice alert into memory.
@@ -368,6 +371,7 @@ class SoundEffects {
 
     try {
       this.stopVoiceAndPause();
+      this.isVoicePlaying = true;
 
       // Trigger loud clear speech haptic vibration
       this.triggerVibration([500, 200, 500, 200, 500]);
@@ -376,7 +380,12 @@ class SoundEffects {
       const finishAndPause = () => {
         if (hasFinished) return;
         hasFinished = true;
+        this.isVoicePlaying = false;
         this.currentVoiceAudio = null;
+        if (this.currentVoiceSafetyTimer) {
+          clearTimeout(this.currentVoiceSafetyTimer);
+          this.currentVoiceSafetyTimer = null;
+        }
 
         // Distinct rhythmic vibration pulse during the 1.0 second pause
         this.triggerVibration([300, 200, 300]);
@@ -389,7 +398,7 @@ class SoundEffects {
       };
 
       // Safety timeout: 5.5s (voice duration is ~4.68s) to guarantee 1s pause + Duff alarm triggers
-      const safetyTimer = setTimeout(() => {
+      this.currentVoiceSafetyTimer = setTimeout(() => {
         if (!hasFinished) {
           finishAndPause();
         }
@@ -412,7 +421,6 @@ class SoundEffects {
       this.currentVoiceAudio = audio;
 
       audio.onended = () => {
-        clearTimeout(safetyTimer);
         finishAndPause();
       };
       audio.onerror = () => {
@@ -426,15 +434,14 @@ class SoundEffects {
             source.connect(gain);
             gain.connect(this.masterGain || ctx.destination);
             source.onended = () => {
-              clearTimeout(safetyTimer);
               finishAndPause();
             };
+            this.currentWebAudioSource = source;
             source.start(0);
             this.activeSources.push(source);
             return;
           } catch (e) {}
         }
-        clearTimeout(safetyTimer);
         finishAndPause();
       };
 
@@ -451,9 +458,9 @@ class SoundEffects {
               source.connect(gain);
               gain.connect(this.masterGain || ctx.destination);
               source.onended = () => {
-                clearTimeout(safetyTimer);
                 finishAndPause();
               };
+              this.currentWebAudioSource = source;
               source.start(0);
               this.activeSources.push(source);
               return;
@@ -465,18 +472,35 @@ class SoundEffects {
 
       return true;
     } catch {
+      this.isVoicePlaying = false;
       if (onEnd) onEnd();
       return false;
     }
   }
 
   private stopVoiceAndPause() {
+    this.isVoicePlaying = false;
+
     if (this.currentVoiceAudio) {
       try {
         this.currentVoiceAudio.pause();
         this.currentVoiceAudio.currentTime = 0;
       } catch {}
       this.currentVoiceAudio = null;
+    }
+
+    if (this.currentWebAudioSource) {
+      try {
+        if (typeof this.currentWebAudioSource.stop === 'function') {
+          this.currentWebAudioSource.stop(0);
+        }
+      } catch {}
+      this.currentWebAudioSource = null;
+    }
+
+    if (this.currentVoiceSafetyTimer) {
+      clearTimeout(this.currentVoiceSafetyTimer);
+      this.currentVoiceSafetyTimer = null;
     }
 
     if (this.pauseTimeout) {

@@ -2988,8 +2988,17 @@ export default function App() {
           if (!isNaN(t)) reqTime = t;
         }
 
-        // Auto-ignore stale cancelled/completed trips older than 4 hours
-        const isStale = (reqTime > 0 && now - reqTime > 4 * 60 * 60 * 1000);
+        // Auto-expire stale pending ride requests older than 90 seconds (1.5 mins) - Prevents old requests ringing on app open!
+        if (data.status === 'pending') {
+          const isPendingExpired = (reqTime > 0 && now - reqTime > 90 * 1000);
+          if (isPendingExpired) {
+            deleteDoc(doc(db, 'ride_requests', docSnap.id)).catch(() => {});
+            return;
+          }
+        }
+
+        // Auto-ignore stale cancelled/completed trips older than 30 minutes
+        const isStale = (reqTime > 0 && now - reqTime > 30 * 60 * 1000);
         if (isStale && (data.status === 'completed' || data.status === 'cancelled')) {
           return;
         }
@@ -3038,6 +3047,10 @@ export default function App() {
 
         // If current passenger was waiting for or in this trip and it was cancelled, reset state cleanly
         if (data.status === 'cancelled') {
+          // Immediately silence any active alarms/vibrations if this trip was ringing
+          sounds.stopAllAlarms();
+          highPriorityNotifications.clearIncomingRideAlert();
+          setDismissedAlertIds(prev => ({ ...prev, [docSnap.id]: true }));
           if (passengerPendingRequest && passengerPendingRequest.id === docSnap.id) {
             setPassengerPendingRequest(null);
             setPickupCoords(null);
@@ -3288,7 +3301,7 @@ export default function App() {
     };
   }, [userRole]);
 
-  // Screen unlock / screen turn-on / visibility change listener (Bulletproof background recovery)
+  // Screen unlock / screen turn-on / visibility change listener
   useEffect(() => {
     const handleScreenTurnOn = () => {
       sounds.unlockAudio();
@@ -3297,44 +3310,6 @@ export default function App() {
         if (userRole === 'driver') {
           screenWakeLock.requestLock().catch(() => {});
           sounds.startDriverBackgroundKeepAlive();
-          // Immediately poll Firestore for newest pending ride requests to eliminate background sleep lag
-          getDocs(query(
-            collection(db, 'ride_requests'),
-            where('status', '==', 'pending'),
-            limit(15)
-          )).then((snap) => {
-            if (!snap.empty) {
-              const pendingItems: PassengerRideRequest[] = [];
-              snap.forEach((d) => {
-                const data = d.data();
-                if (data && data.status === 'pending') {
-                  pendingItems.push({
-                    id: d.id,
-                    passengerName: data.passengerName || 'সম্মানিত যাত্রী',
-                    passengerPhone: data.passengerPhone || '',
-                    pickupPoint: data.pickupPoint || '',
-                    pickupLandmark: data.pickupLandmark || '',
-                    destination: data.destination || '',
-                    category: data.category || 'cng',
-                    requestedAt: 'এইমাত্র',
-                    distanceKm: Number(data.distanceKm) || 1.2,
-                    estFare: Number(data.estFare) || 40,
-                    status: 'pending',
-                    pickupCoords: data.pickupCoords || null,
-                    destCoords: data.destCoords || null,
-                    createdAtMs: data.createdAtMs || Date.now()
-                  });
-                }
-              });
-              if (pendingItems.length > 0) {
-                setPassengerRequests(prev => {
-                  const map = new Map(prev.map(r => [r.id, r]));
-                  pendingItems.forEach(p => map.set(p.id, p));
-                  return Array.from(map.values()).sort((a, b) => ((b as any).createdAtMs || 0) - ((a as any).createdAtMs || 0));
-                });
-              }
-            }
-          }).catch(() => {});
         }
       }
     };
@@ -3351,6 +3326,7 @@ export default function App() {
     const isDriver = userRole === 'driver';
     const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
     const dismissed = getDismissedTripIds();
+    const now = Date.now();
 
     // Check if current driver is already on an active trip (accepted or in_transit)
     const hasActiveTrip = passengerRequests.some(r => 
@@ -3364,10 +3340,11 @@ export default function App() {
     if (hasActiveTrip) return null;
 
     // Detect pending ride requests:
-    // If in driver mode, ALWAYS alert the driver for any pending ride matching category or for all drivers!
+    // MUST BE FRESH: Created within the last 90 seconds (1.5 minutes) so old requests never ring on app open!
     return passengerRequests.find(r => 
       r.status === 'pending' && 
       !dismissedAlertIds[r.id] &&
+      (!r.createdAtMs || (now - r.createdAtMs < 90 * 1000)) &&
       (
         // 1. Direct assignment to this driver ID or phone
         (r.driverId && (
@@ -3382,7 +3359,7 @@ export default function App() {
           isDriver
         ))
       )
-    ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && isDriver ? passengerPendingRequest : null);
+    ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && isDriver && (!passengerPendingRequest.id.includes('req-') || now - (Number(passengerPendingRequest.id.replace('req-', '')) || now) < 90 * 1000) ? passengerPendingRequest : null);
   }, [passengerRequests, dismissedAlertIds, driverProfile, passengerPendingRequest, userRole]);
 
   // High-Priority push/vibration alert whenever an incoming ride is detected in background / screen off
@@ -3707,7 +3684,12 @@ export default function App() {
 
   // Cancel Pending Request & Clear Map
   const handleCancelPassengerPendingRequest = async () => {
+    sounds.stopAllAlarms();
+    highPriorityNotifications.clearIncomingRideAlert();
     const reqId = passengerPendingRequest?.id || localStorage.getItem('safar_my_ride_request_id');
+    if (reqId) {
+      setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
+    }
     setPassengerPendingRequest(null);
     setActiveBooking(null);
     setPickupCoords(null);
@@ -4008,6 +3990,9 @@ export default function App() {
 
   // Driver declines request
   const handleDriverDeclineRequest = async (requestId: string) => {
+    sounds.stopAllAlarms();
+    highPriorityNotifications.clearIncomingRideAlert();
+    setDismissedAlertIds(prev => ({ ...prev, [requestId]: true }));
     try {
       await updateDoc(doc(db, 'ride_requests', requestId), {
         status: 'declined',
@@ -4925,13 +4910,17 @@ export default function App() {
 
   // Cancel Active Booking & Clear Map Route Lines & Pins
   const handleCancelBooking = async () => {
+    sounds.stopAllAlarms();
+    highPriorityNotifications.clearIncomingRideAlert();
     const booking = activeBooking;
     const bId = (booking as any)?.requestId || (booking as any)?.id;
     if (bId) {
+      setDismissedAlertIds(prev => ({ ...prev, [bId]: true }));
       addDismissedTripId(bId);
     }
     const storedReqId = localStorage.getItem('safar_my_ride_request_id');
     if (storedReqId) {
+      setDismissedAlertIds(prev => ({ ...prev, [storedReqId]: true }));
       addDismissedTripId(storedReqId);
     }
 

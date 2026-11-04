@@ -35,9 +35,11 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
   const ringIntervalRef = useRef<any>(null);
   const countdownIntervalRef = useRef<any>(null);
   const voiceTimeoutRef = useRef<any>(null);
+  const announcedRequestIdRef = useRef<string | null>(null);
 
   // Clear all running timers and stop Daf alarm sound & speech
   const cleanupTimersAndAudio = () => {
+    announcedRequestIdRef.current = null;
     if (voiceTimeoutRef.current) {
       clearTimeout(voiceTimeoutRef.current);
       voiceTimeoutRef.current = null;
@@ -60,6 +62,12 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       setIsDismissed(true);
       return;
     }
+
+    // Single Announcement Guard: Never restart speech or alarm if this request is already active!
+    if (announcedRequestIdRef.current === request.id) {
+      return;
+    }
+    announcedRequestIdRef.current = request.id;
 
     setIsDismissed(false);
     setIsProcessing(false);

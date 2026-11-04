@@ -1,7 +1,7 @@
 /**
  * High-Priority Mobile Push/Local Notification & Haptic Vibration Engine for Safar Drivers.
  * Ensures that even when the driver's phone screen is locked/off or the app is minimized in the background,
- * high-priority notifications alert the driver with distinct vibration and direct actions.
+ * high-priority notifications alert the driver with continuous 25-second vibration and direct actions.
  */
 
 class HighPriorityNotificationEngine {
@@ -26,6 +26,17 @@ class HighPriorityNotificationEngine {
   }
 
   /**
+   * Full 25-second continuous vibration pattern (34 cycles of 500ms vibrate + 250ms gap = 25,500ms)
+   */
+  private get25SecondVibrationPattern(): number[] {
+    const pattern: number[] = [];
+    for (let i = 0; i < 34; i++) {
+      pattern.push(500, 250);
+    }
+    return pattern;
+  }
+
+  /**
    * Trigger high-priority driver ride alert notification (Service Worker & Local)
    */
   async showIncomingRideAlert(request: {
@@ -38,20 +49,23 @@ class HighPriorityNotificationEngine {
   }) {
     if (typeof window === 'undefined') return;
 
-    // 1. Start continuous repeating haptic vibration (crucial when screen is off)
+    // 1. Start continuous repeating haptic vibration for the full 25 seconds
     this.startRepeatingVibration();
 
     const title = '🚖 নতুন যাত্রার অনুরোধ এসেছে! (সফর গফরগাঁও)';
     const body = `📍 পিকআপ: ${request.pickupPoint}\n🎯 গন্তব্য: ${request.destination}\n💰 নির্ধারিত ভাড়া: ৳${request.estFare} (দূরত্ব: ${request.distanceKm} কিমি)`;
+    const vibrate25s = this.get25SecondVibrationPattern();
+
     const options: any = {
       body,
-      icon: '/pwa-192x192.png',
-      badge: '/notification-badge.png',
+      icon: '/safar-logo.png',
+      badge: '/safar-logo.png',
+      image: '/safar-logo.png',
       tag: this.activeNotificationTag,
       renotify: true,
       requireInteraction: true,
       silent: false,
-      vibrate: [500, 200, 500, 200, 800, 300, 500],
+      vibrate: vibrate25s,
       data: {
         requestId: request.id,
         url: `/?openDriverTrip=${request.id}&role=driver`
@@ -80,8 +94,8 @@ class HighPriorityNotificationEngine {
       if ('Notification' in window && Notification.permission === 'granted') {
         const notif = new Notification(title, {
           body,
-          icon: '/pwa-192x192.png',
-          badge: '/notification-badge.png',
+          icon: '/safar-logo.png',
+          badge: '/safar-logo.png',
           tag: this.activeNotificationTag,
           requireInteraction: true
         });
@@ -97,11 +111,11 @@ class HighPriorityNotificationEngine {
   /**
    * Continuous repeating vibration while incoming ride is awaiting driver response
    */
-  private startRepeatingVibration() {
+  startRepeatingVibration() {
     this.stopRepeatingVibration();
     if (typeof window === 'undefined' || !('vibrate' in navigator)) return;
 
-    const pattern = [500, 200, 500, 200, 700];
+    const pattern = [600, 200, 500, 200];
     try {
       navigator.vibrate(pattern);
     } catch {}
@@ -112,10 +126,10 @@ class HighPriorityNotificationEngine {
           navigator.vibrate(pattern);
         }
       } catch {}
-    }, 2400);
+    }, 1500);
   }
 
-  private stopRepeatingVibration() {
+  stopRepeatingVibration() {
     if (this.vibrationInterval) {
       clearInterval(this.vibrationInterval);
       this.vibrationInterval = null;

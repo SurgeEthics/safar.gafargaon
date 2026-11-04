@@ -72,7 +72,6 @@ import { sounds } from './utils/audio';
 import { toBengaliNumber } from './utils/calculator';
 import { PassengerRideCockpit } from './components/PassengerRideCockpit';
 import { DriverIncomingAlert } from './components/DriverIncomingAlert';
-import { DriverScreenOpenNotificationPopup } from './components/DriverScreenOpenNotificationPopup';
 import { screenWakeLock } from './utils/wakeLockManager';
 import { highPriorityNotifications } from './utils/highPriorityNotification';
 import { SplashScreen } from './components/SplashScreen';
@@ -3282,25 +3281,74 @@ export default function App() {
     return unsub;
   }, []);
 
-  // Request Screen WakeLock & High-Priority Notification Permission when entering driver mode
+  // Request Screen WakeLock, Background Audio Keep-Alive & High-Priority Notification Permission when entering driver mode
   useEffect(() => {
-    if (userRole === 'driver') {
+    if (userRole === 'driver' && isDriverOnline) {
       screenWakeLock.requestLock().catch(() => {});
       highPriorityNotifications.requestPermission().catch(() => {});
+      sounds.startDriverAudioKeepAlive();
     } else {
       screenWakeLock.releaseLock();
+      sounds.stopDriverAudioKeepAlive();
     }
-  }, [userRole]);
+    return () => {
+      sounds.stopDriverAudioKeepAlive();
+    };
+  }, [userRole, isDriverOnline]);
 
   // Screen unlock / screen turn-on / visibility change listener
   useEffect(() => {
-    const handleScreenTurnOn = () => {
+    const handleScreenTurnOn = async () => {
       if (document.visibilityState === 'visible') {
         // Driver turned on mobile screen or switched back to app!
         setShowScreenOpenPopup(true);
-        if (userRole === 'driver') {
+        sounds.unlockAudio();
+        if (userRole === 'driver' && isDriverOnline) {
           screenWakeLock.requestLock().catch(() => {});
+          sounds.startDriverAudioKeepAlive();
         }
+
+        // Direct instant fetch from Firestore to bypass stale listener lag
+        try {
+          const freshSnap = await getDocs(query(
+            collection(db, 'ride_requests'),
+            where('status', '==', 'pending'),
+            limit(20)
+          ));
+          if (!freshSnap.empty) {
+            const freshList: PassengerRideRequest[] = [];
+            freshSnap.forEach(d => {
+              const data = d.data();
+              freshList.push({
+                id: d.id,
+                passengerName: data.passengerName || 'সম্মানিত যাত্রী',
+                passengerPhone: data.passengerPhone || '',
+                pickupPoint: data.pickupPoint || data.pickupLocation || '',
+                pickupLandmark: data.pickupLandmark || '',
+                destination: data.destination || data.destinationLocation || '',
+                category: data.category || data.vehicleCategory || 'cng',
+                requestedAt: 'এইমাত্র',
+                distanceKm: Number(data.distanceKm) || 1.2,
+                estFare: Number(data.estFare || data.estimatedFare) || 40,
+                status: data.status,
+                driverId: data.driverId,
+                driverName: data.driverName,
+                driverPhone: data.driverPhone,
+                driverCategory: data.driverCategory,
+                createdAtMs: data.createdAtMs || Date.now()
+              });
+            });
+            setPassengerRequests(prev => {
+              const merged = [...freshList];
+              prev.forEach(p => {
+                if (p.status !== 'pending' && !merged.some(m => m.id === p.id)) {
+                  merged.push(p);
+                }
+              });
+              return merged;
+            });
+          }
+        } catch {}
       }
     };
     document.addEventListener('visibilitychange', handleScreenTurnOn);
@@ -3309,19 +3357,42 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleScreenTurnOn);
       window.removeEventListener('focus', handleScreenTurnOn);
     };
-  }, [userRole]);
+  }, [userRole, isDriverOnline]);
 
   // Compute Active Incoming Ride Request Matching Current Driver (Accessible anywhere in App)
   const activeIncomingRideForDriver = useMemo(() => {
-    if (!driverProfile.phone && !driverProfile.isRegistered) return null;
+    // Check if user is in driver mode OR has a driver profile / saved driver account
+    const hasDriverIdentity = Boolean(driverProfile.phone || driverProfile.isRegistered || userRole === 'driver');
+    let effectiveCleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+    let effectiveDriverId = driverProfile.id;
+    let effectiveCategory = driverProfile.category;
+
+    if (!effectiveCleanDriverPhone) {
+      try {
+        const saved = localStorage.getItem('safar_active_driver_profile_v6');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.phone) {
+            effectiveCleanDriverPhone = (parsed.phone || '').replace(/[^0-9]/g, '');
+            effectiveDriverId = parsed.id || effectiveDriverId;
+            effectiveCategory = parsed.category || effectiveCategory;
+          }
+        }
+      } catch {}
+    }
+
+    if (!hasDriverIdentity && !effectiveCleanDriverPhone) return null;
     const dismissed = getDismissedTripIds();
-    const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+    const phoneToMatch = effectiveCleanDriverPhone || (driverProfile.phone || '').replace(/[^0-9]/g, '');
+    const idToMatch = effectiveDriverId || driverProfile.id;
+    const catToMatch = effectiveCategory || driverProfile.category;
+
     const hasActiveTrip = passengerRequests.some(r => 
       (r.status === 'accepted' || r.status === 'in_transit') && 
       !dismissed.has(r.id) &&
       (
-        (driverProfile.id && r.driverId === driverProfile.id) ||
-        (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
+        (idToMatch && r.driverId === idToMatch) ||
+        (phoneToMatch && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === phoneToMatch)
       )
     );
     if (hasActiveTrip) return null;
@@ -3330,8 +3401,8 @@ export default function App() {
       r.status === 'pending' && 
       !dismissedAlertIds[r.id] &&
       (
-        (r.driverId && (r.driverId === driverProfile.id || (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone))) ||
-        (!r.driverId && (!driverProfile.category || driverProfile.category === 'all' || r.category === driverProfile.category))
+        (r.driverId && (r.driverId === idToMatch || (phoneToMatch && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === phoneToMatch))) ||
+        (!r.driverId && (!catToMatch || catToMatch === 'all' || r.category === catToMatch || userRole === 'driver'))
       )
     ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && userRole === 'driver' ? passengerPendingRequest : null);
   }, [passengerRequests, dismissedAlertIds, driverProfile, passengerPendingRequest, userRole]);
@@ -3841,27 +3912,33 @@ export default function App() {
         }));
       }
     } else {
-      // Demo / unregistered visitor accepting
-      const chosen = (targetReq?.driverId ? drivers.find(d => d.id === targetReq.driverId) : null) || drivers[0];
+      // Driver accepting without prior profile login (e.g. from notification or quick accept)
+      const reqCategory = targetReq?.category || 'cng';
+      // Find a matching driver from the vehicle category, never pick an ambulance unless requested
+      const matchingCategoryDriver = (targetReq?.driverId ? drivers.find(d => d.id === targetReq.driverId) : null) ||
+        drivers.find(d => d.category === reqCategory) ||
+        drivers.find(d => d.category !== 'ambulance') ||
+        drivers[0];
+
       activeDriver = {
-        ...chosen,
+        ...matchingCategoryDriver,
         lat: driverLat,
         lng: driverLng
       };
 
       setDriverProfile({
-        id: chosen.id,
-        name: chosen.name,
-        phone: chosen.phone,
-        vehicleModel: chosen.vehicleModel || 'সিএনজি',
-        plateNumber: chosen.plateNumber || 'ময়মনসিংহ-থ-১৭-৯০০১',
-        licenseNumber: chosen.licenseNumber || 'BRTA-GAF',
-        standName: chosen.standName || 'গফরগাঁও',
-        category: (chosen.category as any) || 'cng',
-        rating: chosen.rating || 5.0,
-        todayTrips: chosen.totalTrips || 20,
+        id: matchingCategoryDriver.id,
+        name: matchingCategoryDriver.name,
+        phone: matchingCategoryDriver.phone,
+        vehicleModel: matchingCategoryDriver.vehicleModel || 'সিএনজি',
+        plateNumber: matchingCategoryDriver.plateNumber || 'ময়মনসিংহ-থ-১৭-৯০০১',
+        licenseNumber: matchingCategoryDriver.licenseNumber || 'BRTA-GAF',
+        standName: matchingCategoryDriver.standName || 'গফরগাঁও',
+        category: (matchingCategoryDriver.category as any) || reqCategory,
+        rating: matchingCategoryDriver.rating || 5.0,
+        todayTrips: matchingCategoryDriver.totalTrips || 20,
         todayEarnings: 800,
-        driverPhoto: chosen.driverPhoto || '',
+        driverPhoto: matchingCategoryDriver.driverPhoto || '',
         isRegistered: true,
         lat: driverLat,
         lng: driverLng
@@ -5900,13 +5977,15 @@ export default function App() {
           </div>
         )}
 
-        {/* SPECIAL FLOATING SCREEN-OPEN NOTIFICATION POPUP (PASSENGER / HOME MODE ONLY) */}
-        {userRole !== 'driver' && activeIncomingRideForDriver && showScreenOpenPopup && (
-          <DriverScreenOpenNotificationPopup
+        {/* SINGLE UNIFIED INCOMING RIDE REQUEST POPUP (NEVER DUPLICATED) */}
+        {activeIncomingRideForDriver && (
+          <DriverIncomingAlert
+            key={activeIncomingRideForDriver.id}
             request={activeIncomingRideForDriver}
+            isPassengerMode={userRole !== 'driver'}
+            skipVoiceAnnouncement={skipVoiceForCurrentAlert}
             onOpenDashboard={() => {
               setUserRole('driver');
-              setShowScreenOpenPopup(false);
               setSkipVoiceForCurrentAlert(true);
               window.scrollTo({ top: 120, behavior: 'smooth' });
             }}
@@ -5915,7 +5994,6 @@ export default function App() {
               setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
               sounds.stopAllAlarms();
               highPriorityNotifications.clearIncomingRideAlert();
-              setShowScreenOpenPopup(false);
               setSkipVoiceForCurrentAlert(false);
               handleDriverAcceptRequest(reqId);
             }}
@@ -5923,34 +6001,8 @@ export default function App() {
               setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
               sounds.stopAllAlarms();
               highPriorityNotifications.clearIncomingRideAlert();
-              setShowScreenOpenPopup(false);
               setSkipVoiceForCurrentAlert(false);
-              showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
-            }}
-          />
-        )}
-
-        {/* DRIVER INCOMING RIDE REQUEST FULL COCKPIT CARD */}
-        {userRole === 'driver' && activeIncomingRideForDriver && (
-          <DriverIncomingAlert
-            key={activeIncomingRideForDriver.id}
-            request={activeIncomingRideForDriver}
-            skipVoiceAnnouncement={skipVoiceForCurrentAlert}
-            onAccept={(reqId) => {
-              setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-              sounds.stopAllAlarms();
-              highPriorityNotifications.clearIncomingRideAlert();
-              setShowScreenOpenPopup(false);
-              setSkipVoiceForCurrentAlert(false);
-              handleDriverAcceptRequest(reqId);
-            }}
-            onDecline={(reqId) => {
-              setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-              sounds.stopAllAlarms();
-              highPriorityNotifications.clearIncomingRideAlert();
-              setShowScreenOpenPopup(false);
-              setSkipVoiceForCurrentAlert(false);
-              showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
+              handleDriverDeclineRequest(reqId);
             }}
           />
         )}
@@ -6808,8 +6860,9 @@ export default function App() {
                   const filteredPendingRequests = passengerRequests.filter(req => {
                     if (req.status !== 'pending') return false;
                     const cleanPhone = req.passengerPhone?.replace(/[^0-9]/g, '');
-                    // Exclude if it's the active trip
+                    // Exclude if it's the active trip or currently displayed in the top incoming alert
                     if (driverActiveTrip && req.id === driverActiveTrip.id) return false;
+                    if (activeIncomingRideForDriver && req.id === activeIncomingRideForDriver.id) return false;
                     // Exclude if driver is currently on trip with this exact passenger!
                     if (activePassengerPhone && cleanPhone && cleanPhone === activePassengerPhone) return false;
                     // Deduplicate: if multiple pending requests exist from same phone, keep only the latest one

@@ -9,7 +9,7 @@ output_zip = 'public/safar-gafargaon-clean-source.zip'
 secondary_zip = 'public/safar-gafargaon-latest.zip'
 exclude_dirs = {'node_modules', '.git', '.aistudio', 'dev-dist', 'aistudio', 'dist'}
 exclude_extensions = {'.zip', '.log', '.map'}
-exclude_files = {'bun.lock', 'bun.lockb'}
+exclude_files = {'bun.lock', 'bun.lockb', 'safar-official-logo-1024.png'}
 
 for target in [output_zip, secondary_zip]:
     if os.path.exists(target):

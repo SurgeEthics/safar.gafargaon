@@ -14,7 +14,7 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // 1. If Safar is already open in a tab or PWA window, focus it and postMessage
+      // 1. If Safar is already open in a tab or PWA window, focus it, postMessage and navigate
       for (const client of clientList) {
         if ('focus' in client) {
           client.focus();
@@ -25,6 +25,9 @@ self.addEventListener('notificationclick', (event) => {
               requestId: requestId,
               url: targetUrl
             });
+            if ('navigate' in client && targetUrl) {
+              client.navigate(targetUrl);
+            }
           } catch (e) {}
           return client;
         }

@@ -249,6 +249,48 @@ class SoundEffects {
     this.activeSources.push(osc);
   }
 
+  private keepAliveGain: GainNode | null = null;
+  private keepAliveOsc: OscillatorNode | null = null;
+
+  /**
+   * Starts an inaudible sub-threshold audio carrier node.
+   * On Android Chrome and mobile browsers, this flags the page as active media playback,
+   * completely preventing the browser from sleeping or freezing WebSockets when the phone screen is locked or in background.
+   */
+  startDriverAudioKeepAlive() {
+    if (typeof window === 'undefined') return;
+    try {
+      const ctx = this.getContext();
+      if (!ctx) return;
+      if (this.keepAliveOsc) return;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(40, ctx.currentTime);
+      gain.gain.setValueAtTime(0.00005, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+
+      this.keepAliveOsc = osc;
+      this.keepAliveGain = gain;
+    } catch {}
+  }
+
+  stopDriverAudioKeepAlive() {
+    try {
+      if (this.keepAliveOsc) {
+        this.keepAliveOsc.stop();
+        this.keepAliveOsc.disconnect();
+        this.keepAliveOsc = null;
+      }
+      if (this.keepAliveGain) {
+        this.keepAliveGain.disconnect();
+        this.keepAliveGain = null;
+      }
+    } catch {}
+  }
   /**
    * Play an authentic Arabic Daf drum rhythm phrase:
    * Pattern: DUM ... TAK ... TAK ... DUM ... TAK!

@@ -101,6 +101,7 @@ export default defineConfig(() => {
               const primaryZip = path.resolve(process.cwd(), 'public', 'safar-gafargaon-clean-source.zip');
               const fallbackZip = path.resolve(process.cwd(), 'public', 'safar-app.zip');
               const zipPath = fs.existsSync(primaryZip) ? primaryZip : fallbackZip;
+
               if (fs.existsSync(zipPath)) {
                 const stat = fs.statSync(zipPath);
                 res.writeHead(200, {

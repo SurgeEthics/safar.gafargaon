@@ -1,25 +1,34 @@
+@import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&family=Amiri:ital,wght@0,400;0,700;1,400&family=Scheherazade+New:wght@400;700&display=swap');
 @import "tailwindcss";
 
-/* Global styles */
-*, *::before, *::after {
-  box-sizing: border-box;
-  font-family: 'Hind Siliguri', sans-serif !important;
+@theme {
+  --font-sans: 'Hind Siliguri', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-bengali: 'Hind Siliguri', sans-serif;
+  --font-arabic: 'Amiri', 'Scheherazade New', serif;
 }
 
-html, body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  min-height: 100%;
-  overflow-x: hidden;
-  background-color: #f8fafc;
-  color: #1e293b;
+html,
+body,
+#root,
+button,
+input,
+optgroup,
+select,
+textarea,
+p,
+span,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: 'Hind Siliguri', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
-#root {
-  width: 100%;
-  min-height: 100vh;
-  margin: 0;
-  padding: 0;
-  text-align: left;
+/* Preserve authentic Arabic typography for Do'a and religious prayers */
+[dir="rtl"],
+.font-arabic,
+.arabic-text {
+  font-family: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', serif !important;
 }

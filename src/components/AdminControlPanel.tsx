@@ -147,7 +147,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [downloadReadyUrl, setDownloadReadyUrl] = useState<string | null>(null);
   const [downloadReadySize, setDownloadReadySize] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.৩৪ MB');
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.৪০ MB');
 
   useEffect(() => {
     // Dynamically fetch accurate zip file size on mount
@@ -650,7 +650,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     setIsZipDownloading(true);
     setDownloadError(null);
     try {
-      showToast('⏳ সম্পূর্ণ প্রজেক্ট জিপ মেমোরিতে প্রস্তুত করা হচ্ছে (৩.৫৯ MB)...');
+      showToast('⏳ সম্পূর্ণ প্রজেক্ট জিপ মেমোরিতে প্রস্তুত করা হচ্ছে (৩.৪০ MB)...');
 
       const endpoints = [
         `/safar-gafargaon-clean-source.zip?t=${Date.now()}`,

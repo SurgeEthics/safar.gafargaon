@@ -43,17 +43,19 @@ export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
         aria-expanded={isOpen}
         className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-100/90 hover:from-emerald-100 hover:to-teal-100 border-b border-emerald-200/80 transition-all cursor-pointer text-left select-none group"
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <span className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs group-hover:bg-emerald-700 transition">
             <Compass className="w-4 h-4" />
           </span>
-          <div className="truncate">
+          <div className="min-w-0 flex-1 overflow-hidden">
             <span className="font-extrabold text-xs sm:text-sm text-emerald-950 block leading-tight">
               দ্রুত গন্তব্য
             </span>
-            <span className="text-[10px] text-emerald-700 font-semibold block leading-tight">
-              গফরগাঁও ও পাগলার ১৫টি ইউনিয়নের সকল স্থান ও স্ট্যান্ড
-            </span>
+            <PauseMarqueeText
+              text="গফরগাঁও ও পাগলার ১৫টি ইউনিয়নের সকল স্থান ও স্ট্যান্ড"
+              className="text-[10px] text-emerald-700 font-semibold block leading-tight"
+              pauseSec={1.5}
+            />
           </div>
         </div>
 

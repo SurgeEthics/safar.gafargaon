@@ -220,8 +220,14 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
           {/* Header & Quick Union Filter */}
           <div className="pb-1.5 mb-1.5 border-b border-slate-100">
             <div className="flex items-center justify-between px-1 mb-1 text-[10.5px]">
-              <span className="font-bold text-slate-700">১৫টি ইউনিয়ন ও পৌরসভার স্থানসমূহ</span>
-              <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+              <div className="min-w-0 flex-1 overflow-hidden mr-2">
+                <PauseMarqueeText
+                  text="১৫টি ইউনিয়ন ও পৌরসভার স্থানসমূহ"
+                  className="font-bold text-slate-700"
+                  pauseSec={1.5}
+                />
+              </div>
+              <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full shrink-0">
                 {filteredPlaces.length}টি স্থান
               </span>
             </div>

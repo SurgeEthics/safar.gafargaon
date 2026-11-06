@@ -100,7 +100,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
     if (activeBooking && activeBooking.status === 'en_route') {
       sounds.playDriverMatchedChime();
     }
-  }, [activeBooking?.driver.id]);
+  }, [activeBooking?.driver?.id]);
 
   // Sound trigger on arrival
   useEffect(() => {

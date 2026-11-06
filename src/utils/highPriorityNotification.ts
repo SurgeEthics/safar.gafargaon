@@ -65,7 +65,7 @@ class HighPriorityNotificationEngine {
       },
       actions: [
         { action: 'accept', title: '✅ গ্রহণ করুন (ACCEPT)' },
-        { action: 'open', title: '📲 অ্যাপ খুলুন' }
+        { action: 'open', title: '📲 অ্যাপ খুলুন (OPEN APP)' }
       ]
     };
 

@@ -21,6 +21,19 @@ class SoundEffects {
   private isVoicePlaying = false;
   private currentWebAudioSource: (AudioBufferSourceNode & { stop?: (when?: number) => void }) | null = null;
   private currentVoiceSafetyTimer: any = null;
+  private announcedRideIds = new Set<string>();
+
+  hasAnnouncedRide(rideId?: string): boolean {
+    return Boolean(rideId && this.announcedRideIds.has(rideId));
+  }
+
+  markRideAnnounced(rideId: string) {
+    if (rideId) this.announcedRideIds.add(rideId);
+  }
+
+  clearAnnouncedRide(rideId: string) {
+    if (rideId) this.announcedRideIds.delete(rideId);
+  }
 
   /**
    * Pre-fetch and decode the authentic Bengali Male voice alert into memory.
@@ -403,10 +416,20 @@ class SoundEffects {
    * Immediately transitions into the loud Arabic Daf drum rhythm alarm without delay.
    * Zero robotic tone and zero female voice!
    */
-  speakDriverVoiceAlert(onEnd?: () => void): boolean {
+  speakDriverVoiceAlert(onEnd?: () => void, requestId?: string): boolean {
     if (typeof window === 'undefined') {
       if (onEnd) onEnd();
       return false;
+    }
+
+    // Single Announcement Guard: If already announced for this request ID, never repeat voice!
+    if (requestId && this.hasAnnouncedRide(requestId)) {
+      this.startAlertVibration(25000);
+      if (onEnd) onEnd();
+      return true;
+    }
+    if (requestId) {
+      this.markRideAnnounced(requestId);
     }
 
     try {

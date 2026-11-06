@@ -76,6 +76,7 @@ import { DriverScreenOpenNotificationPopup } from './components/DriverScreenOpen
 import { screenWakeLock } from './utils/wakeLockManager';
 import { highPriorityNotifications } from './utils/highPriorityNotification';
 import { SplashScreen } from './components/SplashScreen';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { AdminControlPanel, AppCustomSettings } from './components/AdminControlPanel';
 import { AutoMarqueeText } from './components/AutoMarqueeText';
 import { PauseMarqueeText } from './components/PauseMarqueeText';
@@ -3331,7 +3332,17 @@ export default function App() {
   // Screen WakeLock State & Auto-Management for Driver Mode
   const [isWakeLockActive, setIsWakeLockActive] = useState<boolean>(false);
   const [showScreenOpenPopup, setShowScreenOpenPopup] = useState<boolean>(true);
-  const [skipVoiceForCurrentAlert, setSkipVoiceForCurrentAlert] = useState<boolean>(false);
+  const [skipVoiceForCurrentAlert, setSkipVoiceForCurrentAlert] = useState<boolean>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('action') === 'open' || params.get('openDriverTrip') || params.get('role') === 'driver') {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  });
 
   // Subscribe to ScreenWakeLock status changes
   useEffect(() => {
@@ -3407,15 +3418,17 @@ export default function App() {
           r.driverId === driverProfile.id || 
           (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
         )) ||
-        // 2. Open broadcast: category matches, or driver has no specific category, or in driver mode
+        // 2. Open broadcast: category matches, or driver has no specific category, or in driver mode, or registered driver
         (!r.driverId && (
           !driverProfile.category || 
           driverProfile.category === 'all' || 
           r.category === driverProfile.category ||
-          isDriver
+          isDriver ||
+          driverProfile.isRegistered ||
+          Boolean(cleanDriverPhone)
         ))
       )
-    ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && isDriver && (!passengerPendingRequest.id.includes('req-') || now - (Number(passengerPendingRequest.id.replace('req-', '')) || now) < 90 * 1000) ? passengerPendingRequest : null);
+    ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && (!passengerPendingRequest.id.includes('req-') || now - (Number(passengerPendingRequest.id.replace('req-', '')) || now) < 90 * 1000) ? passengerPendingRequest : null);
   }, [passengerRequests, dismissedAlertIds, driverProfile, passengerPendingRequest, userRole]);
 
   // High-Priority push/vibration alert whenever an incoming ride is detected in background / screen off
@@ -4673,7 +4686,7 @@ export default function App() {
         }
       }
     }
-  }, [activeBooking?.driver.id, userRole, liveGps.lat, liveGps.lng]);
+  }, [activeBooking?.driver?.id, userRole, liveGps.lat, liveGps.lng]);
 
   // Filtered and stably sorted drivers (100% stable, zero jumping/lafalafi)
   const filteredDrivers = useMemo(() => {
@@ -5883,7 +5896,8 @@ export default function App() {
         {/* PASSENGER REAL-TIME RIDE COCKPIT */}
         {userRole === 'passenger' && (
           <div id="passenger-ride-cockpit-section" className="max-w-7xl mx-auto w-full px-3 sm:px-4 lg:px-6 pt-3 pb-1 scroll-mt-20">
-            <PassengerRideCockpit
+            <ErrorBoundary>
+              <PassengerRideCockpit
               request={passengerPendingRequest}
               activeBooking={activeBooking}
               onCancelRequest={handleCancelPassengerPendingRequest}
@@ -6026,42 +6040,14 @@ export default function App() {
                 if (mapEl) mapEl.scrollIntoView({ behavior: 'smooth' });
                 showAdminToastMessage('ম্যাপে চালকের লাইভ অবস্থান ফোকাস করা হয়েছে');
               }}
-              categoryBengaliName={categories.find(c => c.id === (passengerPendingRequest?.category || activeBooking?.driver.category))?.nameBengali || 'অটো'}
+              categoryBengaliName={categories.find(c => c.id === (passengerPendingRequest?.category || activeBooking?.driver?.category))?.nameBengali || 'অটো'}
             />
+            </ErrorBoundary>
           </div>
         )}
 
-        {/* SPECIAL FLOATING SCREEN-OPEN NOTIFICATION POPUP ONLY WHEN IN PASSENGER MODE */}
-        {userRole === 'passenger' && activeIncomingRideForDriver && showScreenOpenPopup && (
-          <DriverScreenOpenNotificationPopup
-            request={activeIncomingRideForDriver}
-            onOpenDashboard={() => {
-              setUserRole('driver');
-              setShowScreenOpenPopup(false);
-              setSkipVoiceForCurrentAlert(true);
-              window.scrollTo({ top: 120, behavior: 'smooth' });
-            }}
-            onAccept={(reqId) => {
-              setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-              sounds.stopAllAlarms();
-              highPriorityNotifications.clearIncomingRideAlert();
-              setShowScreenOpenPopup(false);
-              setSkipVoiceForCurrentAlert(false);
-              handleDriverAcceptRequest(reqId);
-            }}
-            onDecline={(reqId) => {
-              setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-              sounds.stopAllAlarms();
-              highPriorityNotifications.clearIncomingRideAlert();
-              setShowScreenOpenPopup(false);
-              setSkipVoiceForCurrentAlert(false);
-              showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
-            }}
-          />
-        )}
-
-        {/* DRIVER INCOMING RIDE REQUEST FULL COCKPIT CARD */}
-        {userRole === 'driver' && activeIncomingRideForDriver && (
+        {/* SINGLE AUTHORITATIVE DRIVER INCOMING RIDE REQUEST POPUP STICKER (Zero Duplicates in All Modes) */}
+        {activeIncomingRideForDriver && (
           <DriverIncomingAlert
             key={activeIncomingRideForDriver.id}
             request={activeIncomingRideForDriver}
@@ -6072,6 +6058,7 @@ export default function App() {
               highPriorityNotifications.clearIncomingRideAlert();
               setShowScreenOpenPopup(false);
               setSkipVoiceForCurrentAlert(false);
+              setUserRole('driver');
               handleDriverAcceptRequest(reqId);
             }}
             onDecline={(reqId) => {

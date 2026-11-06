@@ -101,15 +101,15 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       }
     };
 
-    if (skipVoiceAnnouncement) {
-      // Direct Duff alarm & continuous vibration when opened from notification
+    if (skipVoiceAnnouncement || (request.id && sounds.hasAnnouncedRide(request.id))) {
+      // Direct Duff alarm & continuous vibration when opened from notification or previously announced
       sounds.startAlertVibration(25000);
       startDafRhythm();
     } else {
       // Initial male voice alert -> Immediate Duff alarm rhythm + 25s continuous vibration
       sounds.speakDriverVoiceAlert(() => {
         startDafRhythm();
-      });
+      }, request.id);
 
       // Safety fallback: ensure Duff drum begins ringing if audio is blocked (6.5s)
       voiceTimeoutRef.current = setTimeout(() => {

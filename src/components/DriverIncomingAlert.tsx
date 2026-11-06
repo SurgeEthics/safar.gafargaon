@@ -20,19 +20,15 @@ export interface DriverIncomingAlertProps {
   onAccept: (requestId: string) => void;
   onDecline: (requestId: string) => void;
   skipVoiceAnnouncement?: boolean;
-  remainingSeconds?: number;
-  managedByParent?: boolean;
 }
 
 export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
   request,
   onAccept,
   onDecline,
-  skipVoiceAnnouncement = false,
-  remainingSeconds,
-  managedByParent = false
+  skipVoiceAnnouncement = false
 }) => {
-  const [secondsRemaining, setSecondsRemaining] = useState(remainingSeconds ?? 25);
+  const [secondsRemaining, setSecondsRemaining] = useState(25);
   const [isDismissed, setIsDismissed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -62,17 +58,8 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
 
   useEffect(() => {
     if (!request || request.status !== 'pending') {
-      if (!managedByParent) {
-        cleanupTimersAndAudio();
-      }
+      cleanupTimersAndAudio();
       setIsDismissed(true);
-      return;
-    }
-
-    setIsDismissed(false);
-    setIsProcessing(false);
-
-    if (managedByParent) {
       return;
     }
 
@@ -81,9 +68,13 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       return;
     }
     announcedRequestIdRef.current = request.id;
+
+    setIsDismissed(false);
+    setIsProcessing(false);
     setSecondsRemaining(25);
 
     // 0. Only trigger system status-bar notification if the app is in background or screen is off.
+    // When the driver is actively looking at the app on screen, showing a duplicate system notification creates annoying clutter!
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
       highPriorityNotifications.showIncomingRideAlert({
         id: request.id,
@@ -96,7 +87,8 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
     }
 
     // 1. Audio Sequence:
-    // Speak loud clear Bengali male voice alert -> immediately start Daf rhythm alarm (0s pause).
+    // If opened from notification, skip voice announcement and continue vibration + Duff alarm immediately.
+    // If fresh alert, speak loud clear male voice alert -> wait 1 sec pause -> start Duff rhythm alarm.
     let hasStartedDaf = false;
     const startDafRhythm = () => {
       if (hasStartedDaf) return;
@@ -109,18 +101,20 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
       }
     };
 
-    if (skipVoiceAnnouncement && sounds.hasVoiceBeenHeard(request.id)) {
+    if (skipVoiceAnnouncement) {
+      // Direct Duff alarm & continuous vibration when opened from notification
       sounds.startAlertVibration(25000);
       startDafRhythm();
     } else {
+      // Initial male voice alert -> Immediate Duff alarm rhythm + 25s continuous vibration
       sounds.speakDriverVoiceAlert(() => {
         startDafRhythm();
-      }, request.id);
+      });
 
-      // Safety fallback: ensure Daf drum begins ringing if audio is blocked (5.0s)
+      // Safety fallback: ensure Duff drum begins ringing if audio is blocked (6.5s)
       voiceTimeoutRef.current = setTimeout(() => {
         startDafRhythm();
-      }, 5000);
+      }, 6500);
     }
 
     // 2. 25-second countdown timer
@@ -139,7 +133,7 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
     return () => {
       cleanupTimersAndAudio();
     };
-  }, [request?.id, managedByParent]);
+  }, [request?.id]);
 
   // Handle Driver 1st-Click Accept
   const handleAccept = (e: React.MouseEvent) => {
@@ -173,8 +167,7 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
 
   if (!request || request.status !== 'pending' || isDismissed) return null;
 
-  const displaySeconds = managedByParent && typeof remainingSeconds === 'number' ? remainingSeconds : secondsRemaining;
-  const progressPercent = (displaySeconds / 25) * 100;
+  const progressPercent = (secondsRemaining / 25) * 100;
 
   return (
     <div className="fixed top-20 z-50 left-3 right-3 sm:left-auto sm:right-6 sm:w-full sm:max-w-md bg-slate-950 text-white rounded-3xl p-4 sm:p-5 shadow-2xl border-2 border-amber-400 animate-in slide-in-from-top-4">
@@ -188,7 +181,7 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
             <h3 className="font-extrabold text-sm sm:text-base text-white flex items-center gap-1.5">
               <span>নতুন যাত্রার অনুরোধ!</span>
               <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-1.5 py-0.2 rounded-full">
-                {displaySeconds}s
+                {secondsRemaining}s
               </span>
             </h3>
             <p className="text-[11px] text-amber-300">

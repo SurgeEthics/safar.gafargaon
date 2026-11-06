@@ -66,14 +66,16 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
   onRevoke,
   onAllApproved
 }) => {
-  // Local interactive states (must always execute before conditional return)
+  if (!type || !driver) return null;
+
+  // Local interactive states
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // BRTA dual-part tab switcher ('license' | 'vehicle')
   const [brtaSubPart, setBrtaSubPart] = useState<'license' | 'vehicle'>('license');
-  const [brtaLicenseChecked, setBrtaLicenseChecked] = useState(Boolean(driver?.licenseVerified));
-  const [brtaVehicleChecked, setBrtaVehicleChecked] = useState(Boolean(driver?.licenseVerified));
-  const [nidManualChecked, setNidManualChecked] = useState(Boolean(driver?.nidVerified));
+  const [brtaLicenseChecked, setBrtaLicenseChecked] = useState(Boolean(driver.licenseVerified));
+  const [brtaVehicleChecked, setBrtaVehicleChecked] = useState(Boolean(driver.licenseVerified));
+  const [nidManualChecked, setNidManualChecked] = useState(Boolean(driver.nidVerified));
 
   // Zoomed image modal
   const [zoomedImage, setZoomedImage] = useState<{ src: string; title: string } | null>(null);
@@ -85,17 +87,6 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
   const [otpTimer, setOtpTimer] = useState(60);
   const [otpError, setOtpError] = useState<string | null>(null);
 
-  // Sync verification checkboxes whenever target driver or modal type changes
-  useEffect(() => {
-    setBrtaLicenseChecked(Boolean(driver?.licenseVerified));
-    setBrtaVehicleChecked(Boolean(driver?.licenseVerified));
-    setNidManualChecked(Boolean(driver?.nidVerified));
-    setIsOtpSent(false);
-    setEnteredOtp('');
-    setOtpError(null);
-    setOtpTimer(60);
-  }, [driver?.id, type, driver?.licenseVerified, driver?.nidVerified]);
-
   // Countdown timer for OTP
   useEffect(() => {
     let interval: any;
@@ -104,8 +95,6 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
     }
     return () => clearInterval(interval);
   }, [isOtpSent, otpTimer]);
-
-  if (!type || !driver) return null;
 
   const handleCopy = (text: string, fieldName: string) => {
     navigator.clipboard.writeText(text);
@@ -179,7 +168,7 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
     onClose();
   };
 
-  const cleanPhone = (driver.phone || '').replace(/[^0-9]/g, '');
+  const cleanPhone = driver.phone.replace(/[^0-9]/g, '');
 
   // Helper to convert Bengali numbers to English
   const bengaliToEnglishDigits = (str: string) => {
@@ -187,7 +176,7 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
       '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
       '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
     };
-    return String(str || '').replace(/[০-৯]/g, (w) => map[w] || w);
+    return str.replace(/[০-৯]/g, (w) => map[w] || w);
   };
 
   // Helper to extract last 4 digits from plate number or ID supporting Bengali numerals
@@ -199,7 +188,7 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
         return allDigits.slice(-4);
       }
     }
-    const phoneDigits = (driver.phone || driver.id || '').replace(/[^0-9]/g, '');
+    const phoneDigits = (driver.phone || driver.id).replace(/[^0-9]/g, '');
     return phoneDigits.slice(-4) || '৫৬৭৮';
   };
 

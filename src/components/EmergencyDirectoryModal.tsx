@@ -94,7 +94,7 @@ export const EmergencyDirectoryModal: React.FC<EmergencyDirectoryModalProps> = (
               </div>
 
               <a
-                href={`tel:${(contact.phone || '').replace(/[^0-9]/g, '')}`}
+                href={`tel:${contact.phone.replace(/[^0-9]/g, '')}`}
                 className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-xs transition active:scale-95 flex items-center gap-1.5 shrink-0"
               >
                 <PhoneCall className="w-3.5 h-3.5" />

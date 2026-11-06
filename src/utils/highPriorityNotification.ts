@@ -7,18 +7,6 @@
 class HighPriorityNotificationEngine {
   private vibrationInterval: any = null;
   private activeNotificationTag = 'safar-driver-incoming-ride';
-  private isVibrating = false;
-
-  private canVibrate(): boolean {
-    if (typeof window === 'undefined' || !('navigator' in window) || typeof navigator.vibrate !== 'function') {
-      return false;
-    }
-    const ua = (navigator as unknown as { userActivation?: { hasBeenActive: boolean } }).userActivation;
-    if (ua && !ua.hasBeenActive) {
-      return false;
-    }
-    return true;
-  }
 
   /**
    * Request system notification permission with user gesture
@@ -69,7 +57,7 @@ class HighPriorityNotificationEngine {
       tag: this.activeNotificationTag,
       renotify: true,
       requireInteraction: true,
-      silent: false,
+      silent: true,
       vibrate: [600, 200, 600, 200, 800, 300, 600],
       data: {
         requestId: request.id,
@@ -105,22 +93,12 @@ class HighPriorityNotificationEngine {
           badge: '/notification-badge.png',
           tag: this.activeNotificationTag,
           requireInteraction: true,
-          silent: false
+          silent: true
         } as any);
         notif.onclick = () => {
-          try {
-            window.focus();
-          } catch {}
+          window.focus();
           notif.close();
-          try {
-            window.dispatchEvent(
-              new CustomEvent('safar-notification-action', {
-                detail: { action: 'open', requestId: request.id }
-              })
-            );
-          } catch {
-            window.location.href = `/?openDriverTrip=${request.id}&role=driver&action=open`;
-          }
+          window.location.href = `/?openDriverTrip=${request.id}&role=driver&action=open`;
         };
       }
     } catch {}
@@ -131,17 +109,16 @@ class HighPriorityNotificationEngine {
    */
   private startRepeatingVibration() {
     this.stopRepeatingVibration();
-    if (!this.canVibrate()) return;
+    if (typeof window === 'undefined' || !('vibrate' in navigator)) return;
 
     const pattern = [500, 200, 500, 200, 700];
     try {
       navigator.vibrate(pattern);
-      this.isVibrating = true;
     } catch {}
 
     this.vibrationInterval = setInterval(() => {
       try {
-        if (this.canVibrate()) {
+        if ('vibrate' in navigator) {
           navigator.vibrate(pattern);
         }
       } catch {}
@@ -153,9 +130,7 @@ class HighPriorityNotificationEngine {
       clearInterval(this.vibrationInterval);
       this.vibrationInterval = null;
     }
-    if (!this.isVibrating) return;
-    this.isVibrating = false;
-    if (this.canVibrate()) {
+    if (typeof window !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate(0);
       } catch {}

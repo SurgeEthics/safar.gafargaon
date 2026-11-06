@@ -1,5 +1,5 @@
-import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, initializeFirestore, Firestore } from 'firebase/firestore';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore, Firestore } from 'firebase/firestore';
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyB9QBWTvZf80SsnpUSr696n2LHMEuapYnk",
@@ -11,26 +11,10 @@ export const firebaseConfig = {
   firestoreDatabaseId: import.meta.env.VITE_FIRESTORE_DATABASE_ID || "ai-studio-7814ff46-1dfd-47a1-888d-f516713fcbb9"
 };
 
-const app: FirebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-
-function createSafeFirestore(firebaseApp: FirebaseApp): Firestore {
-  const dbId = firebaseConfig.firestoreDatabaseId;
-  try {
-    return initializeFirestore(
-      firebaseApp,
-      { experimentalAutoDetectLongPolling: true },
-      dbId || undefined
-    );
-  } catch {
-    try {
-      return dbId ? getFirestore(firebaseApp, dbId) : getFirestore(firebaseApp);
-    } catch {
-      return getFirestore(firebaseApp);
-    }
-  }
-}
-
-export const db: Firestore = createSafeFirestore(app);
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+export const db: Firestore = firebaseConfig.firestoreDatabaseId 
+  ? getFirestore(app, firebaseConfig.firestoreDatabaseId) 
+  : getFirestore(app);
 
 export type OperationType = 'create' | 'read' | 'update' | 'delete' | 'list';
 

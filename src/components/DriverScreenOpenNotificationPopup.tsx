@@ -18,28 +18,22 @@ export interface DriverScreenOpenNotificationPopupProps {
   onOpenDashboard: () => void;
   onAccept: (requestId: string) => void;
   onDecline: (requestId: string) => void;
-  remainingSeconds?: number;
-  managedByParent?: boolean;
 }
 
 export const DriverScreenOpenNotificationPopup: React.FC<DriverScreenOpenNotificationPopupProps> = ({
   request,
   onOpenDashboard,
   onAccept,
-  onDecline,
-  remainingSeconds,
-  managedByParent = false
+  onDecline
 }) => {
-  const [secondsRemaining, setSecondsRemaining] = useState(remainingSeconds ?? 25);
+  const [secondsRemaining, setSecondsRemaining] = useState(25);
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     if (!request || request.status !== 'pending') return;
 
-    setSecondsRemaining(remainingSeconds ?? 25);
+    setSecondsRemaining(25);
     setIsProcessing(false);
-
-    if (managedByParent) return;
 
     const interval = setInterval(() => {
       setSecondsRemaining(prev => {
@@ -53,12 +47,11 @@ export const DriverScreenOpenNotificationPopup: React.FC<DriverScreenOpenNotific
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [request?.id, request?.status, managedByParent]);
+  }, [request?.id, request?.status]);
 
   if (!request || request.status !== 'pending') return null;
 
-  const displaySeconds = managedByParent && typeof remainingSeconds === 'number' ? remainingSeconds : secondsRemaining;
-  const progressPercent = (displaySeconds / 25) * 100;
+  const progressPercent = (secondsRemaining / 25) * 100;
 
   return (
     <div 
@@ -78,7 +71,7 @@ export const DriverScreenOpenNotificationPopup: React.FC<DriverScreenOpenNotific
             <h3 className="font-black text-sm sm:text-base text-white flex items-center gap-1.5 leading-tight">
               <span>নতুন যাত্রার অনুরোধ!</span>
               <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0">
-                {displaySeconds}s
+                {secondsRemaining}s
               </span>
             </h3>
             <p className="text-[11px] text-emerald-300 font-medium">

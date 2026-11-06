@@ -114,16 +114,10 @@
       if (text) text.textContent = 'মেমোরিতে ফাইল লোড হচ্ছে...';
       
       try {
-        const res = await fetch('/safar-gafargaon-clean-source.zip?t=' + Date.now(), {
-          credentials: 'same-origin',
-          cache: 'no-store'
-        });
+        const res = await fetch('/safar-gafargaon-clean-source.zip', { credentials: 'same-origin' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const buf = await res.arrayBuffer();
-        const header = buf && buf.byteLength >= 4 ? new Uint8Array(buf, 0, 4) : null;
-        if (!header || header[0] !== 0x50 || header[1] !== 0x4b || buf.byteLength < 50000) {
-          throw new Error('ভ্যালিড জিপ ফাইল পাওয়া যায়নি');
-        }
+        if (!buf || buf.byteLength < 500000) throw new Error('ফাইল সাইজ সঠিক নয়');
         
         const blob = new Blob([buf], { type: 'application/zip' });
         const url = URL.createObjectURL(blob);
@@ -133,7 +127,6 @@
         document.body.appendChild(link);
         link.click();
         setTimeout(() => {
-          window.URL.revokeObjectURL(url);
           document.body.removeChild(link);
         }, 3000);
         if (text) text.textContent = '✅ ডাউনলোড সম্পন্ন হয়েছে! (পুনরায় ডাউনলোড)';
@@ -146,19 +139,6 @@
 
     document.getElementById('downloadBtn').addEventListener('click', startDownload);
     window.addEventListener('load', function() {
-      fetch('/safar-gafargaon-clean-source.zip', { method: 'HEAD', cache: 'no-store' })
-        .then(function(res) {
-          const cl = res.headers.get('content-length');
-          const bytes = cl ? parseInt(cl, 10) : 0;
-          if (bytes > 0) {
-            const mb = (bytes / (1024 * 1024)).toFixed(2);
-            const btnText = document.getElementById('btnText');
-            const infoEl = document.querySelector('.file-info');
-            if (btnText) btnText.textContent = 'সরাসরি জিপ ডাউনলোড করুন (' + mb + ' MB)';
-            if (infoEl) infoEl.innerHTML = 'ফাইল: <b>safar-gafargaon-clean-source.zip</b> • সাইজ: <b>' + mb + ' MB</b> • রিঅ্যাক্ট ১৯ + টাইপস্ক্রিপ্ট সম্পূর্ণ কোডবেস';
-          }
-        })
-        .catch(function() {});
       setTimeout(startDownload, 600);
     });
   </script>

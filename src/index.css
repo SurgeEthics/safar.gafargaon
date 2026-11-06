@@ -7,30 +7,27 @@
   --font-arabic: 'Amiri', 'Scheherazade New', serif;
 }
 
-@layer base {
-  html,
-  body,
-  #root,
-  button,
-  input,
-  optgroup,
-  select,
-  textarea,
-  p,
-  span,
-  h1,
-  h2,
-  h3,
-  h4,
-  h5,
-  h6 {
-    font-family: 'Hind Siliguri', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  }
+html,
+body,
+#root,
+button,
+input,
+optgroup,
+select,
+textarea,
+p,
+span,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: 'Hind Siliguri', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
 /* Preserve authentic Arabic typography for Do'a and religious prayers */
 [dir="rtl"],
-[dir="rtl"] *,
 .font-arabic,
 .arabic-text {
   font-family: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', serif !important;

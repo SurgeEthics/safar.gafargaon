@@ -55,7 +55,7 @@ export const DriverProfileDetailModal: React.FC<DriverProfileDetailModalProps> =
               </p>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-amber-500 font-bold text-xs flex items-center gap-0.5">
-                  ★ {toBengaliNumber(driver.rating || 5)} ({toBengaliNumber(driver.reviewCount || driver.totalTrips || 0)} রিভিউ)
+                  ★ {toBengaliNumber(driver.rating)} ({toBengaliNumber(driver.reviewCount || driver.totalTrips || 0)} রিভিউ)
                 </span>
                 <span className="text-slate-300">•</span>
                 <span className="text-slate-500 text-xs font-medium">
@@ -113,7 +113,7 @@ export const DriverProfileDetailModal: React.FC<DriverProfileDetailModalProps> =
           {/* Action buttons */}
           <div className="pt-2 flex flex-col sm:flex-row gap-2">
             <a
-              href={`tel:${(driver.phone || '').replace(/[^0-9]/g, '')}`}
+              href={`tel:${driver.phone.replace(/[^0-9]/g, '')}`}
               className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 shadow-xs transition"
             >
               <Phone className="w-4 h-4" />

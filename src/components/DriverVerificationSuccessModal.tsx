@@ -48,7 +48,7 @@ export const DriverVerificationSuccessModal: React.FC<DriverVerificationSuccessM
     driver.categoryBengali || driver.vehicleModel
   );
 
-  const cleanPhone = driver.phone.replace(/[^0-9]/g, '');
+  const cleanPhone = (driver.phone || '').replace(/[^0-9]/g, '');
 
   const handleCopy = () => {
     navigator.clipboard.writeText(successMessage);
@@ -104,7 +104,7 @@ export const DriverVerificationSuccessModal: React.FC<DriverVerificationSuccessM
                       className="w-full h-full object-cover rounded-2xl"
                     />
                   ) : (
-                    <span>{driver.name.slice(0, 2)}</span>
+                    <span>{(driver.name || 'চা').slice(0, 2)}</span>
                   )}
                 </div>
                 <div>

@@ -70,6 +70,12 @@ import { INITIAL_EMERGENCY_CONTACTS } from './data/initialData';
 import confetti from 'canvas-confetti';
 import { sounds } from './utils/audio';
 import { toBengaliNumber } from './utils/calculator';
+import {
+  normalizeCleanPhone,
+  formatSafeRating,
+  findMatchingIncomingRideRequest,
+  mergeAcceptedRequestIntoList
+} from './utils/rideMatching';
 import { PassengerRideCockpit } from './components/PassengerRideCockpit';
 import { DriverIncomingAlert } from './components/DriverIncomingAlert';
 import { DriverScreenOpenNotificationPopup } from './components/DriverScreenOpenNotificationPopup';
@@ -77,6 +83,12 @@ import { screenWakeLock } from './utils/wakeLockManager';
 import { highPriorityNotifications } from './utils/highPriorityNotification';
 import { SplashScreen } from './components/SplashScreen';
 import { AdminControlPanel, AppCustomSettings } from './components/AdminControlPanel';
+import {
+  verifyAdminPin,
+  validateAdminPinChange,
+  verifyMasterRecoveryCode,
+  AdminPinConfig
+} from './utils/adminAuth';
 import { AutoMarqueeText } from './components/AutoMarqueeText';
 import { PauseMarqueeText } from './components/PauseMarqueeText';
 import { collection, doc, setDoc, getDoc, getDocs, onSnapshot, updateDoc, deleteDoc, query, where, orderBy, limit, runTransaction } from 'firebase/firestore';
@@ -1440,12 +1452,52 @@ export default function App() {
       return false;
     }
   });
+  const [adminPinConfig, setAdminPinConfig] = useState<AdminPinConfig>(() => {
+    try {
+      const saved = localStorage.getItem('safar_admin_pin_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.hasCustomPin === 'boolean') {
+          return {
+            customPin: typeof parsed.customPin === 'string' && parsed.customPin.trim() ? parsed.customPin.trim() : null,
+            hasCustomPin: Boolean(parsed.hasCustomPin && parsed.customPin && String(parsed.customPin).trim())
+          };
+        }
+      }
+    } catch {}
+    return { customPin: null, hasCustomPin: false };
+  });
+
+  // Sync Admin PIN configuration across devices via Firestore settings/admin_security
+  useEffect(() => {
+    const unsubscribe = onSnapshot(doc(db, 'settings', 'admin_security'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        const remoteCustom = typeof data?.customPin === 'string' && data.customPin.trim().length >= 4
+          ? data.customPin.trim()
+          : null;
+        const nextConfig: AdminPinConfig = {
+          customPin: remoteCustom,
+          hasCustomPin: Boolean(remoteCustom)
+        };
+        setAdminPinConfig(nextConfig);
+        try {
+          localStorage.setItem('safar_admin_pin_v1', JSON.stringify(nextConfig));
+        } catch {}
+      }
+    }, () => {});
+    return () => unsubscribe();
+  }, []);
+
   const [showAdminAuthModal, setShowAdminAuthModal] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
+  const [showAdminRecoveryMode, setShowAdminRecoveryMode] = useState(false);
+  const [adminRecoveryCodeInput, setAdminRecoveryCodeInput] = useState('');
   const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
   const [adminActiveTab, setAdminActiveTab] = useState<'stands' | 'categories' | 'drivers' | 'hotlines' | 'stats'>('stands');
   const [adminToast, setAdminToast] = useState<string | null>(null);
+  const [pendingRideRequestAfterAuth, setPendingRideRequestAfterAuth] = useState(false);
 
   const showAdminToastMessage = (msg: string) => {
     setAdminToast(msg);
@@ -1566,7 +1618,7 @@ export default function App() {
       const saved = localStorage.getItem('safar_active_booking_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.driver && parsed.status && parsed.status !== 'completed' && parsed.status !== 'cancelled') {
+        if (parsed && parsed.driver && typeof parsed.driver === 'object' && parsed.status && parsed.status !== 'completed' && parsed.status !== 'cancelled') {
           const tripId = parsed.id || parsed.requestId || '';
           const confirmedAt = parsed.confirmedAt || 0;
           // Stale check: if trip is over 35 minutes old or in dismissed list, purge immediately!
@@ -1583,7 +1635,27 @@ export default function App() {
             localStorage.removeItem('safar_my_ride_request_id');
             return null;
           }
-          return parsed;
+          const safeLat = (val: any, fallback: number) =>
+            typeof val === 'number' && Number.isFinite(val) ? val : fallback;
+          return {
+            ...parsed,
+            passengerLat: safeLat(parsed.passengerLat, 24.4536),
+            passengerLng: safeLat(parsed.passengerLng, 90.5479),
+            currentDriverLat: safeLat(parsed.currentDriverLat, safeLat(parsed.driver.lat, 24.4536)),
+            currentDriverLng: safeLat(parsed.currentDriverLng, safeLat(parsed.driver.lng, 90.5479)),
+            etaMinutes: safeLat(parsed.etaMinutes, 5),
+            distanceKm: safeLat(parsed.distanceKm, 1.2),
+            fare: typeof parsed.fare === 'number' && Number.isFinite(parsed.fare) ? parsed.fare : 40,
+            driver: {
+              ...parsed.driver,
+              name: parsed.driver.name || 'নিবন্ধিত চালক',
+              phone: parsed.driver.phone || '',
+              vehicleModel: parsed.driver.vehicleModel || 'যানবাহন',
+              plateNumber: parsed.driver.plateNumber || '',
+              licenseNumber: parsed.driver.licenseNumber || 'BRTA-GAF',
+              category: parsed.driver.category || 'cng'
+            }
+          };
         }
       }
     } catch {}
@@ -2085,6 +2157,7 @@ export default function App() {
       } catch {}
 
       setAuthOtpModal(prev => ({ ...prev, isOpen: false }));
+      setShowPassengerModal(false);
       showAdminToastMessage(`🎉 স্বাগতম ${updatedProfile.name}! ৪-ডিজিট পিন সহ সফলভাবে লগইন হয়েছে`);
       return;
     } else {
@@ -2215,6 +2288,42 @@ export default function App() {
     }
   };
 
+  const getLocalPassengerRegistry = (): Record<string, { name: string; phone: string; pin: string; homeLocation: string; emergencyContact: string }> => {
+    try {
+      const raw = localStorage.getItem('safar_local_passengers_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {}
+    return {};
+  };
+
+  const saveLocalPassengerEntry = (entry: { name: string; phone: string; pin: string; homeLocation: string; emergencyContact: string }) => {
+    try {
+      const reg = getLocalPassengerRegistry();
+      reg[entry.phone] = entry;
+      localStorage.setItem('safar_local_passengers_v1', JSON.stringify(reg));
+    } catch {}
+  };
+
+  const fetchDocWithTimeout = async <T,>(promise: Promise<T>, timeoutMs = 1200): Promise<T | null> => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return null;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise.catch(() => null),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
   // Handle New Passenger Sign Up (with 4-Digit Security PIN)
   const handlePassengerSignUpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2238,13 +2347,12 @@ export default function App() {
 
     setIsPassengerAuthLoading(true);
     try {
-      // Check if user already exists in Firestore
       const userRef = doc(db, 'passengers', cleanPhone);
-      const userSnap = await getDoc(userRef);
+      const userSnap = await fetchDocWithTimeout(getDoc(userRef), 2200);
+      const localReg = getLocalPassengerRegistry();
+      const existingData = (userSnap && userSnap.exists()) ? userSnap.data() : localReg[cleanPhone];
 
-      if (userSnap.exists()) {
-        const existingData = userSnap.data();
-        // Check PIN if previously set
+      if (existingData) {
         if (existingData.pin && existingData.pin.toString().trim() !== cleanPin) {
           setPassengerAuthError('এই নম্বরে পূর্বেই অ্যাকাউন্ট রয়েছে কিন্তু দেওয়া পিন মেলেনি। লগইন ট্যাবে গিয়ে সঠিক পিন দিন বা ওটিপি ব্যবহার করুন।');
           setIsPassengerAuthLoading(false);
@@ -2258,21 +2366,25 @@ export default function App() {
           emergencyContact: existingData.emergencyContact || passengerLoginForm.emergencyContact.trim() || '',
           isLoggedIn: true
         };
-        // Update PIN if not present
         if (!existingData.pin) {
           setDoc(userRef, { pin: cleanPin }, { merge: true }).catch(() => {});
         }
+        saveLocalPassengerEntry({ ...profile, pin: cleanPin });
         setPassengerProfile(profile);
         setEditProfileForm(profile);
         loadPassengerTrips(cleanPhone);
         setProfileSaveToast(true);
         setTimeout(() => setProfileSaveToast(false), 3000);
+        if (pendingRideRequestAfterAuth) {
+          setShowPassengerModal(false);
+          setPendingRideRequestAfterAuth(false);
+          createAndDispatchPassengerRideRequest(profile);
+        }
         showAdminToastMessage(`স্বাগতম ${profile.name}! আপনার পূর্ববর্তী অ্যাকাউন্ট লোড হয়েছে`);
         setIsPassengerAuthLoading(false);
         return;
       }
 
-      // Create new secure profile
       const newProfile = {
         name: cleanName,
         phone: cleanPhone,
@@ -2281,26 +2393,31 @@ export default function App() {
         isLoggedIn: true
       };
 
-      await setDoc(doc(db, 'passengers', cleanPhone), {
+      saveLocalPassengerEntry({ ...newProfile, pin: cleanPin });
+      setDoc(doc(db, 'passengers', cleanPhone), {
         ...newProfile,
         pin: cleanPin,
         createdAt: new Date().toISOString()
-      });
-      await setDoc(doc(db, 'users', cleanPhone), {
+      }).catch(() => {});
+      setDoc(doc(db, 'users', cleanPhone), {
         ...newProfile,
         pin: cleanPin,
         role: 'passenger',
         updatedAt: new Date().toISOString()
-      }, { merge: true });
+      }, { merge: true }).catch(() => {});
 
       setPassengerProfile(newProfile);
       setEditProfileForm(newProfile);
       setProfileSaveToast(true);
       setTimeout(() => setProfileSaveToast(false), 3000);
+      if (pendingRideRequestAfterAuth) {
+        setShowPassengerModal(false);
+        setPendingRideRequestAfterAuth(false);
+        createAndDispatchPassengerRideRequest(newProfile);
+      }
       showAdminToastMessage(`🎉 স্বাগতম ${newProfile.name}! ৪-ডিজিট পিন সহ নিরাপদ যাত্রী প্রোফাইল তৈরি হয়েছে`);
     } catch (err) {
       console.warn('Sign Up error:', err);
-      // Fallback local save
       const fallbackProfile = {
         name: cleanName,
         phone: cleanPhone,
@@ -2308,8 +2425,14 @@ export default function App() {
         emergencyContact: passengerLoginForm.emergencyContact.trim() || '',
         isLoggedIn: true
       };
+      saveLocalPassengerEntry({ ...fallbackProfile, pin: cleanPin });
       setPassengerProfile(fallbackProfile);
       setEditProfileForm(fallbackProfile);
+      if (pendingRideRequestAfterAuth) {
+        setShowPassengerModal(false);
+        setPendingRideRequestAfterAuth(false);
+        createAndDispatchPassengerRideRequest(fallbackProfile);
+      }
       showAdminToastMessage(`স্বাগতম ${fallbackProfile.name}! প্রোফাইল সক্রিয় হয়েছে`);
     } finally {
       setIsPassengerAuthLoading(false);
@@ -2334,21 +2457,21 @@ export default function App() {
 
     setIsPassengerAuthLoading(true);
     try {
-      let snap = await getDoc(doc(db, 'passengers', cleanPhone));
-      if (!snap.exists()) {
-        snap = await getDoc(doc(db, 'users', cleanPhone));
+      let snap = await fetchDocWithTimeout(getDoc(doc(db, 'passengers', cleanPhone)), 2200);
+      if (!snap || !snap.exists()) {
+        snap = await fetchDocWithTimeout(getDoc(doc(db, 'users', cleanPhone)), 1500);
       }
 
-      if (snap.exists()) {
-        const data = snap.data();
-        // Check PIN security
+      const localReg = getLocalPassengerRegistry();
+      const data: Record<string, any> | undefined = (snap && snap.exists()) ? snap.data() : localReg[cleanPhone];
+
+      if (data) {
         if (data.pin && data.pin.toString().trim() !== cleanPin) {
           setPassengerAuthError('ভুল সিকিউরিটি পিন! সঠিক পিন দিন অথবা নিচে "ওটিপি দিয়ে লগইন" বাটনে চাপ দিন।');
           setIsPassengerAuthLoading(false);
           return;
         }
 
-        // If legacy account has no PIN yet, set this pin as their security PIN
         if (!data.pin) {
           setDoc(doc(db, 'passengers', cleanPhone), { pin: cleanPin }, { merge: true }).catch(() => {});
         }
@@ -2360,11 +2483,17 @@ export default function App() {
           emergencyContact: data.emergencyContact || '',
           isLoggedIn: true
         };
+        saveLocalPassengerEntry({ ...loadedProfile, pin: cleanPin });
         setPassengerProfile(loadedProfile);
         setEditProfileForm(loadedProfile);
         loadPassengerTrips(cleanPhone);
         setProfileSaveToast(true);
         setTimeout(() => setProfileSaveToast(false), 3000);
+        if (pendingRideRequestAfterAuth) {
+          setShowPassengerModal(false);
+          setPendingRideRequestAfterAuth(false);
+          createAndDispatchPassengerRideRequest(loadedProfile);
+        }
         showAdminToastMessage(`🎉 স্বাগতম ${loadedProfile.name}! পিন যাচাই করে সফলভাবে লগইন হয়েছে`);
       } else {
         setPassengerAuthError(`এই মোবাইল নম্বরে (${cleanPhone}) কোনো অ্যাকাউন্ট পাওয়া যায়নি। অনুগ্রহ করে প্রথমে 'সাইন আপ' করুন।`);
@@ -2574,27 +2703,28 @@ export default function App() {
     let firestoreDriver: any = null;
     let driverDocId: string | null = found?.id || null;
     try {
-      const snap = await getDoc(doc(db, 'drivers', clean));
-      if (snap.exists()) {
+      const snap = await fetchDocWithTimeout(getDoc(doc(db, 'drivers', clean)), 2000);
+      if (snap && snap.exists()) {
         firestoreDriver = snap.data();
         driverDocId = clean;
       } else {
         const q = query(collection(db, 'drivers'), where('phone', '==', clean));
-        const qSnap = await getDocs(q);
-        if (!qSnap.empty) {
+        const qSnap = await fetchDocWithTimeout(getDocs(q), 1500);
+        if (qSnap && !qSnap.empty) {
           firestoreDriver = qSnap.docs[0].data();
           driverDocId = qSnap.docs[0].id;
-        } else {
-          // Scan all drivers for matching last 10 digits
-          const allSnap = await getDocs(collection(db, 'drivers'));
-          allSnap.forEach(docSnap => {
-            const d = docSnap.data();
-            const p = (d.phone || '').replace(/[^0-9]/g, '');
-            if (p === clean || p.endsWith(last10) || clean.endsWith(p.slice(-10))) {
-              firestoreDriver = d;
-              driverDocId = docSnap.id;
-            }
-          });
+        } else if (!found) {
+          const allSnap = await fetchDocWithTimeout(getDocs(collection(db, 'drivers')), 1500);
+          if (allSnap) {
+            allSnap.forEach(docSnap => {
+              const d = docSnap.data();
+              const p = (d.phone || '').replace(/[^0-9]/g, '');
+              if (p === clean || p.endsWith(last10) || clean.endsWith(p.slice(-10))) {
+                firestoreDriver = d;
+                driverDocId = docSnap.id;
+              }
+            });
+          }
         }
       }
     } catch {}
@@ -2619,13 +2749,11 @@ export default function App() {
         return;
       }
     } else {
-      // Legacy account without PIN set (e.g. 01304841550) - permanently save entered PIN
-      try {
-        await setDoc(doc(db, 'drivers', clean), { pin: cleanPin }, { merge: true });
-        if (driverDocId) {
-          await setDoc(doc(db, 'drivers', driverDocId), { pin: cleanPin }, { merge: true });
-        }
-      } catch {}
+      // Legacy account without PIN set - save entered PIN non-blocking
+      setDoc(doc(db, 'drivers', clean), { pin: cleanPin }, { merge: true }).catch(() => {});
+      if (driverDocId) {
+        setDoc(doc(db, 'drivers', driverDocId), { pin: cleanPin }, { merge: true }).catch(() => {});
+      }
       showAdminToastMessage(`স্বাগতম ${driverData.name || driverData.nameBn || 'চালক'}! আপনার ৪-ডিজিটের সিকিউরিটি পিন সফলভাবে সংরক্ষিত হয়েছে।`);
     }
 
@@ -2997,7 +3125,16 @@ export default function App() {
   const [passengerPendingRequest, setPassengerPendingRequest] = useState<PassengerRideRequest | null>(() => {
     try {
       const saved = localStorage.getItem('safar_passenger_pending_v2');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && parsed.id && parsed.pickupPoint && parsed.destination) {
+          return {
+            ...parsed,
+            distanceKm: typeof parsed.distanceKm === 'number' && Number.isFinite(parsed.distanceKm) ? parsed.distanceKm : 1.2,
+            estFare: typeof parsed.estFare === 'number' && Number.isFinite(parsed.estFare) ? parsed.estFare : 40
+          };
+        }
+      }
     } catch (e) {}
     return null;
   });
@@ -3184,7 +3321,7 @@ export default function App() {
       if (passengerPendingRequest && !myActiveDoc) {
         const stillPending = liveList.find(r => r.id === passengerPendingRequest.id && r.status === 'pending');
         if (!stillPending) {
-          const reqAge = Date.now() - (Number(passengerPendingRequest.id.replace('req-', '')) || 0);
+          const reqAge = Date.now() - (Number(String(passengerPendingRequest.id || '').replace('req-', '')) || 0);
           if (reqAge > 3 * 60 * 1000) {
             setPassengerPendingRequest(null);
             try {
@@ -3357,10 +3494,11 @@ export default function App() {
     };
   }, [userRole]);
 
-  // Screen unlock / screen turn-on / visibility change listener
+  // Screen unlock / screen turn-on / visibility change / user tap listener
   useEffect(() => {
     const handleScreenTurnOn = () => {
       sounds.unlockAudio();
+      sounds.flushPendingVoiceAlert();
       if (document.visibilityState === 'visible') {
         setShowScreenOpenPopup(true);
         if (userRole === 'driver') {
@@ -3369,66 +3507,125 @@ export default function App() {
         }
       }
     };
+    const handleGestureUnlock = () => {
+      sounds.unlockAudio();
+    };
     document.addEventListener('visibilitychange', handleScreenTurnOn);
     window.addEventListener('focus', handleScreenTurnOn);
+    window.addEventListener('pointerdown', handleGestureUnlock, { passive: true });
+    window.addEventListener('keydown', handleGestureUnlock, { passive: true });
     return () => {
       document.removeEventListener('visibilitychange', handleScreenTurnOn);
       window.removeEventListener('focus', handleScreenTurnOn);
+      window.removeEventListener('pointerdown', handleGestureUnlock);
+      window.removeEventListener('keydown', handleGestureUnlock);
     };
   }, [userRole]);
 
   // Compute Active Incoming Ride Request Matching Current Driver (Works across all devices and roles)
   const activeIncomingRideForDriver = useMemo(() => {
-    const isDriver = userRole === 'driver';
-    const cleanDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
-    const dismissed = getDismissedTripIds();
-    const now = Date.now();
+    return findMatchingIncomingRideRequest({
+      passengerRequests,
+      passengerPendingRequest,
+      dismissedAlertIds,
+      dismissedTripIds: getDismissedTripIds(),
+      driverProfile,
+      userRole,
+    });
+  }, [passengerRequests, dismissedAlertIds, driverProfile, passengerPendingRequest, userRole, getDismissedTripIds]);
 
-    // Check if current driver is already on an active trip (accepted or in_transit)
-    const hasActiveTrip = passengerRequests.some(r => 
-      (r.status === 'accepted' || r.status === 'in_transit') && 
-      !dismissed.has(r.id) &&
-      (
-        (driverProfile.id && r.driverId === driverProfile.id) ||
-        (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
-      )
-    );
-    if (hasActiveTrip) return null;
+  // Unified Incoming Ride Audio (Male Voice -> 0s Pause -> Repeating Daf), 25s Vibration, Push & Countdown Coordinator
+  const [incomingAlertSecondsRemaining, setIncomingAlertSecondsRemaining] = useState<number>(25);
+  const activeIncomingCoordinatorIdRef = useRef<string | null>(null);
+  const activeIncomingRingIntervalRef = useRef<any>(null);
+  const activeIncomingCountdownRef = useRef<any>(null);
+  const activeIncomingVoiceSafetyRef = useRef<any>(null);
+  const handleDriverAcceptRef = useRef<(reqId: string) => void>(() => {});
+  const handleDriverDeclineRef = useRef<(reqId: string) => void>(() => {});
 
-    // Detect pending ride requests:
-    // MUST BE FRESH: Created within the last 90 seconds (1.5 minutes) so old requests never ring on app open!
-    return passengerRequests.find(r => 
-      r.status === 'pending' && 
-      !dismissedAlertIds[r.id] &&
-      (!r.createdAtMs || (now - r.createdAtMs < 90 * 1000)) &&
-      (
-        // 1. Direct assignment to this driver ID or phone
-        (r.driverId && (
-          r.driverId === driverProfile.id || 
-          (cleanDriverPhone && r.driverPhone && r.driverPhone.replace(/[^0-9]/g, '') === cleanDriverPhone)
-        )) ||
-        // 2. Open broadcast: category matches, or driver has no specific category, or in driver mode
-        (!r.driverId && (
-          !driverProfile.category || 
-          driverProfile.category === 'all' || 
-          r.category === driverProfile.category ||
-          isDriver
-        ))
-      )
-    ) || (passengerPendingRequest?.status === 'pending' && !dismissedAlertIds[passengerPendingRequest.id] && isDriver && (!passengerPendingRequest.id.includes('req-') || now - (Number(passengerPendingRequest.id.replace('req-', '')) || now) < 90 * 1000) ? passengerPendingRequest : null);
-  }, [passengerRequests, dismissedAlertIds, driverProfile, passengerPendingRequest, userRole]);
-
-  // High-Priority push/vibration alert whenever an incoming ride is detected in background / screen off
-  useEffect(() => {
-    if (activeIncomingRideForDriver) {
-      // Only show system status bar notification if app is in background or screen is off
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-        highPriorityNotifications.showIncomingRideAlert(activeIncomingRideForDriver).catch(() => {});
-      }
-    } else {
-      highPriorityNotifications.clearIncomingRideAlert().catch(() => {});
+  const stopUnifiedIncomingAlert = useCallback(() => {
+    activeIncomingCoordinatorIdRef.current = null;
+    if (activeIncomingVoiceSafetyRef.current) {
+      clearTimeout(activeIncomingVoiceSafetyRef.current);
+      activeIncomingVoiceSafetyRef.current = null;
     }
-  }, [activeIncomingRideForDriver?.id]);
+    if (activeIncomingRingIntervalRef.current) {
+      clearInterval(activeIncomingRingIntervalRef.current);
+      activeIncomingRingIntervalRef.current = null;
+    }
+    if (activeIncomingCountdownRef.current) {
+      clearInterval(activeIncomingCountdownRef.current);
+      activeIncomingCountdownRef.current = null;
+    }
+    sounds.stopAllAlarms();
+    highPriorityNotifications.clearIncomingRideAlert().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!activeIncomingRideForDriver || activeIncomingRideForDriver.status !== 'pending') {
+      stopUnifiedIncomingAlert();
+      return;
+    }
+
+    const req = activeIncomingRideForDriver;
+
+    // Trigger system notification with sound + vibration when screen is off or app is backgrounded
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      highPriorityNotifications.showIncomingRideAlert(req).catch(() => {});
+    }
+
+    // If this exact incoming request is already ringing, keep voice/Daf & countdown continuous across role switches
+    if (activeIncomingCoordinatorIdRef.current === req.id) {
+      return;
+    }
+
+    stopUnifiedIncomingAlert();
+    activeIncomingCoordinatorIdRef.current = req.id;
+    setIncomingAlertSecondsRemaining(25);
+    setShowScreenOpenPopup(true);
+
+    let dafStarted = false;
+    const startDafLoop = () => {
+      if (dafStarted || activeIncomingCoordinatorIdRef.current !== req.id) return;
+      dafStarted = true;
+      sounds.playIncomingRideAlert();
+      if (!activeIncomingRingIntervalRef.current) {
+        activeIncomingRingIntervalRef.current = setInterval(() => {
+          if (activeIncomingCoordinatorIdRef.current === req.id) {
+            sounds.playIncomingRideAlert();
+          }
+        }, 2000);
+      }
+    };
+
+    // Always play Bengali male voice immediately when a new incoming ride notification arrives -> 0s pause -> Daf rhythm
+    sounds.speakDriverVoiceAlert(() => {
+      startDafLoop();
+    }, req.id);
+
+    // Safety timer guarantees Daf rhythm begins even if OS suspends audio
+    activeIncomingVoiceSafetyRef.current = setTimeout(() => {
+      startDafLoop();
+    }, 5000);
+
+    // Synchronized 25-second alert countdown
+    activeIncomingCountdownRef.current = setInterval(() => {
+      setIncomingAlertSecondsRemaining((prev) => {
+        if (prev <= 1) {
+          stopUnifiedIncomingAlert();
+          handleDriverDeclineRef.current(req.id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, [activeIncomingRideForDriver?.id, activeIncomingRideForDriver?.status, stopUnifiedIncomingAlert]);
+
+  useEffect(() => {
+    return () => {
+      stopUnifiedIncomingAlert();
+    };
+  }, [stopUnifiedIncomingAlert]);
 
   // Throttled Real-time Driver GPS Broadcast to active accepted/in_transit trip in Firestore
   const lastGpsBroadcastRef = useRef<{ lat: number; lng: number; time: number }>({ lat: 0, lng: 0, time: 0 });
@@ -3627,18 +3824,10 @@ export default function App() {
     showAdminToastMessage('পিকআপ ও গন্তব্য অদল-বদল করা হয়েছে');
   };
 
-  // Submit Passenger Ride Request (Real-Time Live Driver Matching via Firestore)
-  const handlePassengerCreateRideRequest = () => {
-    // Enforce Passenger Sign Up / Login before sending requests
-    if (!passengerProfile.isLoggedIn || !passengerProfile.phone) {
-      showAdminToastMessage('যাত্রার অনুরোধ পাঠানোর পূর্বে অনুগ্রহ করে সাইন আপ বা লগইন করুন');
-      setShowPassengerModal(true);
-      setPassengerTab('profile');
-      setPassengerAuthMode('signup');
-      return;
-    }
+  const createAndDispatchPassengerRideRequest = (profileOverride?: { name: string; phone: string }) => {
+    const activePassengerName = (profileOverride?.name || passengerProfile.name || 'সম্মানিত যাত্রী').trim();
+    const activePassengerPhone = (profileOverride?.phone || passengerProfile.phone || '').trim();
 
-    // Prevent duplicate spam requests if user already has a pending request
     if (passengerPendingRequest) {
       showAdminToastMessage('আপনার একটি অনুরোধ ইতোমধ্যে অপেক্ষমাণ রয়েছে। চালকের কনফার্মেশনের জন্য অপেক্ষা করুন।');
       const cockpitEl = document.getElementById('passenger-ride-cockpit-section');
@@ -3653,37 +3842,55 @@ export default function App() {
       return;
     }
 
-    let pickupTitle = passengerPickup.trim() || 'আমার লাইভ অবস্থান (GPS)';
+    const safePickupCoords = (
+      pickupCoords &&
+      typeof pickupCoords.lat === 'number' &&
+      Number.isFinite(pickupCoords.lat) &&
+      typeof pickupCoords.lng === 'number' &&
+      Number.isFinite(pickupCoords.lng)
+    ) ? pickupCoords : { lat: 24.4536, lng: 90.5479 };
+
+    const safeDestCoords = (
+      destCoords &&
+      typeof destCoords.lat === 'number' &&
+      Number.isFinite(destCoords.lat) &&
+      typeof destCoords.lng === 'number' &&
+      Number.isFinite(destCoords.lng)
+    ) ? destCoords : { lat: 24.4515, lng: 90.5535 };
+
+    let pickupTitle = (passengerPickup || '').trim() || 'আমার লাইভ অবস্থান (GPS)';
     let landmarkRef = passengerPickupLandmark;
-    if (pickupCoords) {
-      const nearest = findNearestLandmark(pickupCoords.lat, pickupCoords.lng);
+    if (safePickupCoords) {
+      const nearest = findNearestLandmark(safePickupCoords.lat, safePickupCoords.lng);
       if (!landmarkRef && nearest.distanceMeters > 40) {
         landmarkRef = `${nearest.name} (থেকে ~${toBengaliNumber(nearest.distanceMeters)} মিটার দূরে)`;
       }
     }
-    const destTitle = passengerDestination.trim() || 'উপজেলা স্বাস্থ্য কমপ্লেক্স';
+    const destTitle = (passengerDestination || '').trim() || 'উপজেলা স্বাস্থ্য কমপ্লেক্স';
 
     if (pickupTitle.trim() === destTitle.trim()) {
       showAdminToastMessage('শুরুর স্থান ও গন্তব্য একই হতে পারে না!');
       return;
     }
 
-    const validFare = (calculatedFare && calculatedFare > 0) ? calculatedFare : (categories.find(c => c.id === passengerSelectedVehicle)?.baseFare || 40);
-    const validDistance = calculatedDistance > 0 ? calculatedDistance : 1.2;
+    const rawFare = Number(calculatedFare);
+    const rawDistance = Number(calculatedDistance);
+    const validFare = (Number.isFinite(rawFare) && rawFare > 0) ? rawFare : (categories.find(c => c.id === passengerSelectedVehicle)?.baseFare || 40);
+    const validDistance = (Number.isFinite(rawDistance) && rawDistance > 0) ? rawDistance : 1.2;
 
     const newRequest: PassengerRideRequest = {
       id: `req-${Date.now()}`,
-      passengerName: passengerProfile.name,
-      passengerPhone: passengerProfile.phone,
+      passengerName: activePassengerName,
+      passengerPhone: activePassengerPhone,
       pickupPoint: pickupTitle,
       pickupLandmark: landmarkRef || undefined,
       destination: destTitle,
-      category: passengerSelectedVehicle,
+      category: passengerSelectedVehicle || 'cng',
       requestedAt: 'এইমাত্র',
       distanceKm: validDistance,
       estFare: validFare,
-      pickupCoords: pickupCoords || { lat: 24.4536, lng: 90.5479 },
-      destCoords: destCoords || { lat: 24.4515, lng: 90.5535 },
+      pickupCoords: safePickupCoords,
+      destCoords: safeDestCoords,
       status: 'pending'
     };
 
@@ -3697,11 +3904,10 @@ export default function App() {
     // First purge any older pending requests from this same passenger in Firestore to avoid duplicate clutter
     getDocs(query(
       collection(db, 'ride_requests'),
-      where('passengerPhone', '==', newRequest.passengerPhone),
-      where('status', '==', 'pending')
+      where('passengerPhone', '==', newRequest.passengerPhone)
     )).then((oldSnaps) => {
       oldSnaps.forEach((d) => {
-        if (d.id !== newRequest.id) {
+        if (d.id !== newRequest.id && d.data()?.status === 'pending') {
           deleteDoc(doc(db, 'ride_requests', d.id)).catch(() => {});
         }
       });
@@ -3718,8 +3924,8 @@ export default function App() {
       category: newRequest.category,
       distanceKm: newRequest.distanceKm,
       estFare: newRequest.estFare,
-      pickupCoords: pickupCoords || { lat: 24.4536, lng: 90.5479 },
-      destCoords: destCoords || { lat: 24.4515, lng: 90.5535 },
+      pickupCoords: safePickupCoords,
+      destCoords: safeDestCoords,
       status: 'pending',
       createdAtMs: Date.now(),
       requestedAt: new Date().toISOString()
@@ -3736,6 +3942,20 @@ export default function App() {
         cockpitEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }, 100);
+  };
+
+  // Submit Passenger Ride Request (Real-Time Live Driver Matching via Firestore)
+  const handlePassengerCreateRideRequest = () => {
+    if (!passengerProfile.isLoggedIn || !passengerProfile.phone) {
+      setPendingRideRequestAfterAuth(true);
+      showAdminToastMessage('যাত্রার অনুরোধ পাঠানোর পূর্বে অনুগ্রহ করে সাইন আপ বা লগইন করুন');
+      setShowPassengerModal(true);
+      setPassengerTab('profile');
+      setPassengerAuthMode('signup');
+      return;
+    }
+    setPendingRideRequestAfterAuth(false);
+    createAndDispatchPassengerRideRequest();
   };
 
   // Cancel Pending Request & Clear Map
@@ -3811,11 +4031,38 @@ export default function App() {
     // 1. Immediately switch to driver role and stop all alarms/vibrations
     setUserRole('driver');
     setShowScreenOpenPopup(false);
-    sounds.stopAllAlarms();
-    highPriorityNotifications.clearIncomingRideAlert();
+    stopUnifiedIncomingAlert();
 
-    const targetReq = passengerRequests.find(r => r.id === requestId)
-      || (passengerPendingRequest?.id === requestId ? passengerPendingRequest : null);
+    let targetReq: PassengerRideRequest | null =
+      passengerRequests.find(r => r.id === requestId) ||
+      (passengerPendingRequest?.id === requestId ? passengerPendingRequest : null);
+
+    // Cold-start notification tap: hydrate request from Firestore if snapshot hasn't arrived yet
+    if (!targetReq) {
+      try {
+        const snap = await getDoc(doc(db, 'ride_requests', requestId));
+        if (snap.exists()) {
+          const d = snap.data();
+          targetReq = {
+            id: snap.id,
+            passengerName: d.passengerName || 'সম্মানিত যাত্রী',
+            passengerPhone: d.passengerPhone || '',
+            pickupPoint: d.pickupPoint || d.pickupLocation || 'পিকআপ স্থান',
+            pickupLandmark: d.pickupLandmark || '',
+            destination: d.destination || d.destinationLocation || 'গন্তব্য স্থান',
+            category: d.category || d.vehicleCategory || 'cng',
+            requestedAt: 'এইমাত্র',
+            distanceKm: Number(d.distanceKm) || 1.2,
+            estFare: Number(d.estFare || d.estimatedFare) || 40,
+            status: (d.status as any) || 'pending',
+            pickupCoords: d.pickupCoords || null,
+            destCoords: d.destCoords || null,
+            createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : Date.now(),
+          };
+        }
+      } catch {}
+    }
+
     const targetPassengerPhone = targetReq?.passengerPhone || '';
 
     // Immediately dismiss alert modal for this request and passenger
@@ -3870,7 +4117,7 @@ export default function App() {
         }));
       }
     } else if (!driverId) {
-      driverId = 'drv-' + driverPhone.replace(/[^0-9]/g, '');
+      driverId = 'drv-' + normalizeCleanPhone(driverPhone);
       setDriverProfile(prev => ({ ...prev, id: driverId }));
     }
 
@@ -3901,39 +4148,37 @@ export default function App() {
     const otpCode = String(Math.floor(1000 + Math.random() * 9000));
     const reqRef = doc(db, 'ride_requests', requestId);
 
-    // 2. Optimistically update local passengerRequests immediately on 1st click
-    // so the driver active trip cockpit opens instantly without lag!
-    // And eliminate any duplicate pending requests for this passenger from the waiting list!
-    setPassengerRequests(prev => prev.map(r => {
-      if (r.id === requestId) {
-        return {
-          ...r,
-          status: 'accepted',
-          driverId: activeDriver.id,
-          driverName: activeDriver.name,
-          driverPhone: activeDriver.phone,
-          driverCategory: activeDriver.category,
-          driverLat: activeDriver.lat,
-          driverLng: activeDriver.lng,
-          driverVehicleModel: activeDriver.vehicleModel,
-          driverLicensePlate: activeDriver.plateNumber || activeDriver.licenseNumber,
-          driverPlateNumber: activeDriver.plateNumber,
-          driverPhoto: activeDriver.driverPhoto,
-          driverRating: activeDriver.rating,
-          otp: otpCode,
-          acceptedAt: new Date().toISOString()
-        };
-      }
-      if (targetPassengerPhone && r.passengerPhone === targetPassengerPhone && r.status === 'pending') {
-        return { ...r, status: 'cancelled' };
-      }
-      return r;
-    }));
+    // 2. Optimistically update (or insert if cold/cross-mode) local passengerRequests immediately on 1st click
+    const acceptedPayload = {
+      driverId: activeDriver.id,
+      driverName: activeDriver.name,
+      driverPhone: activeDriver.phone,
+      driverCategory: activeDriver.category,
+      driverLat: activeDriver.lat,
+      driverLng: activeDriver.lng,
+      driverVehicleModel: activeDriver.vehicleModel,
+      driverLicensePlate: activeDriver.plateNumber || activeDriver.licenseNumber,
+      driverPlateNumber: activeDriver.plateNumber,
+      driverPhoto: activeDriver.driverPhoto,
+      driverRating: activeDriver.rating,
+      otp: otpCode,
+      acceptedAt: new Date().toISOString()
+    };
+
+    setPassengerRequests(prev =>
+      mergeAcceptedRequestIntoList(
+        prev,
+        requestId,
+        acceptedPayload,
+        targetReq,
+        targetPassengerPhone || undefined
+      )
+    );
 
     // 3. Passenger Side Confirmation: If this device is also the passenger, set activeBooking immediately
     // so switching back to Passenger Mode NEVER loses the driver confirmation!
-    const cleanTargetPhone = targetPassengerPhone.replace(/[^0-9]/g, '');
-    const cleanPassengerProfilePhone = (passengerProfile?.phone || '').replace(/[^0-9]/g, '');
+    const cleanTargetPhone = normalizeCleanPhone(targetPassengerPhone);
+    const cleanPassengerProfilePhone = normalizeCleanPhone(passengerProfile?.phone);
     const isThisPassenger = (passengerPendingRequest?.id === requestId) ||
       (cleanTargetPhone && cleanPassengerProfilePhone && cleanTargetPhone === cleanPassengerProfilePhone);
 
@@ -4034,7 +4279,6 @@ export default function App() {
         }, { merge: true });
         showAdminToastMessage(`🎉 ট্রিপ সফলভাবে গ্রহণ করা হয়েছে! যাত্রীর কাছে রওনা দিন।`);
       } catch (e) {
-        // Even if network is offline or quota reached, local state was optimistically set
         showAdminToastMessage(`🎉 ট্রিপ সফলভাবে গ্রহণ করা হয়েছে! যাত্রীর কাছে রওনা দিন।`);
       }
     } finally {
@@ -4046,31 +4290,78 @@ export default function App() {
 
   // Driver declines request
   const handleDriverDeclineRequest = async (requestId: string) => {
-    sounds.stopAllAlarms();
-    highPriorityNotifications.clearIncomingRideAlert();
+    stopUnifiedIncomingAlert();
     setDismissedAlertIds(prev => ({ ...prev, [requestId]: true }));
+    setPassengerRequests(prev => prev.map(req =>
+      req.id === requestId ? { ...req, status: 'declined' } : req
+    ));
+    if (passengerPendingRequest?.id === requestId) {
+      setPassengerPendingRequest(prev => (prev && prev.id === requestId ? { ...prev, status: 'declined' } : prev));
+    }
     try {
       await updateDoc(doc(db, 'ride_requests', requestId), {
         status: 'declined',
         declinedAt: new Date().toISOString()
       });
       showAdminToastMessage('অনুরোধটি বাতিল করা হয়েছে');
-    } catch (err) {
-      setPassengerRequests(prev => prev.map(req => 
-        req.id === requestId ? { ...req, status: 'declined' } : req
-      ));
+    } catch {
+      showAdminToastMessage('অনুরোধটি বাতিল করা হয়েছে');
     }
   };
+
+  handleDriverAcceptRef.current = handleDriverAcceptRequest;
+  handleDriverDeclineRef.current = handleDriverDeclineRequest;
 
   // Handle Android Notification Action Buttons [✅ গ্রহণ করুন (ACCEPT)] & [📲 অ্যাপ খুলুন]
   useEffect(() => {
     // 0. Preload male voice alert buffer on app load
     sounds.preloadVoiceAlert();
-    const handleUnlockAudio = () => {
-      sounds.preloadVoiceAlert();
+
+    const hydratePendingRequestForNotification = async (reqId: string) => {
+      if (!reqId) return;
+      try {
+        const snap = await getDoc(doc(db, 'ride_requests', reqId));
+        if (snap.exists()) {
+          const d = snap.data();
+          if (d && d.status === 'pending') {
+            const hydrated: PassengerRideRequest = {
+              id: snap.id,
+              passengerName: d.passengerName || 'সম্মানিত যাত্রী',
+              passengerPhone: d.passengerPhone || '',
+              pickupPoint: d.pickupPoint || d.pickupLocation || 'পিকআপ স্থান',
+              pickupLandmark: d.pickupLandmark || '',
+              destination: d.destination || d.destinationLocation || 'গন্তব্য স্থান',
+              category: d.category || d.vehicleCategory || 'cng',
+              requestedAt: 'এইমাত্র',
+              distanceKm: Number(d.distanceKm) || 1.2,
+              estFare: Number(d.estFare || d.estimatedFare) || 40,
+              status: 'pending',
+              pickupCoords: d.pickupCoords || null,
+              destCoords: d.destCoords || null,
+              createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : Date.now(),
+            };
+            setPassengerRequests(prev => (prev.some(r => r.id === hydrated.id) ? prev : [hydrated, ...prev]));
+          }
+        }
+      } catch {}
     };
-    window.addEventListener('click', handleUnlockAudio, { once: true, passive: true });
-    window.addEventListener('touchstart', handleUnlockAudio, { once: true, passive: true });
+
+    const handleNotificationAction = (action: string, requestId: string) => {
+      sounds.unlockAudio();
+      setUserRole('driver');
+      setShowScreenOpenPopup(false);
+      if (action === 'accept' && requestId) {
+        handleDriverAcceptRef.current(requestId);
+        showAdminToastMessage('নোটিফিকেশন থেকে ট্রিপ গ্রহণ করা হয়েছে!');
+      } else {
+        setSkipVoiceForCurrentAlert(false);
+        if (requestId) {
+          hydratePendingRequestForNotification(requestId);
+        }
+        sounds.flushPendingVoiceAlert();
+        window.scrollTo({ top: 120, behavior: 'smooth' });
+      }
+    };
 
     // 1. Check URL parameters on mount / app open
     if (typeof window !== 'undefined') {
@@ -4085,51 +4376,38 @@ export default function App() {
       }
 
       if (reqId) {
-        if (actionParam === 'accept') {
-          setUserRole('driver');
-          setShowScreenOpenPopup(false);
-          setSkipVoiceForCurrentAlert(false);
-          handleDriverAcceptRequest(reqId);
-          showAdminToastMessage('নোটিফিকেশন থেকে ট্রিপ গ্রহণ করা হয়েছে!');
-        } else {
-          // Open app pressed: switch directly to driver mode, suppress duplicate popup, skip voice
-          setUserRole('driver');
-          setShowScreenOpenPopup(false);
-          setSkipVoiceForCurrentAlert(true);
-          window.scrollTo({ top: 120, behavior: 'smooth' });
-        }
-        // Clean URL parameters from address bar to prevent replay on reload
+        handleNotificationAction(actionParam || 'open', reqId);
         try {
           window.history.replaceState({}, document.title, window.location.pathname);
         } catch {}
       }
     }
 
+    const handleCustomNotifEvent = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (detail) {
+        handleNotificationAction(detail.action || 'open', detail.requestId || '');
+      }
+    };
+    window.addEventListener('safar-notification-action', handleCustomNotifEvent);
+
     // 2. Listen to postMessage from Service Worker when action button is tapped in notification shade
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'SAFAR_NOTIFICATION_ACTION') {
+        const { action, requestId } = event.data;
+        handleNotificationAction(action || 'open', requestId || '');
+      }
+    };
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-      const handleSwMessage = (event: MessageEvent) => {
-        if (event.data?.type === 'SAFAR_NOTIFICATION_ACTION') {
-          const { action, requestId } = event.data;
-          setUserRole('driver');
-          setShowScreenOpenPopup(false);
-          if (action === 'accept' && requestId) {
-            setSkipVoiceForCurrentAlert(false);
-            handleDriverAcceptRequest(requestId);
-            showAdminToastMessage('নোটিফিকেশন থেকে ট্রিপ গ্রহণ করা হয়েছে!');
-          } else {
-            // Open app pressed: driver mode opened, single popup, voice skipped, Duff & vibration continues
-            setSkipVoiceForCurrentAlert(true);
-            window.scrollTo({ top: 120, behavior: 'smooth' });
-          }
-        }
-      };
       navigator.serviceWorker.addEventListener('message', handleSwMessage);
-      return () => {
-        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
-        window.removeEventListener('click', handleUnlockAudio);
-        window.removeEventListener('touchstart', handleUnlockAudio);
-      };
     }
+
+    return () => {
+      window.removeEventListener('safar-notification-action', handleCustomNotifEvent);
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      }
+    };
   }, []);
 
   // Refs & Synchronized Height State for Category and Active Drivers
@@ -4402,7 +4680,7 @@ export default function App() {
         <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 195px;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
             <span style="font-size: 11px; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-weight: 600; color: #475569;">${driver.categoryBengali}</span>
-            <span style="font-size: 11px; color: #d97706; font-weight: 700;">★ ${driver.rating.toFixed(1)}</span>
+            <span style="font-size: 11px; color: #d97706; font-weight: 700;">★ ${formatSafeRating(driver.rating)}</span>
           </div>
           <h4 style="font-weight: 700; color: #0f172a; margin: 0 0 2px 0; font-size: 13.5px;">${driver.name}</h4>
           <p style="font-size: 12px; color: #0284c7; font-weight: 600; margin: 0 0 2px 0;">${driver.vehicleModel}</p>
@@ -4421,7 +4699,12 @@ export default function App() {
     });
 
     // 3. Active Passenger Ride Booking: Real-Time Mutual Live Tracking & Polyline Route
-    if (activeBooking && mapInstanceRef.current) {
+    if (activeBooking && activeBooking.driver && mapInstanceRef.current) {
+      const pLat = typeof activeBooking.passengerLat === 'number' && Number.isFinite(activeBooking.passengerLat) ? activeBooking.passengerLat : 24.4536;
+      const pLng = typeof activeBooking.passengerLng === 'number' && Number.isFinite(activeBooking.passengerLng) ? activeBooking.passengerLng : 90.5479;
+      const dLat = typeof activeBooking.currentDriverLat === 'number' && Number.isFinite(activeBooking.currentDriverLat) ? activeBooking.currentDriverLat : 24.4536;
+      const dLng = typeof activeBooking.currentDriverLng === 'number' && Number.isFinite(activeBooking.currentDriverLng) ? activeBooking.currentDriverLng : 90.5479;
+
       // Passenger Pin
       const passengerIcon = L.divIcon({
         className: 'custom-passenger-marker',
@@ -4437,7 +4720,7 @@ export default function App() {
         iconAnchor: [12, 12],
       });
 
-      const passMarker = L.marker([activeBooking.passengerLat, activeBooking.passengerLng], { icon: passengerIcon });
+      const passMarker = L.marker([pLat, pLng], { icon: passengerIcon });
       passMarker.bindPopup(`
         <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px;">
           <h4 style="font-weight: 700; color: #1d4ed8; margin: 0 0 2px 0;">যাত্রীর লাইভ অবস্থান</h4>
@@ -4454,7 +4737,7 @@ export default function App() {
           <div style="position: relative;">
             <div style="position: absolute; width: 38px; height: 38px; border-radius: 50%; background: rgba(16, 185, 129, 0.4); animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite; top: -5px; left: -5px;"></div>
             <div style="background-color: #059669; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.4); border: 2.5px solid white; font-weight: bold;">
-              ${activeBooking.driver.category === 'ambulance' ? '✚' : '🚗'}
+              ${activeBooking.driver?.category === 'ambulance' ? '✚' : '🚗'}
             </div>
           </div>
         `,
@@ -4462,44 +4745,56 @@ export default function App() {
         iconAnchor: [14, 14],
       });
 
-      const driverMarker = L.marker([activeBooking.currentDriverLat, activeBooking.currentDriverLng], { icon: liveDriverIcon });
+      const driverMarker = L.marker([dLat, dLng], { icon: liveDriverIcon });
       driverMarker.bindPopup(`
         <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px;">
-          <h4 style="font-weight: 700; color: #047857; margin: 0 0 2px 0;">চালকের অবস্থান: ${activeBooking.driver.name}</h4>
-          <p style="font-size: 11px; color: #334155; margin: 0 0 4px 0;">লাইসেন্স: ${activeBooking.driver.licenseNumber}</p>
-          <p style="font-size: 11px; color: #2563eb; font-weight: 700; margin: 0;">দূরত্ব: ${activeBooking.distanceKm} কিমি | পৌঁছাতে বাকি: ${activeBooking.etaMinutes} মিনিট</p>
+          <h4 style="font-weight: 700; color: #047857; margin: 0 0 2px 0;">চালকের অবস্থান: ${activeBooking.driver?.name || 'নিবন্ধিত চালক'}</h4>
+          <p style="font-size: 11px; color: #334155; margin: 0 0 4px 0;">লাইসেন্স: ${activeBooking.driver?.licenseNumber || 'BRTA'}</p>
+          <p style="font-size: 11px; color: #2563eb; font-weight: 700; margin: 0;">দূরত্ব: ${activeBooking.distanceKm ?? 1.2} কিমি | পৌঁছাতে বাকি: ${activeBooking.etaMinutes ?? 5} মিনিট</p>
         </div>
       `);
       markersRef.current.addLayer(driverMarker);
       driverLiveMarkerRef.current = driverMarker;
 
-      // Connecting Polyline Route
-      const routePoints: [number, number][] = [
-        [activeBooking.currentDriverLat, activeBooking.currentDriverLng],
-        [
-          (activeBooking.currentDriverLat + activeBooking.passengerLat) / 2 + 0.0006,
-          (activeBooking.currentDriverLng + activeBooking.passengerLng) / 2 - 0.0005
-        ],
-        [activeBooking.passengerLat, activeBooking.passengerLng]
-      ];
+      try {
+        const routePoints: [number, number][] = [
+          [dLat, dLng],
+          [
+            (dLat + pLat) / 2 + 0.0006,
+            (dLng + pLng) / 2 - 0.0005
+          ],
+          [pLat, pLng]
+        ];
 
-      const polyline = L.polyline(routePoints, {
-        color: '#2563eb',
-        weight: 5,
-        opacity: 0.85,
-        dashArray: '8, 8',
-        lineCap: 'round'
-      }).addTo(mapInstanceRef.current);
+        const polyline = L.polyline(routePoints, {
+          color: '#2563eb',
+          weight: 5,
+          opacity: 0.85,
+          dashArray: '8, 8',
+          lineCap: 'round'
+        }).addTo(mapInstanceRef.current);
 
-      routeLayerRef.current = polyline;
+        routeLayerRef.current = polyline;
 
-      // Fit bounds with padding
-      const bounds = L.latLngBounds([
-        [activeBooking.currentDriverLat, activeBooking.currentDriverLng],
-        [activeBooking.passengerLat, activeBooking.passengerLng]
-      ]);
-      mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40] });
-    } else if (mapInstanceRef.current && pickupCoords && destCoords) {
+        const bounds = L.latLngBounds([
+          [dLat, dLng],
+          [pLat, pLng]
+        ]);
+        mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40] });
+      } catch {}
+    } else if (
+      mapInstanceRef.current &&
+      pickupCoords &&
+      destCoords &&
+      typeof pickupCoords.lat === 'number' &&
+      Number.isFinite(pickupCoords.lat) &&
+      typeof pickupCoords.lng === 'number' &&
+      Number.isFinite(pickupCoords.lng) &&
+      typeof destCoords.lat === 'number' &&
+      Number.isFinite(destCoords.lat) &&
+      typeof destCoords.lng === 'number' &&
+      Number.isFinite(destCoords.lng)
+    ) {
       // 4. Live Ride Planning Preview: Render Pickup Pin (A), Destination Pin (B) & Connecting Route!
       
       // Pickup Pin (A)
@@ -4554,39 +4849,39 @@ export default function App() {
       `);
       markersRef.current.addLayer(dMarker);
 
-      // Connecting Polyline Route
-      if (pickupCoords.lat !== destCoords.lat || pickupCoords.lng !== destCoords.lng) {
-        const midLat = (pickupCoords.lat + destCoords.lat) / 2 + 0.0004;
-        const midLng = (pickupCoords.lng + destCoords.lng) / 2 - 0.0004;
-        const routePoints: [number, number][] = [
-          [pickupCoords.lat, pickupCoords.lng],
-          [midLat, midLng],
-          [destCoords.lat, destCoords.lng]
-        ];
+      try {
+        if (pickupCoords.lat !== destCoords.lat || pickupCoords.lng !== destCoords.lng) {
+          const midLat = (pickupCoords.lat + destCoords.lat) / 2 + 0.0004;
+          const midLng = (pickupCoords.lng + destCoords.lng) / 2 - 0.0004;
+          const routePoints: [number, number][] = [
+            [pickupCoords.lat, pickupCoords.lng],
+            [midLat, midLng],
+            [destCoords.lat, destCoords.lng]
+          ];
 
-        const polyline = L.polyline(routePoints, {
-          color: '#059669',
-          weight: 5,
-          opacity: 0.9,
-          dashArray: '8, 8',
-          lineCap: 'round'
-        }).addTo(mapInstanceRef.current);
+          const polyline = L.polyline(routePoints, {
+            color: '#059669',
+            weight: 5,
+            opacity: 0.9,
+            dashArray: '8, 8',
+            lineCap: 'round'
+          }).addTo(mapInstanceRef.current);
 
-        polyline.bindTooltip(`দূরত্ব: ${calculatedDistance} কিমি • সময়: ${calculatedDurationMinutes} মিনিট`, {
-          permanent: true,
-          direction: 'center',
-          className: 'route-distance-tooltip'
-        });
+          polyline.bindTooltip(`দূরত্ব: ${calculatedDistance} কিমি • সময়: ${calculatedDurationMinutes} মিনিট`, {
+            permanent: true,
+            direction: 'center',
+            className: 'route-distance-tooltip'
+          });
 
-        routeLayerRef.current = polyline;
+          routeLayerRef.current = polyline;
 
-        // Fit bounds comfortably
-        const bounds = L.latLngBounds([
-          [pickupCoords.lat, pickupCoords.lng],
-          [destCoords.lat, destCoords.lng]
-        ]);
-        mapInstanceRef.current.fitBounds(bounds, { padding: [55, 55], maxZoom: 16 });
-      }
+          const bounds = L.latLngBounds([
+            [pickupCoords.lat, pickupCoords.lng],
+            [destCoords.lat, destCoords.lng]
+          ]);
+          mapInstanceRef.current.fitBounds(bounds, { padding: [55, 55], maxZoom: 16 });
+        }
+      } catch {}
     }
   }, [selectedCategory, selectedStand, drivers, stands, activeBooking, pickupCoords, destCoords, passengerPickup, passengerDestination, calculatedDistance, calculatedDurationMinutes]);
 
@@ -4885,16 +5180,22 @@ export default function App() {
   // Handle Passenger Confirm Ride with Live Distance & ETA calculation
   // Handle Passenger Confirm Ride with Live Distance, ETA & Automatic State/History Sync
   const handleConfirmRide = (driver: Driver) => {
+    if (!driver) return;
     const pTitle = passengerPickup || (selectedStand !== 'all' ? selectedStand : 'গফরগাঁও লাইভ অবস্থান');
     const dTitle = passengerDestination || driver.standName || 'উপজেলা স্বাস্থ্য কমপ্লেক্স';
-    const pLat = pickupCoords?.lat || passengerLocation.lat || 24.4536;
-    const pLng = pickupCoords?.lng || passengerLocation.lng || 90.5479;
+    const rawPLat = pickupCoords?.lat ?? passengerLocation.lat;
+    const rawPLng = pickupCoords?.lng ?? passengerLocation.lng;
+    const pLat = typeof rawPLat === 'number' && Number.isFinite(rawPLat) ? rawPLat : 24.4536;
+    const pLng = typeof rawPLng === 'number' && Number.isFinite(rawPLng) ? rawPLng : 90.5479;
     const resolvedDest = destCoords || resolveLocationCoordinates(dTitle, true, stands) || { lat: 24.4515, lng: 90.5535 };
-    const dLat = resolvedDest.lat;
-    const dLng = resolvedDest.lng;
-    const dist = calculateDistanceKm(driver.lat, driver.lng, pLat, pLng);
-    const eta = calculateEtaMinutes(dist, driver.approxSpeedKmh);
-    const estFare = Math.max(35, Math.round(dist * (driver.category === 'bike' ? 22 : driver.category === 'cng' ? 26 : driver.category === 'ambulance' ? 60 : 35)));
+    const dLat = typeof resolvedDest.lat === 'number' && Number.isFinite(resolvedDest.lat) ? resolvedDest.lat : 24.4515;
+    const dLng = typeof resolvedDest.lng === 'number' && Number.isFinite(resolvedDest.lng) ? resolvedDest.lng : 90.5535;
+    const drvLat = typeof driver.lat === 'number' && Number.isFinite(driver.lat) ? driver.lat : 24.4536;
+    const drvLng = typeof driver.lng === 'number' && Number.isFinite(driver.lng) ? driver.lng : 90.5479;
+    const rawDist = calculateDistanceKm(drvLat, drvLng, pLat, pLng);
+    const dist = Number.isFinite(rawDist) && rawDist > 0 ? rawDist : 1.2;
+    const rawFare = Math.round(dist * (driver.category === 'bike' ? 22 : driver.category === 'cng' ? 26 : driver.category === 'ambulance' ? 60 : 35));
+    const estFare = Math.max(35, Number.isFinite(rawFare) ? rawFare : 40);
     const validFare = (estFare && estFare > 0) ? estFare : (categories.find(c => c.id === driver.category)?.baseFare || 40);
 
     let landmarkRef = passengerPickupLandmark;
@@ -4913,7 +5214,7 @@ export default function App() {
       pickupPoint: pTitle,
       pickupLandmark: landmarkRef || undefined,
       destination: dTitle,
-      category: driver.category,
+      category: driver.category || 'cng',
       requestedAt: 'এইমাত্র',
       distanceKm: dist,
       estFare: validFare,
@@ -4921,7 +5222,7 @@ export default function App() {
       destCoords: { lat: dLat, lng: dLng },
       status: 'pending',
       driverId: driver.id,
-      driverName: driver.name
+      driverName: driver.name || 'নিবন্ধিত চালক'
     };
 
     setPassengerPendingRequest(newRideRequest);
@@ -5127,10 +5428,10 @@ export default function App() {
   // ADMIN CONTROL PANEL HANDLERS (STANDS, CATEGORIES, DRIVERS, HOTLINES)
   // =========================================================================
 
-  // Admin Login with Secret PIN
+  // Admin Login with Secret PIN or Custom Admin Password
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminPinInput.trim() === '7788' || adminPinInput.trim() === '2026') {
+    if (verifyAdminPin(adminPinInput, adminPinConfig)) {
       setIsAdminLoggedIn(true);
       try {
         sessionStorage.setItem('safar_admin_auth', 'true');
@@ -5138,11 +5439,73 @@ export default function App() {
       setShowAdminAuthModal(false);
       setShowAdminDashboard(true);
       setAdminPinInput('');
+      setShowAdminRecoveryMode(false);
+      setAdminRecoveryCodeInput('');
       setAdminAuthError(null);
       showAdminToastMessage('অ্যাডমিন ড্যাশবোর্ডে স্বাগতম!');
     } else {
-      setAdminAuthError('ভুল পিন কোড! অনুগ্রহ করে সঠিক অ্যাডমিন পিন দিন।');
+      setAdminAuthError('ভুল পিন বা পাসওয়ার্ড! সঠিক পিন/পাসওয়ার্ড দিন অথবা নিচে "পিন ভুলে গেছেন?" থেকে রিসেট করুন।');
     }
+  };
+
+  // Admin Password / PIN Change Handler (Dedicated Admin Slot)
+  const handleChangeAdminPin = (currentPin: string, newPin: string, confirmPin: string): { ok: boolean; message: string } => {
+    const check = validateAdminPinChange(currentPin, newPin, confirmPin, adminPinConfig);
+    if (!check.ok || !check.normalizedPin) {
+      return { ok: false, message: check.message };
+    }
+    const nextPin = check.normalizedPin;
+    const nextConfig: AdminPinConfig = {
+      customPin: nextPin,
+      hasCustomPin: true
+    };
+    setAdminPinConfig(nextConfig);
+    try {
+      localStorage.setItem('safar_admin_pin_v1', JSON.stringify(nextConfig));
+    } catch {}
+    setDoc(doc(db, 'settings', 'admin_security'), {
+      customPin: nextPin,
+      hasCustomPin: true,
+      updatedAt: new Date().toISOString()
+    }, { merge: true }).catch(() => {});
+    showAdminToastMessage(check.message);
+    return { ok: true, message: check.message };
+  };
+
+  // Reset Custom Admin PIN back to default (7788)
+  const handleResetAdminPinToDefault = () => {
+    const nextConfig: AdminPinConfig = { customPin: null, hasCustomPin: false };
+    setAdminPinConfig(nextConfig);
+    try {
+      localStorage.setItem('safar_admin_pin_v1', JSON.stringify(nextConfig));
+    } catch {}
+    setDoc(doc(db, 'settings', 'admin_security'), {
+      customPin: null,
+      hasCustomPin: false,
+      updatedAt: new Date().toISOString()
+    }, { merge: true }).catch(() => {});
+    showAdminToastMessage('অ্যাডমিন পিন সফলভাবে ডিফল্ট পিন (7788)-এ রিসেট হয়েছে!');
+  };
+
+  // Master Recovery Code handler (77882026) inside Admin Login Modal if locked out
+  const handleAdminMasterRecovery = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!verifyMasterRecoveryCode(adminRecoveryCodeInput)) {
+      setAdminAuthError('মাস্টার রিকভারি কোড সঠিক নয়। মাস্টার রিকভারি কোড: 77882026');
+      return;
+    }
+    handleResetAdminPinToDefault();
+    setIsAdminLoggedIn(true);
+    try {
+      sessionStorage.setItem('safar_admin_auth', 'true');
+    } catch {}
+    setShowAdminAuthModal(false);
+    setShowAdminDashboard(true);
+    setAdminPinInput('');
+    setAdminRecoveryCodeInput('');
+    setShowAdminRecoveryMode(false);
+    setAdminAuthError(null);
+    showAdminToastMessage('মাস্টার রিকভারি সম্পন্ন! পিন এখন 7788 এবং অ্যাডমিন প্যানেল খোলা হয়েছে।');
   };
 
   // Admin Logout
@@ -6026,7 +6389,7 @@ export default function App() {
                 if (mapEl) mapEl.scrollIntoView({ behavior: 'smooth' });
                 showAdminToastMessage('ম্যাপে চালকের লাইভ অবস্থান ফোকাস করা হয়েছে');
               }}
-              categoryBengaliName={categories.find(c => c.id === (passengerPendingRequest?.category || activeBooking?.driver.category))?.nameBengali || 'অটো'}
+              categoryBengaliName={categories.find(c => c.id === (passengerPendingRequest?.category || activeBooking?.driver?.category))?.nameBengali || 'অটো'}
             />
           </div>
         )}
@@ -6035,27 +6398,26 @@ export default function App() {
         {userRole === 'passenger' && activeIncomingRideForDriver && showScreenOpenPopup && (
           <DriverScreenOpenNotificationPopup
             request={activeIncomingRideForDriver}
+            managedByParent={true}
+            remainingSeconds={incomingAlertSecondsRemaining}
             onOpenDashboard={() => {
               setUserRole('driver');
               setShowScreenOpenPopup(false);
-              setSkipVoiceForCurrentAlert(true);
               window.scrollTo({ top: 120, behavior: 'smooth' });
             }}
             onAccept={(reqId) => {
               setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-              sounds.stopAllAlarms();
-              highPriorityNotifications.clearIncomingRideAlert();
+              stopUnifiedIncomingAlert();
               setShowScreenOpenPopup(false);
               setSkipVoiceForCurrentAlert(false);
               handleDriverAcceptRequest(reqId);
             }}
             onDecline={(reqId) => {
               setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-              sounds.stopAllAlarms();
-              highPriorityNotifications.clearIncomingRideAlert();
+              stopUnifiedIncomingAlert();
               setShowScreenOpenPopup(false);
               setSkipVoiceForCurrentAlert(false);
-              showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
+              handleDriverDeclineRequest(reqId);
             }}
           />
         )}
@@ -6065,22 +6427,22 @@ export default function App() {
           <DriverIncomingAlert
             key={activeIncomingRideForDriver.id}
             request={activeIncomingRideForDriver}
+            managedByParent={true}
+            remainingSeconds={incomingAlertSecondsRemaining}
             skipVoiceAnnouncement={skipVoiceForCurrentAlert}
             onAccept={(reqId) => {
               setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-              sounds.stopAllAlarms();
-              highPriorityNotifications.clearIncomingRideAlert();
+              stopUnifiedIncomingAlert();
               setShowScreenOpenPopup(false);
               setSkipVoiceForCurrentAlert(false);
               handleDriverAcceptRequest(reqId);
             }}
             onDecline={(reqId) => {
               setDismissedAlertIds(prev => ({ ...prev, [reqId]: true }));
-              sounds.stopAllAlarms();
-              highPriorityNotifications.clearIncomingRideAlert();
+              stopUnifiedIncomingAlert();
               setShowScreenOpenPopup(false);
               setSkipVoiceForCurrentAlert(false);
-              showAdminToastMessage('অনুরোধটি আপনার স্ক্রিন থেকে সরানো হয়েছে');
+              handleDriverDeclineRequest(reqId);
             }}
           />
         )}
@@ -6793,7 +7155,7 @@ export default function App() {
                           </a>
 
                           <a
-                            href={`https://wa.me/88${driverActiveTrip.passengerPhone.replace(/[^0-9]/g, '')}`}
+                            href={`https://wa.me/88${(driverActiveTrip.passengerPhone || '').replace(/[^0-9]/g, '')}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 bg-green-600 hover:bg-green-500 text-white px-2.5 py-2 rounded-xl text-xs font-bold shadow-md cursor-pointer transition"
@@ -7288,7 +7650,7 @@ export default function App() {
                                 </div>
                                 <div className="flex items-center gap-0.5 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded text-amber-800 text-[9px] sm:text-[9.5px] font-bold">
                                   <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
-                                  <span>{driver.rating.toFixed(1)}</span>
+                                  <span>{formatSafeRating(driver.rating)}</span>
                                 </div>
                               </div>
 
@@ -7310,7 +7672,7 @@ export default function App() {
                                   <MapPin className="w-2.5 h-2.5 text-slate-400 shrink-0" />
                                   <div className="min-w-0 flex-1">
                                     <PauseMarqueeText
-                                      text={driver.standName.replace(' স্ট্যান্ড', '')}
+                                      text={(driver.standName || '').replace(' স্ট্যান্ড', '')}
                                       className="text-[8.5px] sm:text-[9.5px] text-slate-500"
                                       pauseSec={1.5}
                                     />
@@ -7534,7 +7896,7 @@ export default function App() {
                   </span>
                   <span className="text-amber-400 font-bold text-xs flex items-center gap-0.5">
                     <Star className="w-3 h-3 fill-amber-400" />
-                    {selectedDriver.rating.toFixed(1)} রেটিং
+                    {formatSafeRating(selectedDriver.rating)} রেটিং
                   </span>
                   <span className="text-slate-300 text-[10px] hidden xs:inline">
                     ({selectedDriver.totalTrips}+ সফল রাইড)
@@ -7647,9 +8009,12 @@ export default function App() {
                     <div className="min-w-0">
                       <p className="text-[10px] font-bold text-slate-800">৩. জাতীয় পরিচয়পত্র (NID)</p>
                       <p className="text-[10px] text-purple-700 font-bold truncate">
-                        {selectedDriver.nidNumber.length > 5 
-                          ? `${selectedDriver.nidNumber.slice(0, 3)}****${selectedDriver.nidNumber.slice(-3)}` 
-                          : selectedDriver.nidNumber}
+                        {(() => {
+                          const nidStr = String(selectedDriver.nidNumber || '').trim();
+                          return nidStr.length > 5
+                            ? `${nidStr.slice(0, 3)}****${nidStr.slice(-3)}`
+                            : (nidStr || 'যাচাইকৃত');
+                        })()}
                       </p>
                       <p className={`text-[9px] font-semibold ${selectedDriver.nidVerified ? 'text-emerald-700 font-bold' : 'text-amber-700'}`}>
                         {selectedDriver.nidVerified ? '✅ স্মার্ট কার্ড মিল সম্পন্ন' : '⏳ যাচাই পেন্ডিং'}
@@ -7668,7 +8033,9 @@ export default function App() {
 
               {/* Real Distance, Location & Arrival Status */}
               {(() => {
-                const dist = calculateDistanceKm(selectedDriver.lat, selectedDriver.lng, passengerLocation.lat, passengerLocation.lng);
+                const drvLat = typeof selectedDriver.lat === 'number' && Number.isFinite(selectedDriver.lat) ? selectedDriver.lat : 24.4536;
+                const drvLng = typeof selectedDriver.lng === 'number' && Number.isFinite(selectedDriver.lng) ? selectedDriver.lng : 90.5479;
+                const dist = calculateDistanceKm(drvLat, drvLng, passengerLocation.lat, passengerLocation.lng);
                 const eta = calculateEtaMinutes(dist, selectedDriver.approxSpeedKmh);
 
                 return (
@@ -9464,60 +9831,135 @@ export default function App() {
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">অ্যাডমিন প্রবেশদ্বার</h3>
-                  <p className="text-[10px] text-slate-500">নিরাপত্তা পিন কোড যাচাই</p>
+                  <p className="text-[10px] text-slate-500">
+                    {adminPinConfig.hasCustomPin ? 'কাস্টম পাসওয়ার্ড / পিন সক্রিয়' : 'নিরাপত্তা পিন কোড যাচাই'}
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => { setShowAdminAuthModal(false); setAdminAuthError(null); setAdminPinInput(''); }}
+                onClick={() => {
+                  setShowAdminAuthModal(false);
+                  setAdminAuthError(null);
+                  setAdminPinInput('');
+                  setShowAdminRecoveryMode(false);
+                  setAdminRecoveryCodeInput('');
+                }}
                 className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                aria-label="বন্ধ করুন"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleAdminLogin} className="space-y-3.5">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                  গোপন অ্যাডমিন পিন (PIN):
-                </label>
-                <div className="relative">
+            {!showAdminRecoveryMode ? (
+              <form onSubmit={handleAdminLogin} className="space-y-3.5">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                    গোপন অ্যাডমিন পিন বা পাসওয়ার্ড:
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="password"
+                      maxLength={24}
+                      value={adminPinInput}
+                      onChange={(e) => { setAdminPinInput(e.target.value); setAdminAuthError(null); }}
+                      placeholder={adminPinConfig.hasCustomPin ? 'আপনার সেট করা পাসওয়ার্ড বা পিন দিন' : 'গোপন পিন কোড দিন'}
+                      autoFocus
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-center text-base tracking-widest font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                    />
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                </div>
+
+                {adminAuthError && (
+                  <div className="p-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs flex items-center gap-1.5 font-medium animate-in fade-in">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+                    <span>{adminAuthError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAdminAuthModal(false);
+                      setAdminAuthError(null);
+                      setAdminPinInput('');
+                    }}
+                    className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+                  >
+                    বাতিল
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold rounded-xl text-xs shadow-md cursor-pointer transition-colors"
+                  >
+                    লগইন করুন
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAdminRecoveryMode(true);
+                      setAdminAuthError(null);
+                    }}
+                    className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+                  >
+                    পিন বা পাসওয়ার্ড ভুলে গেছেন? ডিফল্ট পিন (7788)-এ রিসেট করুন
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleAdminMasterRecovery} className="space-y-3">
+                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-950 font-semibold leading-relaxed">
+                  অ্যাডমিন পিন বা পাসওয়ার্ড ভুলে গেলে নিচের ঘরে মাস্টার রিকভারি কোড (<span className="font-mono font-black">77882026</span>) দিন — সাথে সাথে ডিফল্ট পিন <span className="font-mono font-black">7788</span> পুনঃস্থাপিত হয়ে অ্যাডমিন প্যানেল খুলে যাবে।
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    মাস্টার রিকভারি কোড:
+                  </label>
                   <input
-                    type="password"
-                    maxLength={8}
-                    value={adminPinInput}
-                    onChange={(e) => { setAdminPinInput(e.target.value); setAdminAuthError(null); }}
-                    placeholder="গোপন পিন কোড দিন"
+                    type="text"
+                    maxLength={12}
+                    value={adminRecoveryCodeInput}
+                    onChange={(e) => { setAdminRecoveryCodeInput(e.target.value); setAdminAuthError(null); }}
+                    placeholder="77882026"
                     autoFocus
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-center text-base tracking-widest font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-center text-sm tracking-widest font-mono font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
-              </div>
 
-              {adminAuthError && (
-                <div className="p-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs flex items-center gap-1.5 font-medium animate-in fade-in">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-                  <span>{adminAuthError}</span>
+                {adminAuthError && (
+                  <div className="p-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs flex items-center gap-1.5 font-medium">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+                    <span>{adminAuthError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAdminRecoveryMode(false);
+                      setAdminAuthError(null);
+                    }}
+                    className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+                  >
+                    পেছনে যান
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md cursor-pointer"
+                  >
+                    রিসেট ও লগইন করুন
+                  </button>
                 </div>
-              )}
-
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => { setShowAdminAuthModal(false); setAdminAuthError(null); setAdminPinInput(''); }}
-                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
-                >
-                  বাতিল
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold rounded-xl text-xs shadow-md cursor-pointer transition-colors"
-                >
-                  লগইন করুন
-                </button>
-              </div>
-            </form>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -9531,6 +9973,9 @@ export default function App() {
         showToast={showAdminToastMessage}
         onOpenCloudflareSettings={() => setShowCloudflareModal(true)}
         onOpenSourceCodeModal={() => setShowSourceCodeModal(true)}
+        adminPinState={{ hasCustomPin: adminPinConfig.hasCustomPin }}
+        onChangeAdminPin={handleChangeAdminPin}
+        onResetAdminPinToDefault={handleResetAdminPinToDefault}
         stands={stands}
         onSaveStand={(stand, isEdit) => {
           if (isEdit) {
@@ -9842,7 +10287,7 @@ export default function App() {
                                 {stand.bengaliName}
                               </h4>
                               <p className="text-[11px] text-slate-500 font-mono mt-0.5">
-                                GPS: {stand.lat.toFixed(4)}, {stand.lng.toFixed(4)}
+                                GPS: {Number(stand.lat || 0).toFixed(4)}, {Number(stand.lng || 0).toFixed(4)}
                               </p>
                               <div className="mt-2 flex items-center gap-1.5">
                                 <span className="bg-emerald-50 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-200">
@@ -11110,3 +11555,5 @@ export default function App() {
     </div>
   );
 }
+
+

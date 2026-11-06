@@ -41,7 +41,10 @@ import {
   ArrowLeft,
   ArrowUp,
   ArrowDown,
-  Copy
+  Copy,
+  Key,
+  Lock,
+  EyeOff
 } from 'lucide-react';
 import { Stand, Driver, VehicleCategoryItem } from '../App';
 import { EmergencyContact } from '../types';
@@ -108,6 +111,9 @@ export interface AdminControlPanelProps {
   onCleanupOldTrips?: () => void;
   tripStats?: { total: number; completed: number; cancelled: number };
   onOpenSourceCodeModal?: () => void;
+  adminPinState?: { hasCustomPin: boolean };
+  onChangeAdminPin?: (currentPin: string, newPin: string, confirmPin: string) => { ok: boolean; message: string };
+  onResetAdminPinToDefault?: () => void;
 }
 
 export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
@@ -140,7 +146,10 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   showToast,
   onCleanupOldTrips,
   tripStats,
-  onOpenSourceCodeModal
+  onOpenSourceCodeModal,
+  adminPinState,
+  onChangeAdminPin,
+  onResetAdminPinToDefault
 }) => {
   const [activeTab, setActiveTab] = useState<'stands' | 'categories' | 'appearance' | 'quick_chips' | 'drivers' | 'hotlines' | 'places' | 'backup'>('appearance');
   const [isZipDownloading, setIsZipDownloading] = useState(false);
@@ -149,8 +158,15 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.৪০ MB');
 
+  // Dedicated Admin Password / PIN Change Slot State
+  const [currentPinInput, setCurrentPinInput] = useState('');
+  const [newPinInput, setNewPinInput] = useState('');
+  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [showPinCharacters, setShowPinCharacters] = useState(false);
+  const [pinChangeFeedback, setPinChangeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+
   useEffect(() => {
-    // Dynamically fetch accurate zip file size on mount
+    if (!isOpen) return;
     fetch('/safar-gafargaon-clean-source.zip', { method: 'HEAD', cache: 'no-store' })
       .then(res => {
         const cl = res.headers.get('content-length');
@@ -163,7 +179,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
         }
       })
       .catch(() => {});
-  }, []);
+  }, [isOpen, activeTab]);
 
   // Stand Form Modal State
   const [editingStand, setEditingStand] = useState<Stand | null>(null);
@@ -650,7 +666,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     setIsZipDownloading(true);
     setDownloadError(null);
     try {
-      showToast('⏳ সম্পূর্ণ প্রজেক্ট জিপ মেমোরিতে প্রস্তুত করা হচ্ছে (৩.৪০ MB)...');
+      showToast('⏳ সম্পূর্ণ প্রজেক্ট জিপ মেমোরিতে প্রস্তুত করা হচ্ছে...');
 
       const endpoints = [
         `/safar-gafargaon-clean-source.zip?t=${Date.now()}`,
@@ -832,14 +848,33 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 hover:bg-slate-700 cursor-pointer transition"
-            title="বন্ধ করুন"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('backup');
+                setTimeout(() => {
+                  const slotEl = document.getElementById('admin-password-change-slot');
+                  if (slotEl) slotEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 60);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black shadow-xs cursor-pointer transition active:scale-95"
+              title="অ্যাডমিন প্যানেল পাসওয়ার্ড / পিন পরিবর্তন স্লট"
+            >
+              <Key className="w-3.5 h-3.5 text-slate-950" />
+              <span>পাসওয়ার্ড পরিবর্তন</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 hover:bg-slate-700 cursor-pointer transition"
+              title="বন্ধ করুন"
+              aria-label="বন্ধ করুন"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -945,7 +980,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
             }`}
           >
             <Bookmark className="w-3.5 h-3.5" />
-            <span>💾 ব্যাকআপ ও রিসেট</span>
+            <span>💾 ব্যাকআপ ও পাসওয়ার্ড/রিসেট</span>
           </button>
         </div>
 
@@ -2415,10 +2450,172 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
           )}
 
           {/* ========================================================== */}
-          {/* TAB: BACKUP & RESTORE                                     */}
+          {/* TAB: BACKUP, ADMIN PASSWORD SLOT & RESTORE                */}
           {/* ========================================================== */}
-          {activeTab === 'backup' && (
+          {activeTab === 'backup' && (() => {
+            const liveOriginZipUrl = typeof window !== 'undefined'
+              ? `${window.location.origin}/safar-gafargaon-clean-source.zip`
+              : '/safar-gafargaon-clean-source.zip';
+
+            const handleAdminPasswordSubmit = (e: React.FormEvent) => {
+              e.preventDefault();
+              setPinChangeFeedback(null);
+              if (!onChangeAdminPin) return;
+              const result = onChangeAdminPin(currentPinInput, newPinInput, confirmPinInput);
+              setPinChangeFeedback({ ok: result.ok, text: result.message });
+              if (result.ok) {
+                setCurrentPinInput('');
+                setNewPinInput('');
+                setConfirmPinInput('');
+              }
+            };
+
+            return (
             <div className="space-y-6 max-w-3xl">
+              {/* DEDICATED SLOT: ADMIN PANEL PASSWORD / PIN CHANGE */}
+              <div
+                id="admin-password-change-slot"
+                className="bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 text-white p-5 rounded-2xl border-2 border-amber-400/80 shadow-md space-y-4 scroll-mt-4"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-black shrink-0 shadow-xs">
+                      <Key className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-black text-sm sm:text-base text-white">
+                        অ্যাডমিন প্যানেল পাসওয়ার্ড / পিন পরিবর্তন স্লট
+                      </h3>
+                      <p className="text-[11px] text-slate-300">
+                        অ্যাডমিন প্রবেশদ্বারের গোপন পিন বা পাসওয়ার্ড এখান থেকে পরিবর্তন ও রিসেট করুন
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`inline-flex items-center gap-1.5 text-[10.5px] font-black px-2.5 py-1 rounded-full self-start sm:self-auto border ${
+                    adminPinState?.hasCustomPin
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50'
+                      : 'bg-amber-400/20 text-amber-200 border-amber-400/40'
+                  }`}>
+                    <Lock className="w-3 h-3" />
+                    <span>{adminPinState?.hasCustomPin ? 'কাস্টম পাসওয়ার্ড সক্রিয়' : 'ডিফল্ট পিন (7788) সক্রিয়'}</span>
+                  </span>
+                </div>
+
+                <form onSubmit={handleAdminPasswordSubmit} className="space-y-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label htmlFor="admin-current-pin-input" className="block font-bold text-slate-200 mb-1">
+                        বর্তমান পিন / পাসওয়ার্ড:
+                      </label>
+                      <input
+                        id="admin-current-pin-input"
+                        type={showPinCharacters ? 'text' : 'password'}
+                        value={currentPinInput}
+                        onChange={(e) => {
+                          setCurrentPinInput(e.target.value);
+                          setPinChangeFeedback(null);
+                        }}
+                        placeholder="যেমন: 7788"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="admin-new-pin-input" className="block font-bold text-slate-200 mb-1">
+                        নতুন পিন / পাসওয়ার্ড:
+                      </label>
+                      <input
+                        id="admin-new-pin-input"
+                        type={showPinCharacters ? 'text' : 'password'}
+                        value={newPinInput}
+                        onChange={(e) => {
+                          setNewPinInput(e.target.value);
+                          setPinChangeFeedback(null);
+                        }}
+                        placeholder="কমপক্ষে ৪ অক্ষর"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="admin-confirm-pin-input" className="block font-bold text-slate-200 mb-1">
+                        নতুন পিন নিশ্চিত করুন:
+                      </label>
+                      <input
+                        id="admin-confirm-pin-input"
+                        type={showPinCharacters ? 'text' : 'password'}
+                        value={confirmPinInput}
+                        onChange={(e) => {
+                          setConfirmPinInput(e.target.value);
+                          setPinChangeFeedback(null);
+                        }}
+                        placeholder="পুনরায় লিখুন"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  {pinChangeFeedback && (
+                    <div className={`p-2.5 rounded-xl border text-xs font-bold flex items-center gap-2 ${
+                      pinChangeFeedback.ok
+                        ? 'bg-emerald-950/90 text-emerald-200 border-emerald-500/60'
+                        : 'bg-red-950/90 text-red-200 border-red-500/60'
+                    }`}>
+                      {pinChangeFeedback.ok ? (
+                        <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      )}
+                      <span>{pinChangeFeedback.text}</span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="submit"
+                        className="inline-flex items-center gap-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs shadow-md cursor-pointer transition active:scale-95"
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>পাসওয়ার্ড / পিন আপডেট করুন</span>
+                      </button>
+
+                      {onResetAdminPinToDefault && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onResetAdminPinToDefault();
+                            setCurrentPinInput('');
+                            setNewPinInput('');
+                            setConfirmPinInput('');
+                            setPinChangeFeedback({
+                              ok: true,
+                              text: 'ডিফল্ট অ্যাডমিন পিন (7788)-এ রিসেট সম্পন্ন হয়েছে!'
+                            });
+                          }}
+                          className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3.5 py-2.5 rounded-xl text-xs border border-slate-700 cursor-pointer transition"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-amber-300" />
+                          <span>ডিফল্ট পিন (7788)-এ রিসেট</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowPinCharacters(prev => !prev)}
+                      className="inline-flex items-center gap-1 text-[11px] text-slate-300 hover:text-white px-2.5 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 cursor-pointer"
+                    >
+                      {showPinCharacters ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      <span>{showPinCharacters ? 'লুকান' : 'পাসওয়ার্ড দেখুন'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
               {/* Firestore Storage & Trip Space Optimization Card */}
               <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-white p-5 rounded-2xl border-2 border-emerald-300 shadow-sm space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
@@ -2470,7 +2667,10 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
               </div>
 
               {/* Full Source Code Zip Download Card (Prominent Yellow Section) */}
-              <div className="bg-gradient-to-br from-amber-100 via-amber-50 to-emerald-50 p-5 rounded-2xl border-2 border-amber-400 shadow-md space-y-3.5">
+              <div
+                id="admin-fresh-zip-yellow-box"
+                className="bg-gradient-to-br from-amber-100 via-amber-50 to-emerald-50 p-5 rounded-2xl border-2 border-amber-400 shadow-md space-y-3.5"
+              >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <h3 className="font-black text-sm sm:text-base text-slate-900 flex items-center gap-2">
                     <Download className="w-5 h-5 text-amber-600" />
@@ -2507,9 +2707,9 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     )}
                   </button>
 
-                  {/* Direct Link Alternate Download Button (Matching image.png) */}
+                  {/* Direct Link Alternate Download Button */}
                   <a
-                    href="/safar-gafargaon-clean-source.zip"
+                    href={liveOriginZipUrl}
                     download="safar-gafargaon-clean-source.zip"
                     onClick={() => {
                       showToast(`🎉 সরাসরি ফ্রেশ জিপ প্যাকেজ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
@@ -2524,14 +2724,14 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     <button
                       type="button"
                       onClick={onOpenSourceCodeModal}
-                      className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-4 py-3 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition"
+                      className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-4 py-3.5 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition"
                     >
                       <span>ডিপ্লয় গাইড ও বিবরণ</span>
                     </button>
                   )}
                 </div>
 
-                {/* Download Ready Banner (Appears as soon as Blob is generated in memory) */}
+                {/* Download Ready Banner */}
                 {downloadReadyUrl && (
                   <div className="w-full bg-emerald-50 border-2 border-emerald-500/80 p-3.5 rounded-xl flex flex-wrap items-center justify-between gap-3 animate-fadeIn shadow-xs">
                     <div className="flex items-center gap-2.5 min-w-0">
@@ -2563,31 +2763,48 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </div>
                 )}
 
-                {/* Direct Link Copy Bar (Matching image.png) */}
-                <div className="bg-white/90 p-2.5 rounded-xl border border-amber-300/80 flex items-center justify-between gap-2 mt-2">
+                {/* Direct Link Active Bar & Copy Button */}
+                <div className="bg-white/95 p-2.5 rounded-xl border border-amber-400 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 mt-2 shadow-2xs">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <span className="text-[11px] font-bold text-amber-900 shrink-0">সরাসরি লিঙ্ক:</span>
-                    <input
-                      type="text"
-                      readOnly
-                      value={typeof window !== 'undefined' ? (window.location.origin.includes('localhost') ? `${window.location.origin}/safar-gafargaon-clean-source.zip` : 'https://safar-gafargaon.pages.dev/safar-gafargaon-clean-source.zip') : 'https://safar-gafargaon.pages.dev/safar-gafargaon-clean-source.zip'}
-                      className="w-full bg-transparent text-[11px] font-mono text-slate-700 truncate outline-none select-all font-semibold"
-                    />
+                    <span className="text-[11px] font-black text-amber-900 shrink-0">সরাসরি লিঙ্ক:</span>
+                    <a
+                      href={liveOriginZipUrl}
+                      download="safar-gafargaon-clean-source.zip"
+                      onClick={() => {
+                        showToast(`🎉 সরাসরি লিঙ্ক থেকে ফ্রেশ প্রজেক্ট জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
+                      }}
+                      className="text-[11px] font-mono text-emerald-800 hover:text-emerald-950 underline truncate font-bold cursor-pointer"
+                      title="ক্লিক করে সরাসরি জিপ ফাইল ডাউনলোড করুন"
+                    >
+                      {liveOriginZipUrl}
+                    </a>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const directUrl = typeof window !== 'undefined' ? (window.location.origin.includes('localhost') ? `${window.location.origin}/safar-gafargaon-clean-source.zip` : 'https://safar-gafargaon.pages.dev/safar-gafargaon-clean-source.zip') : 'https://safar-gafargaon.pages.dev/safar-gafargaon-clean-source.zip';
-                      if (typeof window !== 'undefined') {
-                        navigator.clipboard.writeText(directUrl);
-                        showToast('📋 সরাসরি জিপ লিঙ্ক কপি করা হয়েছে!');
-                      }
-                    }}
-                    className="inline-flex items-center gap-1 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition shrink-0"
-                  >
-                    <Copy className="w-3 h-3" />
-                    <span>কপি করুন</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <a
+                      href={liveOriginZipUrl}
+                      download="safar-gafargaon-clean-source.zip"
+                      onClick={() => {
+                        showToast(`🎉 সরাসরি ফ্রেশ জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
+                      }}
+                      className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>সরাসরি ডাউনলোড</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== 'undefined' && navigator.clipboard) {
+                          navigator.clipboard.writeText(liveOriginZipUrl);
+                          showToast('📋 সরাসরি জিপ লিঙ্ক কপি করা হয়েছে!');
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition shrink-0"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>কপি করুন</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -2659,7 +2876,8 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                 </button>
               </div>
             </div>
-          )}
+            );
+          })()}
 
         </div>
 

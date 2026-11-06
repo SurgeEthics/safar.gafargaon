@@ -16,27 +16,36 @@ class SoundEffects {
   private currentVoiceAudio: HTMLAudioElement | null = null;
   private pauseTimeout: any = null;
   private voiceAlertBuffer: AudioBuffer | null = null;
+  private rawVoiceArrayBuffer: ArrayBuffer | null = null;
   private isPreloadingVoice = false;
   private keepAliveInterval: any = null;
   private isVoicePlaying = false;
   private currentWebAudioSource: (AudioBufferSourceNode & { stop?: (when?: number) => void }) | null = null;
   private currentVoiceSafetyTimer: any = null;
+  private activeAlertRequestId: string | null = null;
+  private pendingVoiceRequestId: string | null = null;
+  private voiceHeardRequestIds = new Set<string>();
+  private onAlertDafStartCallback: (() => void) | null = null;
+  private isVibrating = false;
 
   /**
-   * Pre-fetch and decode the authentic Bengali Male voice alert into memory.
-   * Ensures 0ms latency and eliminates any browser network or autoplay delay.
+   * Pre-fetch the authentic Bengali Male voice alert into memory.
+   * Decodes immediately if AudioContext already exists; otherwise unlocks on first user gesture.
    */
   preloadVoiceAlert() {
-    if (typeof window === 'undefined' || this.voiceAlertBuffer || this.isPreloadingVoice) return;
+    if (typeof window === 'undefined' || this.rawVoiceArrayBuffer || this.isPreloadingVoice) return;
     this.isPreloadingVoice = true;
     fetch('/driver_voice_male.mp3')
-      .then(res => res.arrayBuffer())
-      .then(arrayBuffer => {
-        const ctx = this.getContext();
-        if (ctx) {
-          return ctx.decodeAudioData(arrayBuffer).then(decoded => {
-            this.voiceAlertBuffer = decoded;
-          });
+      .then((res) => res.arrayBuffer())
+      .then((arrayBuffer) => {
+        this.rawVoiceArrayBuffer = arrayBuffer.slice(0);
+        if (this.ctx && !this.voiceAlertBuffer) {
+          return this.ctx
+            .decodeAudioData(arrayBuffer)
+            .then((decoded) => {
+              this.voiceAlertBuffer = decoded;
+            })
+            .catch(() => {});
         }
       })
       .catch(() => {})
@@ -45,17 +54,59 @@ class SoundEffects {
       });
   }
 
+  private async ensureDecodedVoiceBuffer(ctx: AudioContext): Promise<AudioBuffer | null> {
+    if (this.voiceAlertBuffer) return this.voiceAlertBuffer;
+    try {
+      let bytes = this.rawVoiceArrayBuffer ? this.rawVoiceArrayBuffer.slice(0) : null;
+      if (!bytes) {
+        const res = await fetch('/driver_voice_male.mp3');
+        bytes = await res.arrayBuffer();
+        this.rawVoiceArrayBuffer = bytes.slice(0);
+      }
+      const decoded = await ctx.decodeAudioData(bytes);
+      this.voiceAlertBuffer = decoded;
+      return decoded;
+    } catch {
+      return null;
+    }
+  }
+
+  hasVoiceBeenHeard(requestId?: string | null): boolean {
+    if (!requestId) return false;
+    return this.voiceHeardRequestIds.has(requestId);
+  }
+
   /**
    * Unlocks AudioContext and HTML5 audio element on any user interaction (tap, touch, click).
-   * This completely bypasses mobile browser autoplay restrictions.
+   * Also immediately flushes any pending male voice alert if an incoming notification arrived
+   * while the phone screen was off or autoplay was temporarily suspended.
    */
   unlockAudio() {
     if (typeof window === 'undefined') return;
     const ctx = this.getContext();
     if (ctx && ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
+      ctx
+        .resume()
+        .then(() => {
+          if (this.rawVoiceArrayBuffer && !this.voiceAlertBuffer) {
+            ctx
+              .decodeAudioData(this.rawVoiceArrayBuffer.slice(0))
+              .then((decoded) => {
+                this.voiceAlertBuffer = decoded;
+              })
+              .catch(() => {});
+          }
+          this.flushPendingVoiceAlert();
+        })
+        .catch(() => {});
     }
     this.preloadVoiceAlert();
+
+    if (this.isAlarmRinging && this.pendingVoiceRequestId && !this.isVoicePlaying) {
+      this.flushPendingVoiceAlert();
+      return;
+    }
+
     try {
       const dummy = new Audio('/driver_voice_male.mp3');
       dummy.volume = 0.001;
@@ -152,6 +203,10 @@ class SoundEffects {
    */
   stopAllAlarms() {
     this.isAlarmRinging = false;
+    this.activeAlertRequestId = null;
+    this.pendingVoiceRequestId = null;
+    this.onAlertDafStartCallback = null;
+    this.stopVoiceAndPause();
 
     // 0. Cancel speech synthesis and audio voice playback immediately
     try {
@@ -204,22 +259,34 @@ class SoundEffects {
   private alertVibrationInterval: any = null;
   private alertVibrationTimeout: any = null;
 
+  private canVibrate(): boolean {
+    if (typeof window === 'undefined' || !('navigator' in window) || typeof navigator.vibrate !== 'function') {
+      return false;
+    }
+    const ua = (navigator as unknown as { userActivation?: { hasBeenActive: boolean } }).userActivation;
+    if (ua && !ua.hasBeenActive) {
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Continuous repeating rhythmic haptic vibration across the full 25s alert duration.
    * Completely rock-solid on Android Chrome and mobile PWAs.
    */
   startAlertVibration(durationMs = 25000) {
     this.stopAlertVibration();
-    if (typeof window === 'undefined' || !('vibrate' in navigator)) return;
+    if (!this.canVibrate()) return;
 
     const pattern = [500, 150, 500, 150, 600];
     try {
       navigator.vibrate(pattern);
+      this.isVibrating = true;
     } catch {}
 
     this.alertVibrationInterval = setInterval(() => {
       try {
-        if ('vibrate' in navigator) {
+        if (this.canVibrate()) {
           navigator.vibrate(pattern);
         }
       } catch {}
@@ -239,8 +306,10 @@ class SoundEffects {
       clearTimeout(this.alertVibrationTimeout);
       this.alertVibrationTimeout = null;
     }
+    if (!this.isVibrating) return;
+    this.isVibrating = false;
     try {
-      if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
+      if (this.canVibrate()) {
         navigator.vibrate(0);
       }
     } catch {}
@@ -251,7 +320,7 @@ class SoundEffects {
    */
   private triggerVibration(pattern: number[]) {
     try {
-      if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
+      if (this.canVibrate()) {
         navigator.vibrate(pattern);
       }
     } catch {}
@@ -397,21 +466,58 @@ class SoundEffects {
   }
 
   /**
+   * If an incoming ride notification arrived while the screen was locked/off and the browser
+   * suspended audio playback, this immediately plays the Bengali male voice aloud on unlock/focus/tap
+   * and transitions directly (0s pause) into the repeating Daf alarm.
+   */
+  flushPendingVoiceAlert(): boolean {
+    if (typeof window === 'undefined') return false;
+    if (!this.isAlarmRinging || !this.pendingVoiceRequestId || this.isVoicePlaying) {
+      return false;
+    }
+    const reqId = this.pendingVoiceRequestId;
+    const dafCallback = this.onAlertDafStartCallback || undefined;
+    this.pendingVoiceRequestId = null;
+    this.activeAlertRequestId = null;
+    return this.speakDriverVoiceAlert(dafCallback, reqId);
+  }
+
+  /**
    * Loud, clear, dignified Bangladeshi Bengali MALE voice announcement for drivers:
    * "সফর অ্যাপের সম্মানিত চালক, আপনার একটি নতুন যাত্রার অনুরোধ এসেছে।"
    * Strictly uses authentic male voice studio recording '/driver_voice_male.mp3'.
-   * Immediately transitions into the loud Arabic Daf drum rhythm alarm without delay.
+   * Immediately transitions into the loud Arabic Daf drum rhythm alarm with 0s pause.
    * Zero robotic tone and zero female voice!
    */
-  speakDriverVoiceAlert(onEnd?: () => void): boolean {
+  speakDriverVoiceAlert(onEnd?: () => void, requestId?: string): boolean {
     if (typeof window === 'undefined') {
       if (onEnd) onEnd();
       return false;
     }
 
     try {
+      const targetReqId = requestId || 'active-ride-alert';
+
+      // If this exact request is already ringing and voice already started/heard, do not restart mid-word
+      if (
+        this.isAlarmRinging &&
+        this.activeAlertRequestId === targetReqId &&
+        (this.isVoicePlaying || this.voiceHeardRequestIds.has(targetReqId))
+      ) {
+        if (onEnd) {
+          this.onAlertDafStartCallback = onEnd;
+          if (!this.isVoicePlaying) {
+            onEnd();
+          }
+        }
+        return true;
+      }
+
       this.stopVoiceAndPause();
+      this.isAlarmRinging = true;
       this.isVoicePlaying = true;
+      this.activeAlertRequestId = targetReqId;
+      this.onAlertDafStartCallback = onEnd || null;
 
       // Start full 25s continuous rhythmic vibration
       this.startAlertVibration(25000);
@@ -428,15 +534,29 @@ class SoundEffects {
         }
 
         // Direct immediate start of Arabic Daf alarm (0s delay, as required)
-        if (onEnd) onEnd();
+        if (this.isAlarmRinging && this.onAlertDafStartCallback) {
+          this.onAlertDafStartCallback();
+        } else if (this.isAlarmRinging && onEnd) {
+          onEnd();
+        }
       };
 
-      // Safety timeout: 6.5s to guarantee Duff alarm triggers if audio is interrupted
+      const markVoiceAudible = () => {
+        this.voiceHeardRequestIds.add(targetReqId);
+        if (this.pendingVoiceRequestId === targetReqId) {
+          this.pendingVoiceRequestId = null;
+        }
+      };
+
+      // Safety timeout: 5.0s (~4.02s voice track + small buffer) to guarantee Daf alarm triggers if audio is interrupted
       this.currentVoiceSafetyTimer = setTimeout(() => {
         if (!hasFinished) {
+          if (!this.voiceHeardRequestIds.has(targetReqId)) {
+            this.pendingVoiceRequestId = targetReqId;
+          }
           finishAndTriggerAlarm();
         }
-      }, 6500);
+      }, 5000);
 
       const ctx = this.getContext();
       if (ctx) {
@@ -449,6 +569,39 @@ class SoundEffects {
         }
       }
 
+      const tryWebAudioFallback = () => {
+        if (!ctx || hasFinished) {
+          if (!this.voiceHeardRequestIds.has(targetReqId)) {
+            this.pendingVoiceRequestId = targetReqId;
+          }
+          return;
+        }
+        this.ensureDecodedVoiceBuffer(ctx).then((buffer) => {
+          if (hasFinished || !this.isAlarmRinging) return;
+          if (buffer && ctx.state === 'running') {
+            try {
+              const source = ctx.createBufferSource();
+              source.buffer = buffer;
+              const gain = ctx.createGain();
+              gain.gain.setValueAtTime(1.8, ctx.currentTime);
+              source.connect(gain);
+              gain.connect(this.masterGain || ctx.destination);
+              source.onended = () => {
+                finishAndTriggerAlarm();
+              };
+              this.currentWebAudioSource = source;
+              markVoiceAudible();
+              source.start(0);
+              this.activeSources.push(source);
+              return;
+            } catch {}
+          }
+          if (!this.voiceHeardRequestIds.has(targetReqId)) {
+            this.pendingVoiceRequestId = targetReqId;
+          }
+        });
+      };
+
       // 1. Play via HTML5 Audio element with loud broadcast volume (most compatible across mobile Android & iOS)
       const audio = new Audio('/driver_voice_male.mp3');
       audio.volume = 1.0;
@@ -458,50 +611,21 @@ class SoundEffects {
         finishAndTriggerAlarm();
       };
       audio.onerror = () => {
-        // Fallback to Web Audio if HTML5 audio fails
-        if (ctx && this.voiceAlertBuffer) {
-          try {
-            const source = ctx.createBufferSource();
-            source.buffer = this.voiceAlertBuffer;
-            const gain = ctx.createGain();
-            gain.gain.setValueAtTime(1.8, ctx.currentTime);
-            source.connect(gain);
-            gain.connect(this.masterGain || ctx.destination);
-            source.onended = () => {
-              finishAndTriggerAlarm();
-            };
-            this.currentWebAudioSource = source;
-            source.start(0);
-            this.activeSources.push(source);
-            return;
-          } catch (e) {}
-        }
-        finishAndTriggerAlarm();
+        tryWebAudioFallback();
       };
 
       const playPromise = audio.play();
       if (playPromise !== undefined) {
-        playPromise.catch(() => {
-          // If browser policy blocks HTML5 audio element, try Web Audio buffer
-          if (ctx && this.voiceAlertBuffer) {
-            try {
-              const source = ctx.createBufferSource();
-              source.buffer = this.voiceAlertBuffer;
-              const gain = ctx.createGain();
-              gain.gain.setValueAtTime(1.8, ctx.currentTime);
-              source.connect(gain);
-              gain.connect(this.masterGain || ctx.destination);
-              source.onended = () => {
-                finishAndTriggerAlarm();
-              };
-              this.currentWebAudioSource = source;
-              source.start(0);
-              this.activeSources.push(source);
-              return;
-            } catch (e) {}
-          }
-          // Otherwise safetyTimer guarantees progression
-        });
+        playPromise
+          .then(() => {
+            markVoiceAudible();
+          })
+          .catch(() => {
+            // Browser autoplay policy blocked HTML5 audio (e.g. screen off/locked) -> try Web Audio & arm pending flush
+            tryWebAudioFallback();
+          });
+      } else {
+        markVoiceAudible();
       }
 
       return true;

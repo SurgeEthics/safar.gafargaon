@@ -256,8 +256,6 @@ app.get([
   '/safar-gafargaon-clean-source.zip',
   '/safar-gafargaon-latest.zip',
   '/safar-gafargaon-final.zip',
-  '/safar-gafargaon.zip',
-  '/safar-app.zip',
   '/api/download-zip',
   '/download-zip',
   '/download/project.zip'
@@ -271,27 +269,16 @@ app.get([
     path.resolve(__dirname, 'dist', 'safar-gafargaon-final.zip'),
   ];
 
-  const requestedBase = path.basename(req.path || '');
-  const downloadFilename = requestedBase.endsWith('.zip')
-    ? requestedBase
-    : 'safar-gafargaon-clean-source.zip';
-
   for (const filePath of candidatePaths) {
     if (fs.existsSync(filePath)) {
       try {
         const stat = fs.statSync(filePath);
-        if (stat.size > 50000) {
-          const fd = fs.openSync(filePath, 'r');
-          const sig = Buffer.allocUnsafe(4);
-          fs.readSync(fd, sig, 0, 4, 0);
-          fs.closeSync(fd);
-          if (sig[0] === 0x50 && sig[1] === 0x4b) {
-            res.setHeader('Content-Type', 'application/zip');
-            res.setHeader('Content-Length', stat.size);
-            res.setHeader('Content-Disposition', `attachment; filename="${downloadFilename}"`);
-            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-            return res.sendFile(filePath);
-          }
+        if (stat.size > 100000) { // Must be the real >100KB zip file!
+          res.setHeader('Content-Type', 'application/zip');
+          res.setHeader('Content-Length', stat.size);
+          res.setHeader('Content-Disposition', 'attachment; filename="safar-gafargaon-clean-source.zip"');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.sendFile(filePath);
         }
       } catch (e) {}
     }

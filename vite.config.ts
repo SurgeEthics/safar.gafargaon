@@ -50,7 +50,7 @@ export default defineConfig(() => {
           globIgnores: ['**/assets/aistudio/**', '**/*.zip'],
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           navigateFallbackDenylist: [/^\/.*\.zip$/, /^\/api\/.*/],
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,mp3,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -94,13 +94,9 @@ export default defineConfig(() => {
             const urlPath = req.url ? req.url.split('?')[0] : '';
             if (
               urlPath === '/safar-app.zip' || 
-              urlPath === '/safar-gafargaon.zip' ||
               urlPath === '/safar-gafargaon-clean-source.zip' ||
-              urlPath === '/safar-gafargaon-latest.zip' ||
-              urlPath === '/safar-gafargaon-final.zip' ||
               urlPath === '/download-zip' ||
-              urlPath === '/api/download-zip' ||
-              urlPath === '/download/project.zip'
+              urlPath === '/api/download-zip'
             ) {
               const primaryZip = path.resolve(process.cwd(), 'public', 'safar-gafargaon-clean-source.zip');
               const fallbackZip = path.resolve(process.cwd(), 'public', 'safar-app.zip');
@@ -162,24 +158,6 @@ export default defineConfig(() => {
       alias: {
         '@': path.resolve(process.cwd(), '.'),
       },
-      dedupe: [
-        'firebase',
-        'firebase/app',
-        'firebase/firestore',
-        '@firebase/app',
-        '@firebase/firestore',
-        '@firebase/component',
-        '@firebase/util',
-      ],
-    },
-    optimizeDeps: {
-      include: [
-        'firebase/app',
-        'firebase/firestore',
-        'leaflet',
-        'lucide-react',
-        'canvas-confetti',
-      ],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

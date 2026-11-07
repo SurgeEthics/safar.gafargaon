@@ -94,8 +94,18 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
   );
   if (hasActiveTrip) return null;
 
-  // 2. If in passenger mode without a registered driver profile, never show driver incoming alerts
-  if (!isDriverMode && !driverProfile.isRegistered) {
+  // 2. If in passenger mode without a registered driver profile, check both state and localStorage
+  const isDriverRegisteredOnDevice = Boolean(
+    driverProfile.isRegistered ||
+    driverProfile.phone ||
+    driverProfile.id ||
+    (typeof window !== 'undefined' && (
+      localStorage.getItem('safar_driver_registered') === 'true' ||
+      localStorage.getItem('safar_driver_profile')
+    ))
+  );
+
+  if (!isDriverMode && !isDriverRegisteredOnDevice) {
     return null;
   }
 

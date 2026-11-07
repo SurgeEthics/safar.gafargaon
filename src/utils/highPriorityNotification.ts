@@ -7,6 +7,18 @@
 class HighPriorityNotificationEngine {
   private vibrationInterval: any = null;
   private activeNotificationTag = 'safar-driver-incoming-ride';
+  private isVibrating = false;
+
+  private canVibrate(): boolean {
+    if (typeof window === 'undefined' || !('navigator' in window) || typeof navigator.vibrate !== 'function') {
+      return false;
+    }
+    const ua = (navigator as unknown as { userActivation?: { hasBeenActive: boolean } }).userActivation;
+    if (ua && !ua.hasBeenActive) {
+      return false;
+    }
+    return true;
+  }
 
   /**
    * Request system notification permission with user gesture
@@ -57,7 +69,7 @@ class HighPriorityNotificationEngine {
       tag: this.activeNotificationTag,
       renotify: true,
       requireInteraction: true,
-      silent: true,
+      silent: false,
       vibrate: [600, 200, 600, 200, 800, 300, 600],
       data: {
         requestId: request.id,
@@ -65,7 +77,7 @@ class HighPriorityNotificationEngine {
       },
       actions: [
         { action: 'accept', title: '✅ গ্রহণ করুন (ACCEPT)' },
-        { action: 'open', title: '📲 অ্যাপ খুলুন (OPEN APP)' }
+        { action: 'open', title: '📲 অ্যাপ খুলুন' }
       ]
     };
 
@@ -93,12 +105,22 @@ class HighPriorityNotificationEngine {
           badge: '/notification-badge.png',
           tag: this.activeNotificationTag,
           requireInteraction: true,
-          silent: true
+          silent: false
         } as any);
         notif.onclick = () => {
-          window.focus();
+          try {
+            window.focus();
+          } catch {}
           notif.close();
-          window.location.href = `/?openDriverTrip=${request.id}&role=driver&action=open`;
+          try {
+            window.dispatchEvent(
+              new CustomEvent('safar-notification-action', {
+                detail: { action: 'open', requestId: request.id }
+              })
+            );
+          } catch {
+            window.location.href = `/?openDriverTrip=${request.id}&role=driver&action=open`;
+          }
         };
       }
     } catch {}
@@ -109,16 +131,17 @@ class HighPriorityNotificationEngine {
    */
   private startRepeatingVibration() {
     this.stopRepeatingVibration();
-    if (typeof window === 'undefined' || !('vibrate' in navigator)) return;
+    if (!this.canVibrate()) return;
 
     const pattern = [500, 200, 500, 200, 700];
     try {
       navigator.vibrate(pattern);
+      this.isVibrating = true;
     } catch {}
 
     this.vibrationInterval = setInterval(() => {
       try {
-        if ('vibrate' in navigator) {
+        if (this.canVibrate()) {
           navigator.vibrate(pattern);
         }
       } catch {}
@@ -130,7 +153,9 @@ class HighPriorityNotificationEngine {
       clearInterval(this.vibrationInterval);
       this.vibrationInterval = null;
     }
-    if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+    if (!this.isVibrating) return;
+    this.isVibrating = false;
+    if (this.canVibrate()) {
       try {
         navigator.vibrate(0);
       } catch {}

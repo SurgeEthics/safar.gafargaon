@@ -13,6 +13,7 @@ export const PauseMarqueeText: React.FC<PauseMarqueeTextProps> = ({
   pauseSec = 1.5,
   speedSec
 }) => {
+  const safeText = typeof text === 'string' ? text : text == null ? '' : String(text);
   const containerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLSpanElement>(null);
   const [isOverflowing, setIsOverflowing] = useState(false);
@@ -80,7 +81,7 @@ export const PauseMarqueeText: React.FC<PauseMarqueeTextProps> = ({
     <div
       ref={containerRef}
       className={`relative overflow-hidden whitespace-nowrap min-w-0 ${className}`}
-      title={text}
+      title={safeText}
     >
       {isOverflowing && (
         <style>{`
@@ -106,7 +107,7 @@ export const PauseMarqueeText: React.FC<PauseMarqueeTextProps> = ({
             : { display: 'inline-block' }
         }
       >
-        {text}
+        {safeText}
       </span>
     </div>
   );

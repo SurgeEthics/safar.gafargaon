@@ -54,7 +54,7 @@ export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
             <PauseMarqueeText
               text="গফরগাঁও ও পাগলার ১৫টি ইউনিয়নের সকল স্থান ও স্ট্যান্ড"
               className="text-[10px] text-emerald-700 font-semibold block leading-tight"
-              pauseSec={1.5}
+              pauseSec={2}
             />
           </div>
         </div>

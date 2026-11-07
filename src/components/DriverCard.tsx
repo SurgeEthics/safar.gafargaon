@@ -88,7 +88,7 @@ export const DriverCard: React.FC<DriverCardProps> = ({
 
           <div className="flex items-center gap-1 text-amber-500 font-bold text-xs bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60">
             <Star className="w-3.5 h-3.5 fill-current" />
-            <span>{toBengaliNumber(driver.rating)}</span>
+            <span>{toBengaliNumber(driver.rating || 5)}</span>
           </div>
         </div>
 
@@ -136,8 +136,8 @@ export const DriverCard: React.FC<DriverCardProps> = ({
       {/* Action Buttons */}
       <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
         <a
-          href={`tel:${driver.phone.replace(/[^0-9]/g, '')}`}
-          onClick={(e) => {
+          href={`tel:${(driver.phone || '').replace(/[^0-9]/g, '')}`}
+          onClick={() => {
             onCall(driver);
           }}
           className="flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-semibold py-2 px-3 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-xs transition"

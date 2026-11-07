@@ -94,6 +94,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
   // Quick message presets
   const [customMsg, setCustomMsg] = useState('');
   const [sentNotice, setSentNotice] = useState<string | null>(null);
+  const [completedBookingForReview, setCompletedBookingForReview] = useState<any>(null);
 
   // Sound trigger on match
   useEffect(() => {
@@ -109,7 +110,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
     }
   }, [activeBooking?.status]);
 
-  if (!request && !activeBooking && !showReviewModal) {
+  if (!request && !activeBooking && !showReviewModal && !completedBookingForReview) {
     return null;
   }
 
@@ -135,8 +136,6 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
     setSentNotice(`চালকের কাছে বার্তা পৌঁছেছে: "${msg}"`);
     setTimeout(() => setSentNotice(null), 3500);
   };
-
-  const [completedBookingForReview, setCompletedBookingForReview] = useState<any>(null);
 
   const handleFinishAndShowReview = () => {
     if (activeBooking) {
@@ -167,11 +166,12 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
     setCompletedBookingForReview(null);
   };
 
+  const safeDriver = (activeBooking?.driver || {}) as NonNullable<PassengerRideCockpitProps['activeBooking']>['driver'];
+  const safeReqFare = Number.isFinite(Number(request?.estFare)) && Number(request?.estFare) > 0 ? Number(request?.estFare) : 40;
+  const safeReqDist = Number.isFinite(Number(request?.distanceKm)) && Number(request?.distanceKm) > 0 ? Number(request?.distanceKm) : 1.2;
+
   return (
     <>
-      {/* ============================================================== */}
-      {/* 1. PASSENGER SEARCHING RADAR STATE                             */}
-      {/* ============================================================== */}
       {/* ============================================================== */}
       {/* 1. PASSENGER SEARCHING RADAR STATE                             */}
       {/* ============================================================== */}
@@ -187,7 +187,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
             </div>
             <div className="flex items-center gap-2">
               <span className="bg-amber-400 text-slate-950 font-black text-xs sm:text-sm px-2.5 py-0.5 rounded-md shadow-xs">
-                নির্ধারিত ভাড়া: ৳ {request.estFare}
+                নির্ধারিত ভাড়া: ৳ {safeReqFare}
               </span>
             </div>
           </div>
@@ -221,7 +221,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                   <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <span className="shrink-0 text-emerald-300 font-bold">পিকআপ:</span>
                   <div className="min-w-0 flex-1 overflow-hidden">
-                    <PauseMarqueeText text={request.pickupPoint} className="text-[12px] font-bold text-white" pauseSec={1.5} />
+                    <PauseMarqueeText text={request.pickupPoint || 'পিকআপ স্থান'} className="text-[12px] font-bold text-white" pauseSec={1.5} />
                   </div>
                 </div>
 
@@ -240,13 +240,13 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                   <Navigation className="w-3.5 h-3.5 text-red-400 shrink-0" />
                   <span className="shrink-0 text-red-300 font-bold">গন্তব্য:</span>
                   <div className="min-w-0 flex-1 overflow-hidden">
-                    <PauseMarqueeText text={request.destination} className="text-[12px] font-bold text-white" pauseSec={1.5} />
+                    <PauseMarqueeText text={request.destination || 'গন্তব্য স্থান'} className="text-[12px] font-bold text-white" pauseSec={1.5} />
                   </div>
                 </div>
               </div>
 
               <div className="text-[11px] text-emerald-200/80 mt-2 flex items-center gap-2 flex-wrap min-w-0">
-                <span className="shrink-0">দূরত্ব: <strong className="text-emerald-300 font-bold">{request.distanceKm} কিমি</strong></span>
+                <span className="shrink-0">দূরত্ব: <strong className="text-emerald-300 font-bold">{safeReqDist} কিমি</strong></span>
                 <span className="shrink-0">•</span>
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <PauseMarqueeText
@@ -331,10 +331,10 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
             {/* Driver Profile */}
             <div className="lg:col-span-6 flex items-center gap-3.5 min-w-0">
-              {(activeBooking.driver.driverPhoto || activeBooking.driver.phone?.includes('01304841550') || activeBooking.driver.name?.toUpperCase().includes('TASNIMUL')) ? (
+              {(safeDriver?.driverPhoto || safeDriver?.phone?.includes('01304841550') || safeDriver?.name?.toUpperCase().includes('TASNIMUL')) ? (
                 <img
-                  src={activeBooking.driver.driverPhoto || '/assets/drivers/tasnimul_kabeer.png'}
-                  alt={activeBooking.driver.name}
+                  src={safeDriver?.driverPhoto || '/assets/drivers/tasnimul_kabeer.png'}
+                  alt={safeDriver?.name || 'চালক'}
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = '/assets/drivers/tasnimul_kabeer.png';
                   }}
@@ -350,14 +350,14 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                 <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                   <div className="min-w-0 flex-1">
                     <PauseMarqueeText
-                      text={activeBooking.driver.name}
+                      text={safeDriver?.name || 'ভেরিফাইড চালক'}
                       className="font-extrabold text-base sm:text-lg text-white"
                       pauseSec={1.5}
                     />
                   </div>
                   <span className="bg-amber-400/20 text-amber-300 text-xs font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5 shrink-0">
                     <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                    {activeBooking.driver.rating.toFixed(1)}
+                    {Number(safeDriver?.rating || 5).toFixed(1)}
                   </span>
                   <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-bold px-1.5 py-0.2 rounded border border-emerald-500/30 flex items-center gap-1 shrink-0">
                     <ShieldCheck className="w-3 h-3 text-emerald-400" />
@@ -367,7 +367,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
 
                 <div className="text-xs sm:text-sm text-slate-300 mt-0.5 min-w-0">
                   <PauseMarqueeText
-                    text={`${activeBooking.driver.vehicleModel} • ${activeBooking.driver.plateNumber}`}
+                    text={`${safeDriver?.vehicleModel || 'যানবাহন'} • ${safeDriver?.plateNumber || 'নিবন্ধিত নম্বর'}`}
                     className="text-xs sm:text-sm text-slate-300"
                     pauseSec={1.5}
                   />
@@ -375,7 +375,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
 
                 <div className="text-[11px] text-slate-400 mt-0.5 min-w-0">
                   <PauseMarqueeText
-                    text={`লাইসেন্স: ${activeBooking.driver.licenseNumber} ${activeBooking.driver.standName ? `• ${activeBooking.driver.standName}` : ''}`}
+                    text={`লাইসেন্স: ${safeDriver?.licenseNumber || 'BRTA ভেরিফাইড'} ${safeDriver?.standName ? `• ${safeDriver.standName}` : ''}`}
                     className="text-[11px] text-slate-400"
                     pauseSec={1.5}
                   />
@@ -421,7 +421,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
             {/* Action Buttons: Direct Call, WhatsApp, Track Map, Finish */}
             <div className="lg:col-span-6 flex items-center justify-start lg:justify-end gap-2 flex-wrap">
               <a
-                href={`tel:${activeBooking.driver.phone}`}
+                href={`tel:${safeDriver?.phone || ''}`}
                 className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-md cursor-pointer transition active:scale-95"
               >
                 <PhoneCall className="w-4 h-4" />
@@ -429,7 +429,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
               </a>
 
               <a
-                href={`https://wa.me/88${activeBooking.driver.phone.replace(/[^0-9]/g, '')}`}
+                href={`https://wa.me/88${(safeDriver?.phone || '').replace(/[^0-9]/g, '')}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-md cursor-pointer transition active:scale-95"

@@ -216,7 +216,7 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
       </div>
 
       {/* ============================================================== */}
-      {/* DUA STICKER POPUP MODAL (Exact match with reference image) */}
+      {/* DUA STICKER POPUP MODAL (Mobile-Optimized Balanced Layout) */}
       {/* ============================================================== */}
       {activeDua && (
         <div 
@@ -227,20 +227,16 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
             className="bg-white w-full max-w-xl rounded-2xl border border-slate-200 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
-            <div className="bg-gradient-to-r from-[#0d6e53] via-[#0f766e] to-[#0d6e53] text-white p-2.5 sm:p-3 flex items-center justify-between shrink-0 gap-2 border-b border-emerald-700/50">
-              <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
-                <span className="w-8 h-8 rounded-full bg-emerald-800/80 border border-emerald-500/50 flex items-center justify-center shrink-0 shadow-xs">
-                  <Moon className="w-4 h-4 text-amber-300 fill-amber-300" />
+            {/* Modal Header with PauseMarqueeText */}
+            <div className="bg-gradient-to-r from-emerald-800 via-emerald-700 to-teal-800 text-white p-2.5 sm:p-3 flex items-center justify-between shrink-0 gap-2">
+              <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+                <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-white/20 border border-white/30 flex items-center justify-center font-bold text-white shrink-0">
+                  <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 fill-amber-300" />
                 </span>
                 <div className="min-w-0 flex-1 overflow-hidden">
-                  <div className="min-w-0 overflow-hidden">
-                    <PauseMarqueeText
-                      text="সফরের দো'আ স্টিকার"
-                      className="text-[10px] sm:text-[11px] font-bold text-emerald-100 tracking-wide block leading-tight"
-                      pauseSec={2}
-                    />
-                  </div>
+                  <span className="text-[9.5px] sm:text-[10px] font-bold text-emerald-200 uppercase tracking-wider block">
+                    সফরের দো'আ স্টিকার
+                  </span>
                   <div className="min-w-0 overflow-hidden">
                     <PauseMarqueeText
                       text={activeDua.title}
@@ -256,14 +252,14 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
                 <button
                   type="button"
                   onClick={handleCopy}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95 ${
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95 ${
                     copied
                       ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300'
-                      : 'bg-[#107559] hover:bg-emerald-600 text-white border border-emerald-400/40'
+                      : 'bg-white/20 hover:bg-white/30 text-white border border-white/30'
                   }`}
                   title="সম্পূর্ণ দো'আ কার্ড কপি করুন"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-slate-950" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-950" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copied ? 'কপি হয়েছে' : 'কপি করুন'}</span>
                 </button>
 
@@ -279,66 +275,68 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
               </div>
             </div>
 
-            {/* Sticker Body Content */}
+            {/* Sticker Body Content (Optimized Padding & Balanced Typography) */}
             <div className="p-2.5 sm:p-4 overflow-y-auto space-y-3 text-slate-900 bg-slate-50/50 flex-1 font-['Hind_Siliguri',sans-serif]">
-              {/* Inner Card Container */}
-              <div className="bg-white p-3 sm:p-4 rounded-xl border border-slate-200/90 shadow-xs space-y-3">
+              {/* Sticker Container with clean border & shadow */}
+              <div className="bg-white p-3 sm:p-4 rounded-xl border border-slate-200/90 shadow-xs space-y-2.5">
                 {/* Title */}
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
                   {activeDua.title}
                 </h2>
 
+                {/* Subtitle if available (e.g. দো'আ [০১.০১]:) */}
+                {activeDua.subTitle && (
+                  <p className="text-xs font-semibold text-slate-700">
+                    {activeDua.subTitle}
+                  </p>
+                )}
+
                 {/* Narration intro if any */}
                 {activeDua.narration && (
-                  <p className="text-xs text-slate-700 leading-relaxed italic bg-emerald-50/60 p-2.5 rounded-lg border border-emerald-100">
+                  <p className="text-xs text-slate-700 leading-relaxed italic bg-emerald-50/60 p-2 rounded-lg border border-emerald-100">
                     {activeDua.narration}
                   </p>
                 )}
 
-                {/* Arabic Section with দো'আ: label and authentic Amiri font styling */}
+                {/* Arabic Text (Balanced font size text-[17px] sm:text-[19px], moderate line-height, compact padding) */}
                 {activeDua.arabic && (
-                  <div>
-                    <span className="font-bold text-xs sm:text-sm text-slate-900 block mb-1">
-                      দো'আ:
-                    </span>
-                    <div 
-                      dir="rtl" 
-                      className="py-3 px-3 sm:px-4 bg-[#fffef2] rounded-xl border border-amber-300 text-center my-1.5 shadow-2xs"
-                    >
-                      <p className="font-arabic font-['Amiri','Scheherazade_New','Noto_Naskh_Arabic',serif] text-[17px] sm:text-[19px] text-slate-900 font-normal leading-[1.8] tracking-normal select-all antialiased text-center">
-                        {activeDua.arabic}
-                      </p>
-                    </div>
+                  <div 
+                    dir="rtl" 
+                    className="py-2.5 px-3 bg-amber-50/80 rounded-xl border border-amber-300/80 text-right mt-1.5 mb-3.5 shadow-2xs"
+                  >
+                    <p className="font-['Amiri','Scheherazade_New','Noto_Naskh_Arabic',serif] text-[17px] sm:text-[19px] text-emerald-950 font-normal leading-[1.8] tracking-wide select-all antialiased text-right">
+                      {activeDua.arabic}
+                    </p>
                   </div>
                 )}
 
-                {/* Pronunciation (উচ্চারণ) */}
+                {/* Pronunciation (উচ্চারণ) with harmonious top gap */}
                 {activeDua.transliteration && (
                   <div className="space-y-1 pt-1">
                     <span className="font-bold text-xs sm:text-sm text-slate-900 block">
                       উচ্চারণ:
                     </span>
                     <p className="text-xs sm:text-[13px] text-slate-800 leading-relaxed select-all">
-                      “{activeDua.transliteration}”
+                      "{activeDua.transliteration}"
                     </p>
                   </div>
                 )}
 
                 {/* Meaning (অর্থ) */}
                 {activeDua.translation && (
-                  <div className="space-y-1 pt-1">
+                  <div className="space-y-1">
                     <span className="font-bold text-xs sm:text-sm text-slate-900 block">
                       অর্থ:
                     </span>
                     <p className="text-xs sm:text-[13px] text-slate-800 leading-relaxed select-all">
-                      “{activeDua.translation}”
+                      "{activeDua.translation}"
                     </p>
                   </div>
                 )}
 
                 {/* Context (দোয়ার প্রেক্ষাপট) */}
                 {activeDua.context && (
-                  <div className="text-[11px] sm:text-xs text-slate-700 leading-relaxed bg-slate-100/70 p-2.5 rounded-lg border border-slate-200">
+                  <div className="text-[11px] sm:text-xs text-slate-700 leading-relaxed bg-slate-100/70 p-2 rounded-lg border border-slate-200">
                     {activeDua.context}
                   </div>
                 )}
@@ -352,28 +350,34 @@ export const TravelDuaDropdown: React.FC<TravelDuaDropdownProps> = ({ className 
               </div>
             </div>
 
-            {/* Modal Bottom Action Bar matching user screenshot */}
-            <div className="bg-slate-100/90 px-3.5 py-2.5 border-t border-slate-200 flex items-center justify-end gap-2.5 shrink-0">
-              <button
-                type="button"
-                onClick={handleCopy}
-                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs sm:text-sm transition cursor-pointer active:scale-95 shadow-xs ${
-                  copied
-                    ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300'
-                    : 'bg-[#059669] hover:bg-emerald-700 text-white'
-                }`}
-              >
-                {copied ? <Check className="w-4 h-4 text-slate-950" /> : <Copy className="w-4 h-4" />}
-                <span>{copied ? 'কপি হয়েছে!' : 'স্টিকার কপি করুন'}</span>
-              </button>
+            {/* Modal Bottom Action Bar */}
+            <div className="bg-slate-100/90 px-3 py-2.5 border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+              <span className="text-[11px] text-slate-500 hidden sm:inline">
+                সফরকালে দো'আ পাঠ করা সুন্নত ও নিরাপত্তার মাধ্যম
+              </span>
 
-              <button
-                type="button"
-                onClick={() => setActiveDua(null)}
-                className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm rounded-lg border border-slate-300 transition cursor-pointer active:scale-95 shadow-xs"
-              >
-                বন্ধ করুন
-              </button>
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-bold text-xs transition cursor-pointer active:scale-95 shadow-xs ${
+                    copied
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  }`}
+                >
+                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copied ? 'কপি হয়েছে!' : 'স্টিকার কপি করুন'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveDua(null)}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg border border-slate-300 transition cursor-pointer"
+                >
+                  বন্ধ করুন
+                </button>
+              </div>
             </div>
           </div>
         </div>

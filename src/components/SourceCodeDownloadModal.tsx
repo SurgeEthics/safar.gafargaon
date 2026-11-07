@@ -28,7 +28,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
-  const [zipDisplaySize, setZipDisplaySize] = useState<string>('১৪.০৯ MB');
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.৩৮ MB');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -63,10 +63,15 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
         throw new Error(`সার্ভার এরর: HTTP ${response.status}`);
       }
 
-      const blob = await response.blob();
-      if (!blob || blob.size < 1000) {
-        throw new Error('জিপ ফাইল লোড হতে সমস্যা হয়েছে');
+      const buf = await response.arrayBuffer();
+      const header = buf && buf.byteLength >= 4 ? new Uint8Array(buf, 0, 4) : null;
+      if (!header || header[0] !== 0x50 || header[1] !== 0x4b || buf.byteLength < 50000) {
+        throw new Error('ভ্যালিড জিপ ফাইল লোড হয়নি');
       }
+
+      const blob = new Blob([buf], { type: 'application/zip' });
+      const mb = (blob.size / (1024 * 1024)).toFixed(2);
+      setZipDisplaySize(`${toBengaliNumber(mb)} MB`);
 
       // 2. Create in-memory object URL
       const objectUrl = window.URL.createObjectURL(blob);

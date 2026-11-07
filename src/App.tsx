@@ -2280,9 +2280,8 @@ export default function App() {
           ratingGiven: Number(d.ratingGiven) || 5.0
         });
       });
-      if (trips.length > 0) {
-        setTripHistory(trips);
-      }
+      // Always set tripHistory directly so any previous user data is cleared
+      setTripHistory(trips);
     } catch (err) {
       console.warn('Error loading trips from Firestore:', err);
     }
@@ -2528,8 +2527,10 @@ export default function App() {
         localStorage.setItem(`safar_passenger_history_${clean}`, JSON.stringify(tripHistory));
       } catch {}
     }
+    setTripHistory([]);
     try {
       localStorage.removeItem('safar_passenger_profile_v5');
+      localStorage.removeItem('safar_trip_history_v7');
     } catch {}
     showAdminToastMessage('যাত্রী প্রোফাইল থেকে লগআউট সম্পন্ন হয়েছে');
   };
@@ -2616,9 +2617,13 @@ export default function App() {
     category: VehicleCategory;
     rating: number;
     todayTrips: number;
+    totalTrips?: number;
     todayEarnings: number;
     driverPhoto?: string;
     isRegistered?: boolean;
+    verificationStatus?: string;
+    isVerified?: boolean;
+    isOnline?: boolean;
     lat?: number;
     lng?: number;
   }>(() => {
@@ -2682,6 +2687,58 @@ export default function App() {
       localStorage.setItem('safar_driver_reviews_v2', JSON.stringify(driverReviews));
     } catch {}
   }, [driverReviews]);
+
+  // Real-time Firestore sync for driver reviews across all devices
+  useEffect(() => {
+    const q = query(collection(db, 'driver_reviews'), orderBy('createdAt', 'desc'), limit(100));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const firestoreReviews: typeof driverReviews = [];
+        snapshot.forEach((docSnap) => {
+          const d = docSnap.data();
+          firestoreReviews.push({
+            id: docSnap.id,
+            driverId: d.driverId || '',
+            driverPhone: d.driverPhone || '',
+            rating: typeof d.rating === 'number' ? d.rating : 5.0,
+            tags: Array.isArray(d.tags) ? d.tags : [],
+            comment: d.comment || '',
+            passengerName: d.passengerName || 'সম্মানিত যাত্রী',
+            date: d.date || ''
+          });
+        });
+        setDriverReviews(firestoreReviews);
+      }
+    }, (err) => {
+      console.warn('Firestore driver_reviews sync warning:', err);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time sync for active logged-in Driver Profile stats across all devices
+  useEffect(() => {
+    if (!driverProfile.isRegistered || !driverProfile.id) return;
+    const unsub = onSnapshot(doc(db, 'drivers', driverProfile.id), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setDriverProfile(prev => ({
+          ...prev,
+          rating: typeof data.rating === 'number' ? data.rating : prev.rating,
+          totalTrips: typeof data.totalTrips === 'number' ? data.totalTrips : (data.todayTrips || prev.totalTrips),
+          todayTrips: typeof data.todayTrips === 'number' ? data.todayTrips : prev.todayTrips,
+          todayEarnings: typeof data.todayEarnings === 'number' ? data.todayEarnings : prev.todayEarnings,
+          verificationStatus: data.verificationStatus || prev.verificationStatus,
+          isVerified: data.isVerified ?? prev.isVerified,
+          isOnline: data.isOnline ?? prev.isOnline,
+        }));
+      }
+    }, (err) => {
+      console.warn('Driver profile Firestore live sync warning:', err);
+    });
+
+    return () => unsub();
+  }, [driverProfile.isRegistered, driverProfile.id]);
 
   const [driverLoginPhoneInput, setDriverLoginPhoneInput] = useState('');
   const [driverLoginError, setDriverLoginError] = useState<string | null>(null);
@@ -3143,6 +3200,7 @@ export default function App() {
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Record<string, boolean>>({});
   // Splash screen state matching IMG-12
   const [showAppSplash, setShowAppSplash] = useState(true);
+  const [completedBookingForReview, setCompletedBookingForReview] = useState<any>(null);
 
   useEffect(() => {
     try {
@@ -3156,9 +3214,10 @@ export default function App() {
 
   // Real-Time Firestore Synchronization for Live Ride Requests
   useEffect(() => {
-    // Pure read listener with safe limit
+    // Pure read listener ordered by newest requests first
     const q = query(
       collection(db, 'ride_requests'),
+      orderBy('createdAtMs', 'desc'),
       limit(50)
     );
 
@@ -3181,49 +3240,94 @@ export default function App() {
           if (!isNaN(t)) reqTime = t;
         }
 
-        // Auto-expire stale pending ride requests older than 90 seconds (1.5 mins) - Prevents old requests ringing on app open!
+        // Auto-expire stale pending ride requests older than 2 minutes
         if (data.status === 'pending') {
-          const isPendingExpired = (reqTime > 0 && now - reqTime > 90 * 1000);
+          const isPendingExpired = (reqTime > 0 && now - reqTime > 120 * 1000);
           if (isPendingExpired) {
             deleteDoc(doc(db, 'ride_requests', docSnap.id)).catch(() => {});
             return;
           }
         }
 
-        // Auto-ignore stale cancelled/completed trips older than 30 minutes
-        const isStale = (reqTime > 0 && now - reqTime > 30 * 60 * 1000);
+        // Auto-clean stale cancelled/completed trips older than 15 minutes
+        const isStale = (reqTime > 0 && now - reqTime > 15 * 60 * 1000);
         if (isStale && (data.status === 'completed' || data.status === 'cancelled')) {
+          deleteDoc(doc(db, 'ride_requests', docSnap.id)).catch(() => {});
           return;
         }
 
-        // If driver completed this trip, update passenger's history and reset state (only if matching current active booking)
+        // If driver completed this trip, update passenger's history, trigger review modal and reset state
         if (data.status === 'completed') {
-          if (activeBooking && ((activeBooking as any).requestId === docSnap.id || (activeBooking as any).id === docSnap.id)) {
-            const finalFare = data.estFare || activeBooking.fare || 40;
+          const storedRequestId = typeof window !== 'undefined' ? localStorage.getItem('safar_my_ride_request_id') : null;
+          const myPhoneClean = (passengerProfile.phone || '').replace(/[^0-9]/g, '');
+          const reqPassengerPhoneClean = (data.passengerPhone || '').replace(/[^0-9]/g, '');
+          const isMyTrip = Boolean(
+            (activeBooking && ((activeBooking as any).requestId === docSnap.id || (activeBooking as any).id === docSnap.id)) ||
+            (storedRequestId && storedRequestId === docSnap.id) ||
+            (myPhoneClean && reqPassengerPhoneClean && myPhoneClean === reqPassengerPhoneClean)
+          );
+
+          if (isMyTrip) {
+            const finalFare = data.estFare || activeBooking?.fare || 40;
             const tripDocId = `trip-${docSnap.id}`;
-            if (passengerProfile.isLoggedIn) {
-              const newTripRecord: PassengerTripRecord = {
-                id: tripDocId,
-                date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
-                pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
-                destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
-                driverName: data.driverName || activeBooking.driver.name,
-                driverPhone: data.driverPhone || activeBooking.driver.phone,
-                vehicleCategory: data.driverCategory || activeBooking.driver.category,
-                vehicleModel: data.driverVehicleModel || activeBooking.driver.vehicleModel,
-                plateNumber: data.driverLicensePlate || activeBooking.driver.plateNumber,
-                fare: finalFare,
-                status: 'সম্পন্ন',
-                ratingGiven: 5.0
-              };
-              (newTripRecord as any).requestId = docSnap.id;
-              setTripHistory(prev => {
-                if (prev.some(t => t.id === tripDocId || (t as any).requestId === docSnap.id)) {
-                  return prev;
-                }
-                return [newTripRecord, ...prev];
-              });
+            const matchedDriverData = drivers.find(d => d.id === data.driverId) || activeBooking?.driver || {
+              id: data.driverId || 'driver',
+              name: data.driverName || 'ভেরিফাইড চালক',
+              phone: data.driverPhone || '',
+              category: data.driverCategory || 'cng',
+              vehicleModel: data.driverVehicleModel || 'যানবাহন',
+              plateNumber: data.driverLicensePlate || '',
+              rating: data.driverRating || 5.0
+            };
+
+            const newTripRecord: PassengerTripRecord = {
+              id: tripDocId,
+              date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+              pickupPoint: data.pickupPoint || activeBooking?.pickupTitle || passengerPickup || 'শুরুর স্থান',
+              destination: data.destination || activeBooking?.destTitle || passengerDestination || 'গন্তব্য স্থান',
+              driverName: data.driverName || matchedDriverData.name,
+              driverPhone: data.driverPhone || matchedDriverData.phone,
+              vehicleCategory: data.driverCategory || matchedDriverData.category,
+              vehicleModel: data.driverVehicleModel || matchedDriverData.vehicleModel,
+              plateNumber: data.driverLicensePlate || matchedDriverData.plateNumber,
+              fare: finalFare,
+              status: 'সম্পন্ন',
+              ratingGiven: 5.0
+            };
+            (newTripRecord as any).requestId = docSnap.id;
+
+            setTripHistory(prev => {
+              if (prev.some(t => t.id === tripDocId || (t as any).requestId === docSnap.id)) {
+                return prev;
+              }
+              const updated = [newTripRecord, ...prev];
+              try {
+                localStorage.setItem('safar_trip_history_v7', JSON.stringify(updated));
+              } catch {}
+              return updated;
+            });
+
+            // Persist to passenger's account in Firestore
+            const passengerPhoneToSave = myPhoneClean || reqPassengerPhoneClean;
+            if (passengerPhoneToSave) {
+              setDoc(doc(db, 'users', passengerPhoneToSave, 'trips', tripDocId), {
+                ...newTripRecord,
+                createdAt: new Date().toISOString()
+              }).catch(() => {});
             }
+
+            // Trigger celebration fanfare and open review modal for passenger
+            sounds.playTripCompletedFanfare();
+            setCompletedBookingForReview({
+              id: docSnap.id,
+              requestId: docSnap.id,
+              driver: matchedDriverData,
+              fare: finalFare,
+              pickupTitle: data.pickupPoint || activeBooking?.pickupTitle || 'শুরুর স্থান',
+              destTitle: data.destination || activeBooking?.destTitle || 'গন্তব্য স্থান',
+              distanceKm: data.distanceKm || activeBooking?.distanceKm || 1.2
+            });
+
             setActiveBooking(null);
             setPickupCoords(null);
             setDestCoords(null);
@@ -3569,10 +3673,8 @@ export default function App() {
 
     const req = activeIncomingRideForDriver;
 
-    // Trigger system notification with sound + vibration when screen is off or app is backgrounded
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-      highPriorityNotifications.showIncomingRideAlert(req).catch(() => {});
-    }
+    // Trigger system notification with sound + vibration for every incoming ride request
+    highPriorityNotifications.showIncomingRideAlert(req).catch(() => {});
 
     // If this exact incoming request is already ringing, keep voice/Daf & countdown continuous across role switches
     if (activeIncomingCoordinatorIdRef.current === req.id) {
@@ -4293,20 +4395,32 @@ export default function App() {
   const handleDriverDeclineRequest = async (requestId: string) => {
     stopUnifiedIncomingAlert();
     setDismissedAlertIds(prev => ({ ...prev, [requestId]: true }));
-    setPassengerRequests(prev => prev.map(req =>
-      req.id === requestId ? { ...req, status: 'declined' } : req
-    ));
-    if (passengerPendingRequest?.id === requestId) {
-      setPassengerPendingRequest(prev => (prev && prev.id === requestId ? { ...prev, status: 'declined' } : prev));
-    }
-    try {
-      await updateDoc(doc(db, 'ride_requests', requestId), {
-        status: 'declined',
-        declinedAt: new Date().toISOString()
-      });
+
+    const targetReq = passengerRequests.find(r => r.id === requestId);
+    const isDirectlyAssignedToMe = Boolean(
+      targetReq && (
+        (driverProfile.id && targetReq.driverId === driverProfile.id) ||
+        (driverProfile.phone && targetReq.driverPhone && targetReq.driverPhone.replace(/[^0-9]/g, '') === driverProfile.phone.replace(/[^0-9]/g, ''))
+      )
+    );
+
+    if (isDirectlyAssignedToMe) {
+      setPassengerRequests(prev => prev.map(req =>
+        req.id === requestId ? { ...req, status: 'declined' } : req
+      ));
+      if (passengerPendingRequest?.id === requestId) {
+        setPassengerPendingRequest(prev => (prev && prev.id === requestId ? { ...prev, status: 'declined' } : prev));
+      }
+      try {
+        await updateDoc(doc(db, 'ride_requests', requestId), {
+          status: 'declined',
+          declinedAt: new Date().toISOString()
+        });
+      } catch {}
       showAdminToastMessage('অনুরোধটি বাতিল করা হয়েছে');
-    } catch {
-      showAdminToastMessage('অনুরোধটি বাতিল করা হয়েছে');
+    } else {
+      // Open broadcast: dismiss locally for this driver so other online drivers can still accept
+      showAdminToastMessage('অনুরোধটি এড়িয়ে যাওয়া হয়েছে');
     }
   };
 
@@ -5345,9 +5459,19 @@ export default function App() {
           }));
         } catch {}
       }
+      // Live sync to driver document in Firestore so any device logged in as this driver sees the update live
+      const driverDocKey = driverProfile.id || cleanPhone;
+      if (driverDocKey) {
+        setDoc(doc(db, 'drivers', driverDocKey), {
+          todayTrips: newTrips,
+          todayEarnings: newEarnings,
+          totalTrips: newTrips,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      }
     }
 
-    // Also record in passenger trip history
+    // Record in passenger trip history in Firestore for the ACTUAL PASSENGER who booked the ride
     if (matchedReq) {
       const tripDocId = `trip-${tripId}`;
       const newTripRecord: PassengerTripRecord = {
@@ -5364,15 +5488,22 @@ export default function App() {
         status: 'সম্পন্ন',
         ratingGiven: 5.0
       };
-      setTripHistory(prev => {
-        if (prev.some(t => t.id === tripDocId || (t as any).requestId === tripId)) return prev;
-        return [newTripRecord, ...prev];
-      });
-      if (passengerProfile.phone) {
-        setDoc(doc(db, 'users', passengerProfile.phone, 'trips', tripDocId), {
+
+      const targetPassengerPhone = (matchedReq.passengerPhone || '').replace(/[^0-9]/g, '');
+      if (targetPassengerPhone) {
+        setDoc(doc(db, 'users', targetPassengerPhone, 'trips', tripDocId), {
           ...newTripRecord,
           createdAt: new Date().toISOString()
-        }).catch(() => {});
+        }).catch((e) => console.warn('Failed saving trip to passenger Firestore:', e));
+      }
+
+      // ONLY update local tripHistory on the device if the current device user is actually that passenger
+      const currentPassengerPhone = (passengerProfile.phone || '').replace(/[^0-9]/g, '');
+      if (userRole === 'passenger' && currentPassengerPhone && currentPassengerPhone === targetPassengerPhone) {
+        setTripHistory(prev => {
+          if (prev.some(t => t.id === tripDocId || (t as any).requestId === tripId)) return prev;
+          return [newTripRecord, ...prev];
+        });
       }
     }
 
@@ -6258,11 +6389,13 @@ export default function App() {
       <main className="flex-1">
 
         {/* PASSENGER REAL-TIME RIDE COCKPIT */}
-        {userRole === 'passenger' && (
+        {userRole === 'passenger' && (passengerPendingRequest || activeBooking || completedBookingForReview) && (
           <div id="passenger-ride-cockpit-section" className="max-w-7xl mx-auto w-full px-3 sm:px-4 lg:px-6 pt-3 pb-1 scroll-mt-20">
             <PassengerRideCockpit
               request={passengerPendingRequest}
               activeBooking={activeBooking}
+              completedBookingForReview={completedBookingForReview}
+              onDismissReview={() => setCompletedBookingForReview(null)}
               onCancelRequest={handleCancelPassengerPendingRequest}
               onCancelBooking={handleCancelBooking}
               onStartRide={() => {
@@ -6322,7 +6455,8 @@ export default function App() {
                   });
 
                   if (passengerProfile.phone) {
-                    setDoc(doc(db, 'users', passengerProfile.phone, 'trips', newTripRecord.id), {
+                    const cleanP = passengerProfile.phone.replace(/[^0-9]/g, '');
+                    setDoc(doc(db, 'users', cleanP, 'trips', newTripRecord.id), {
                       ...newTripRecord,
                       createdAt: new Date().toISOString()
                     }).catch(() => {});
@@ -6358,6 +6492,17 @@ export default function App() {
                     }
                   }
 
+                  // Save snapshot for Review Modal
+                  setCompletedBookingForReview({
+                    id: reqId,
+                    requestId: reqId,
+                    driver: matchedDriver,
+                    fare: finalFare,
+                    pickupTitle: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
+                    destTitle: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
+                    distanceKm: activeBooking.distanceKm || 1.2
+                  });
+
                   // Remove from pending driver queue
                   setPassengerRequests(prev => prev.filter(r => r.id !== reqId));
 
@@ -6365,30 +6510,70 @@ export default function App() {
                 }
               }}
               onSubmitReview={(driverId, rating, tags, comment) => {
+                const reviewDocId = `rev-${Date.now()}`;
                 const newReview = {
-                  id: `rev-${Date.now()}`,
+                  id: reviewDocId,
                   driverId: driverId,
                   rating: rating || 5.0,
                   tags: tags || [],
                   comment: comment || '',
                   passengerName: passengerProfile.name || 'সম্মানিত যাত্রী',
-                  date: new Date().toLocaleDateString('bn-BD', { day: 'numeric', month: 'short', year: 'numeric' })
+                  passengerPhone: passengerProfile.phone || '',
+                  date: new Date().toLocaleDateString('bn-BD', { day: 'numeric', month: 'short', year: 'numeric' }),
+                  createdAt: new Date().toISOString()
                 };
+
+                // 1. Save review to Firestore for persistent cross-device review feed
+                setDoc(doc(db, 'driver_reviews', reviewDocId), newReview).catch((err) => {
+                  console.warn('Failed to save driver review to Firestore:', err);
+                });
+
+                // 2. Update local state
                 setDriverReviews(prev => [newReview, ...prev]);
 
+                // 3. Update driver rating & review count in Firestore and drivers list
                 setDrivers(prev => prev.map(d => {
                   if (d.id === driverId) {
-                    const newTotal = (d.totalTrips || 0) + 1;
-                    const newRating = Number(((d.rating * (newTotal - 1) + rating) / newTotal).toFixed(1));
+                    const currentTrips = d.totalTrips || 0;
+                    const newTotal = currentTrips + 1;
+                    const newRating = Number(((d.rating * currentTrips + rating) / newTotal).toFixed(1));
+
+                    // Save to Firestore 'drivers' collection so all devices see updated rating
+                    setDoc(doc(db, 'drivers', driverId), {
+                      rating: newRating,
+                      totalTrips: newTotal,
+                      updatedAt: new Date().toISOString()
+                    }, { merge: true }).catch(() => {});
+
                     return { ...d, rating: newRating, totalTrips: newTotal };
                   }
                   return d;
                 }));
 
-                showAdminToastMessage(`আপনার মূল্যবান ${toBengaliNumber(rating)}-স্টার রিভিউ ও রেটিং জমা হয়েছে!`);
+                // 4. Update logged-in driverProfile if it's the same driver
+                const cleanPassengerPhone = (passengerProfile.phone || '').replace(/[^0-9]/g, '');
+                const cleanLoggedDriverPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+                if (driverProfile.id === driverId || (cleanLoggedDriverPhone && cleanLoggedDriverPhone === cleanPassengerPhone)) {
+                  setDriverProfile(prev => {
+                    const currentTrips = prev.totalTrips || prev.todayTrips || 0;
+                    const newTotal = currentTrips + 1;
+                    const newRating = Number((((prev.rating || 5.0) * currentTrips + rating) / newTotal).toFixed(1));
+                    return {
+                      ...prev,
+                      rating: newRating,
+                      totalTrips: newTotal
+                    };
+                  });
+                }
+
+                // 5. Dismiss review cockpit modal
+                setCompletedBookingForReview(null);
+
+                showAdminToastMessage(`আপনার মূল্যবান ${toBengaliNumber(rating)}-স্টার রিভিউ ও রেটিং সফলভাবে জমা হয়েছে!`);
               }}
               onDismissCockpit={() => {
                 setActiveBooking(null);
+                setCompletedBookingForReview(null);
                 setPickupCoords(null);
                 setDestCoords(null);
                 setPassengerPickup('');

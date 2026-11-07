@@ -51,11 +51,12 @@ export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
             <span className="font-extrabold text-xs sm:text-sm text-emerald-950 block leading-tight">
               দ্রুত গন্তব্য
             </span>
-            <PauseMarqueeText
-              text="গফরগাঁও ও পাগলার ১৫টি ইউনিয়নের সকল স্থান ও স্ট্যান্ড"
-              className="text-[10px] text-emerald-700 font-semibold block leading-tight"
-              pauseSec={2}
-            />
+            <span
+              className="text-[10px] text-emerald-700 font-semibold block leading-tight truncate"
+              title="গফরগাঁও ও পাগলার ১৫টি ইউনিয়নের সকল স্থান ও স্ট্যান্ড"
+            >
+              গফরগাঁও ও পাগলার ১৫টি ইউনিয়নের স্থান ও স্ট্যান্ড
+            </span>
           </div>
         </div>
 

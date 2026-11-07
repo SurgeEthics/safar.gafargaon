@@ -67,6 +67,8 @@ export interface PassengerRideCockpitProps {
   onStartRide?: () => void;
   onCompleteRide: (fare: number) => void;
   onSubmitReview: (driverId: string, rating: number, tags: string[], feedback: string) => void;
+  completedBookingForReview?: any;
+  onDismissReview?: () => void;
   onDismissCockpit?: () => void;
   onFocusMap: () => void;
   categoryBengaliName?: string;
@@ -75,11 +77,13 @@ export interface PassengerRideCockpitProps {
 export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
   request,
   activeBooking,
+  completedBookingForReview: externalCompletedBooking,
   onCancelRequest,
   onCancelBooking,
   onStartRide,
   onCompleteRide,
   onSubmitReview,
+  onDismissReview,
   onDismissCockpit,
   onFocusMap,
   categoryBengaliName = 'অটো'
@@ -94,7 +98,9 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
   // Quick message presets
   const [customMsg, setCustomMsg] = useState('');
   const [sentNotice, setSentNotice] = useState<string | null>(null);
-  const [completedBookingForReview, setCompletedBookingForReview] = useState<any>(null);
+  const [localCompletedBooking, setLocalCompletedBooking] = useState<any>(null);
+
+  const activeReviewBooking = externalCompletedBooking || localCompletedBooking;
 
   // Sound trigger on match
   useEffect(() => {
@@ -110,7 +116,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
     }
   }, [activeBooking?.status]);
 
-  if (!request && !activeBooking && !showReviewModal && !completedBookingForReview) {
+  if (!request && !activeBooking && !showReviewModal && !activeReviewBooking) {
     return null;
   }
 
@@ -125,7 +131,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
 
   const handleToggleReviewTag = (tag: string) => {
     if (selectedReviewTags.includes(tag)) {
-      setSelectedReviewTags(selectedReviewTags.filter(t => t !== tag));
+      setSelectedReviewTags(selectedReviewTags.filter((t) => t !== tag));
     } else {
       setSelectedReviewTags([...selectedReviewTags, tag]);
     }
@@ -148,22 +154,24 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
       } catch {}
       sounds.playTripCompletedFanfare();
       const bookingSnapshot = { ...activeBooking };
-      setCompletedBookingForReview(bookingSnapshot);
+      setLocalCompletedBooking(bookingSnapshot);
       onCompleteRide(activeBooking.fare || 0);
-      if (onDismissCockpit) onDismissCockpit();
     }
   };
 
   const handleFinalSubmitReview = () => {
-    if (completedBookingForReview) {
+    const target = activeReviewBooking;
+    if (target && target.driver) {
       onSubmitReview(
-        completedBookingForReview.driver.id,
+        target.driver.id,
         reviewRating,
         selectedReviewTags,
         reviewComment
       );
     }
-    setCompletedBookingForReview(null);
+    setLocalCompletedBooking(null);
+    if (onDismissReview) onDismissReview();
+    if (onDismissCockpit) onDismissCockpit();
   };
 
   const safeDriver = (activeBooking?.driver || {}) as NonNullable<PassengerRideCockpitProps['activeBooking']>['driver'];
@@ -513,7 +521,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
       {/* ============================================================== */}
       {/* 3. TRIP COMPLETED & 5-STAR RATING REVIEW MODAL                 */}
       {/* ============================================================== */}
-      {completedBookingForReview && (
+      {activeReviewBooking && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900">
             {/* Header */}
@@ -525,7 +533,7 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
                 যাত্রা সফলভাবে সম্পন্ন হয়েছে!
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                {completedBookingForReview.pickupTitle} ➔ {completedBookingForReview.destTitle}
+                {activeReviewBooking.pickupTitle} ➔ {activeReviewBooking.destTitle}
               </p>
             </div>
 
@@ -533,19 +541,19 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
             <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 my-4">
               <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
                 <span>চালকের নাম:</span>
-                <strong className="text-slate-900">{completedBookingForReview.driver.name}</strong>
+                <strong className="text-slate-900">{activeReviewBooking.driver?.name || 'ভেরিফাইড চালক'}</strong>
               </div>
               <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
                 <span>বাহন ও লাইসেন্স:</span>
-                <span className="font-mono text-slate-800">{completedBookingForReview.driver.plateNumber}</span>
+                <span className="font-mono text-slate-800">{activeReviewBooking.driver?.plateNumber || ''}</span>
               </div>
               <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
                 <span>মোট দূরত্ব:</span>
-                <span className="text-slate-800">{completedBookingForReview.distanceKm} কিমি</span>
+                <span className="text-slate-800">{activeReviewBooking.distanceKm || 1.2} কিমি</span>
               </div>
               <div className="pt-2 border-t border-emerald-200 flex items-center justify-between">
                 <span className="font-bold text-slate-800 text-sm">পরিশোধযোগ্য নির্ধারিত ভাড়া:</span>
-                <span className="text-xl font-black text-emerald-700">৳ {completedBookingForReview.fare}</span>
+                <span className="text-xl font-black text-emerald-700">৳ {activeReviewBooking.fare || 40}</span>
               </div>
               <p className="text-[10px] text-emerald-800 text-center mt-1 font-semibold">
                 (চালককে নগদ অথবা বিকাশ/নগদে ভাড়া পরিশোধ করুন)
@@ -627,7 +635,11 @@ export const PassengerRideCockpit: React.FC<PassengerRideCockpitProps> = ({
             <div className="flex items-center gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setCompletedBookingForReview(null)}
+                onClick={() => {
+                  setLocalCompletedBooking(null);
+                  if (onDismissReview) onDismissReview();
+                  if (onDismissCockpit) onDismissCockpit();
+                }}
                 className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition"
               >
                 পরে দেব

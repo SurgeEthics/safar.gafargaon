@@ -10,14 +10,7 @@ class HighPriorityNotificationEngine {
   private isVibrating = false;
 
   private canVibrate(): boolean {
-    if (typeof window === 'undefined' || !('navigator' in window) || typeof navigator.vibrate !== 'function') {
-      return false;
-    }
-    const ua = (navigator as unknown as { userActivation?: { hasBeenActive: boolean } }).userActivation;
-    if (ua && !ua.hasBeenActive) {
-      return false;
-    }
-    return true;
+    return typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function';
   }
 
   /**

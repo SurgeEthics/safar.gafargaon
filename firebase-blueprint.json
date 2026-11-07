@@ -117,6 +117,40 @@
         "createdAt": { "type": "string" }
       },
       "required": ["passengerName", "passengerPhone", "pickupLocation", "destinationLocation", "status"]
+    },
+    "passengerTrip": {
+      "title": "Passenger Trip Record",
+      "description": "Completed trip record stored for passenger history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "pickupPoint": { "type": "string" },
+        "destination": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverPhone": { "type": "string" },
+        "vehicleCategory": { "type": "string" },
+        "vehicleModel": { "type": "string" },
+        "plateNumber": { "type": "string" },
+        "fare": { "type": "number" },
+        "status": { "type": "string" },
+        "ratingGiven": { "type": "number" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "driverReview": {
+      "title": "Driver Review & Rating",
+      "description": "Passenger rating and review for driver",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "driverId": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "passengerName": { "type": "string" },
+        "date": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -143,6 +177,14 @@
     "/ride_requests/{requestId}": {
       "schema": "rideRequest",
       "description": "Collection of ride requests submitted by passengers"
+    },
+    "/users/{userId}/trips/{tripId}": {
+      "schema": "passengerTrip",
+      "description": "Passenger personal completed trip history"
+    },
+    "/driver_reviews/{reviewId}": {
+      "schema": "driverReview",
+      "description": "Passenger reviews and ratings for drivers"
     }
   }
 }

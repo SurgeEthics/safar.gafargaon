@@ -38,6 +38,24 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    // Users collection & Passenger Trip History subcollection
+    match /users/{userId}/{document=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Passengers collection (Passenger accounts, authentication PINs, profiles)
+    match /passengers/{passengerId}/{document=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Driver Reviews collection (Ratings & Reviews submitted by passengers)
+    match /driver_reviews/{reviewId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Admins collection
     match /admins/{adminId} {
       allow read, write: if true;

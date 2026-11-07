@@ -27,8 +27,8 @@ export const DriverList: React.FC<DriverListProps> = ({
     : null;
 
   const categoryTitle = currentCategoryObj 
-    ? `${currentCategoryObj.nameBn} - সক্রিয় চালকদের তালিকা` 
-    : 'সকল ক্যাটাগরি - সক্রিয় চালকদের তালিকা';
+    ? `${currentCategoryObj.nameBn} - সক্রিয় চালক` 
+    : 'সক্রিয় চালকদের তালিকা';
 
   return (
     <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-4 sm:p-5 space-y-4">
@@ -40,11 +40,12 @@ export const DriverList: React.FC<DriverListProps> = ({
               <Users className="w-3.5 h-3.5" />
             </div>
             <div className="min-w-0 flex-1">
-              <PauseMarqueeText
-                text={categoryTitle}
-                className="text-sm sm:text-base font-bold text-slate-800"
-                pauseSec={1.5}
-              />
+              <h2
+                className="text-sm sm:text-base font-bold text-slate-800 truncate"
+                title={categoryTitle}
+              >
+                {categoryTitle}
+              </h2>
             </div>
             <span className="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0">
               {toBengaliNumber(drivers.length)} জন

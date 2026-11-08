@@ -4090,6 +4090,7 @@ export default function App() {
     setDestCoords(null);
     setPassengerPickup('');
     setPassengerDestination('');
+    setPassengerPickupLandmark('');
 
     try {
       localStorage.removeItem('safar_passenger_pending_v2');
@@ -4117,6 +4118,7 @@ export default function App() {
     setDestCoords(null);
     setPassengerPickup('');
     setPassengerDestination('');
+    setPassengerPickupLandmark('');
     showAdminToastMessage('ম্যাপের রুট এবং পিন ক্লিয়ার করা হয়েছে');
   };
 
@@ -6765,15 +6767,18 @@ export default function App() {
                             setPassengerLocation({ lat, lng, isLiveGps: true });
                             setPickupCoords({ lat, lng });
                             const nearest = findNearestLandmark(lat, lng);
-                            if (nearest.distanceMeters < 50) {
+                            if (nearest.distanceMeters <= 50) {
                               setPassengerPickup(nearest.name);
                               setPassengerPickupLandmark('');
                               showAdminToastMessage(`📍 অবস্থান: ${nearest.name} (সঠিকতা: ±${Math.round(accuracy)} মি.)`);
+                            } else if (nearest.distanceMeters <= 500) {
+                              setPassengerPickup(`${nearest.name} (লাইভ অবস্থান)`);
+                              setPassengerPickupLandmark(`${nearest.name} থেকে ~${toBengaliNumber(nearest.distanceMeters)} মি.`);
+                              showAdminToastMessage(`📍 লাইভ GPS অবস্থান চিহ্নিত: ${nearest.name} (~${nearest.distanceMeters} মি.)`);
                             } else {
-                              setPassengerPickup('আমার লাইভ অবস্থান (GPS)');
-                              const landmarkText = `${nearest.name} (থেকে ~${toBengaliNumber(nearest.distanceMeters)} মিটার দূরে)`;
-                              setPassengerPickupLandmark(landmarkText);
-                              showAdminToastMessage(`📍 লাইভ GPS অবস্থান চিহ্নিত • ২য় অপশন: ${nearest.name} (~${nearest.distanceMeters} মি.)`);
+                              setPassengerPickup(`${nearest.name} এলাকা (লাইভ অবস্থান)`);
+                              setPassengerPickupLandmark(`${nearest.name} থেকে ~${toBengaliNumber(nearest.distanceMeters)} মি.`);
+                              showAdminToastMessage(`📍 লাইভ GPS অবস্থান চিহ্নিত: ${nearest.name} (~${nearest.distanceMeters} মি.)`);
                             }
                           };
 
@@ -6795,10 +6800,15 @@ export default function App() {
                         }}
                         onChangeLocation={(name, coords) => {
                           setPassengerPickup(name);
+                          if (!name || !name.trim()) {
+                            setPickupCoords(null);
+                            setPassengerPickupLandmark('');
+                            return;
+                          }
                           if (coords) {
                             setPickupCoords(coords);
                             const nearest = findNearestLandmark(coords.lat, coords.lng);
-                            if (nearest.distanceMeters > 50) {
+                            if (nearest.distanceMeters > 50 && !name.includes(nearest.name)) {
                               setPassengerPickupLandmark(`${nearest.name} (থেকে ~${toBengaliNumber(nearest.distanceMeters)} মিটার দূরে)`);
                             } else {
                               setPassengerPickupLandmark('');
@@ -6814,7 +6824,7 @@ export default function App() {
                       />
 
                       {/* 2nd Option: Nearest Known Landmark Reference Banner */}
-                      {passengerPickupLandmark && (
+                      {Boolean(passengerPickup && passengerPickup.trim() !== '' && passengerPickupLandmark) && (
                         <div className="mt-1 flex items-center gap-1.5 text-[10.5px] bg-emerald-50 text-emerald-900 border border-emerald-200/90 px-2 py-0.5 rounded-lg overflow-hidden min-w-0 animate-in fade-in">
                           <span className="shrink-0 font-extrabold text-[9px] bg-emerald-200/80 text-emerald-950 px-1 rounded">২য় পরিচিত রেফারেন্স:</span>
                           <div className="min-w-0 flex-1 overflow-hidden">

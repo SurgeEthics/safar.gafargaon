@@ -18,7 +18,7 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: '/safar-logo.png',
+      icon: '/pwa-192x192.png',
       badge: '/notification-badge.png',
       tag: 'safar-driver-incoming-ride',
       renotify: true,

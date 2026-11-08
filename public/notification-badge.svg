@@ -1,0 +1,11 @@
+<svg width="96" height="96" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(35, 45) scale(0.86)">
+    <path d="M 122.88,235.52 C 92.16,174.08 133.12,92.16 225.28,92.16 C 296.96,92.16 327.68,143.36 281.6,194.56 C 230.4,235.52 163.84,245.76 163.84,296.96 L 389.12,296.96" fill="none" stroke="#FFFFFF" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 389.12,87.04 L 389.12,317.44" fill="none" stroke="#FFFFFF" stroke-width="48" stroke-linecap="round" />
+    <g transform="translate(225.28, 61.44)">
+      <path d="M 0,-62 C -34,-62 -60,-36 -60,-2 C -60,32 0,74 0,74 C 0,74 60,32 60,-2 C 60,-36 34,-62 0,-62 Z M 0,-22 A 18 18 0 1 0 0,14 A 18 18 0 1 0 0,-22 Z" fill="#FFFFFF" fill-rule="evenodd" />
+    </g>
+    <path d="M 122.88,211.52 A 24 24 0 1 0 122.88,259.52 A 24 24 0 1 0 122.88,211.52 Z M 122.88,225.52 A 10 10 0 1 0 122.88,245.52 A 10 10 0 1 0 122.88,225.52 Z" fill="#FFFFFF" fill-rule="evenodd" />
+    <text x="256" y="450" font-family="sans-serif" font-weight="900" font-size="130" fill="#FFFFFF" text-anchor="middle">সফর</text>
+  </g>
+</svg>

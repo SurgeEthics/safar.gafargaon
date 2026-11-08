@@ -93,7 +93,7 @@ function buildZipBuffer(fileEntries) {
     const fileCrc = crc32(raw);
 
     // Compress using raw deflate; fallback to store (0) if compressed isn't smaller
-    const deflated = zlib.deflateRawSync(raw, { level: 6 });
+    const deflated = zlib.deflateRawSync(raw, { level: 9 });
     const useDeflate = deflated.length < raw.length;
     const payload = useDeflate ? deflated : raw;
     const method = useDeflate ? 8 : 0;

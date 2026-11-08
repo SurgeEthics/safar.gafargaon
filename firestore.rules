@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Drivers collection (Viewable by all passengers, editable by admin/drivers)
+    match /drivers/{driverId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Stands collection (Viewable by all, editable from Super Admin Control Panel)
+    match /stands/{standId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Categories collection (Viewable by all, editable from Super Admin Control Panel)
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // App Settings collection (Colors, themes, density, widgets, URLs)
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Hotlines collection (Hospital, Fire, Police, National emergency numbers)
+    match /hotlines/{hotlineId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Ride Requests collection (Passengers create, drivers update status)
+    match /ride_requests/{requestId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Users collection & Passenger Trip History subcollection
+    match /users/{userId}/{document=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Passengers collection (Passenger accounts, authentication PINs, profiles)
+    match /passengers/{passengerId}/{document=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Driver Reviews collection (Ratings & Reviews submitted by passengers)
+    match /driver_reviews/{reviewId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Admins collection
+    match /admins/{adminId} {
+      allow read, write: if true;
+    }
+  }
+}

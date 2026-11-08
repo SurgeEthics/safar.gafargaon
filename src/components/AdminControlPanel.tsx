@@ -156,7 +156,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [downloadReadyUrl, setDownloadReadyUrl] = useState<string | null>(null);
   const [downloadReadySize, setDownloadReadySize] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৭৪ MB');
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৪৯ MB');
 
   // Dedicated Admin Password / PIN Change Slot State
   const [currentPinInput, setCurrentPinInput] = useState('');

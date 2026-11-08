@@ -57,7 +57,7 @@ class HighPriorityNotificationEngine {
     const body = `📍 পিকআপ: ${request.pickupPoint}\n🎯 গন্তব্য: ${request.destination}\n💰 নির্ধারিত ভাড়া: ৳${request.estFare} (দূরত্ব: ${request.distanceKm} কিমি)`;
     const options: any = {
       body,
-      icon: '/safar-logo.png',
+      icon: '/pwa-192x192.png',
       badge: '/notification-badge.png',
       tag: this.activeNotificationTag,
       renotify: true,
@@ -97,7 +97,7 @@ class HighPriorityNotificationEngine {
       if ('Notification' in window && Notification.permission === 'granted') {
         const notif = new Notification(title, {
           body,
-          icon: '/safar-logo.png',
+          icon: '/pwa-192x192.png',
           badge: '/notification-badge.png',
           tag: this.activeNotificationTag,
           requireInteraction: true,

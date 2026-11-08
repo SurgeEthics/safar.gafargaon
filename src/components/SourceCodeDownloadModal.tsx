@@ -28,7 +28,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
-  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৭৪ MB');
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৪৯ MB');
 
   useEffect(() => {
     if (!isOpen) return;

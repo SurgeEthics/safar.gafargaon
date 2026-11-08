@@ -82,15 +82,15 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
   const isDriverMode = userRole === 'driver';
   const cleanDriverPhone = normalizeCleanPhone(driverProfile.phone);
 
-  // 1. Check if current driver is already on a truly active trip (accepted or in_transit within last 60m)
+  // 1. Check if current driver is already on a truly active trip (accepted or in_transit within last 15m)
   const hasActiveTrip = passengerRequests.some(
     (r) => {
       if ((r.status !== 'accepted' && r.status !== 'in_transit') || dismissedTripIds.has(r.id)) {
         return false;
       }
-      // If trip is older than 60 minutes, treat as stale/abandoned so driver is never permanently blocked
+      // If trip is older than 15 minutes, treat as stale/abandoned so driver is never permanently blocked
       const tripTime = r.createdAtMs || 0;
-      if (tripTime > 0 && now - tripTime > 60 * 60 * 1000) {
+      if (tripTime > 0 && now - tripTime > 15 * 60 * 1000) {
         return false;
       }
       return (
@@ -119,7 +119,9 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
     return null;
   }
 
-  // Pending ride request is fresh within 90 seconds to prevent stale DB items while ensuring prompt notification
+  // Pending ride request freshness:
+  // Allow up to 5 minutes into the future (-300s) for cross-device clock skew when phone clocks differ,
+  // and up to 100 seconds in the past so real-time passenger requests alert reliably across devices.
   const isFresh = (req: T): boolean => {
     let reqTime = typeof req.createdAtMs === 'number' ? req.createdAtMs : 0;
     if (!reqTime && req.id.startsWith('req-')) {
@@ -130,8 +132,8 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
     }
     if (reqTime > 0) {
       const diff = now - reqTime;
-      // Allow -10s for minor device clock skew and up to 90s
-      return diff >= -10000 && diff < 90 * 1000;
+      // Allow -300s (future skew) and up to 100s past
+      return diff >= -300000 && diff < 100 * 1000;
     }
     return true;
   };
@@ -160,6 +162,8 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
         !driverProfile.isRegistered ||
         !driverProfile.category ||
         driverProfile.category === 'all' ||
+        !r.category ||
+        r.category === 'all' ||
         r.category === driverProfile.category
       );
     }
@@ -168,6 +172,8 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
     return (
       !driverProfile.category ||
       driverProfile.category === 'all' ||
+      !r.category ||
+      r.category === 'all' ||
       r.category === driverProfile.category
     );
   });

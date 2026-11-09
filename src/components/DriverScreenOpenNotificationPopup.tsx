@@ -39,20 +39,44 @@ export const DriverScreenOpenNotificationPopup: React.FC<DriverScreenOpenNotific
     setSecondsRemaining(remainingSeconds ?? 25);
     setIsProcessing(false);
 
-    if (managedByParent) return;
+    // Initial and periodic haptic vibration pulse while notification popup is active
+    try {
+      if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
+        navigator.vibrate([600, 250, 600, 250, 800]);
+      }
+    } catch {}
 
-    const interval = setInterval(() => {
-      setSecondsRemaining(prev => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          onDecline(request.id);
-          return 0;
+    const vibInterval = setInterval(() => {
+      try {
+        if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
+          navigator.vibrate([500, 200, 500]);
         }
-        return prev - 1;
-      });
-    }, 1000);
+      } catch {}
+    }, 2500);
 
-    return () => clearInterval(interval);
+    let declineInterval: any = null;
+    if (!managedByParent) {
+      declineInterval = setInterval(() => {
+        setSecondsRemaining(prev => {
+          if (prev <= 1) {
+            clearInterval(declineInterval);
+            onDecline(request.id);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+
+    return () => {
+      clearInterval(vibInterval);
+      if (declineInterval) clearInterval(declineInterval);
+      try {
+        if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
+          navigator.vibrate(0);
+        }
+      } catch {}
+    };
   }, [request?.id, request?.status, managedByParent]);
 
   if (!request || request.status !== 'pending') return null;

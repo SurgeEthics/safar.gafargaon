@@ -113,12 +113,6 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
               <img
                 src="/safar-logo.png"
                 alt="সফর লোগো"
-                onError={(e) => {
-                  const target = e.currentTarget;
-                  if (target.src.includes('safar-logo.png')) {
-                    target.src = '/logo.png';
-                  }
-                }}
                 className="w-8 h-8 rounded-xl shadow-md border border-emerald-300/40 object-contain flex-shrink-0 hover:scale-105 transition-transform"
               />
               <div className="truncate">
@@ -302,12 +296,6 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
                 <img
                   src="/safar-logo.png"
                   alt="সফর লোগো"
-                  onError={(e) => {
-                    const target = e.currentTarget;
-                    if (target.src.includes('safar-logo.png')) {
-                      target.src = '/logo.png';
-                    }
-                  }}
                   className="w-12 h-12 rounded-2xl shadow-md object-contain hover:scale-105 transition-transform"
                 />
                 <div>
@@ -332,7 +320,7 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
             <div className="py-4 flex flex-col items-center text-center">
               <div className="bg-gradient-to-b from-emerald-50 to-teal-50 p-4 sm:p-5 rounded-2xl border-2 border-dashed border-emerald-300 w-full max-w-xs flex flex-col items-center">
                 <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-1">
-                  স্মার্ট ট্রান্সপোর্ট ও ইমার্জেন্সি সার্ভিস
+                  স্মার্ট ট্রান্সপোর্ট এবং জরুরি সেবা
                 </span>
                 <h4 className="text-sm font-bold text-slate-800 mb-3">
                   ক্যামেরা দিয়ে স্ক্যান করে অ্যাপ নামান
@@ -358,13 +346,14 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
               </div>
             </div>
 
-            {/* Live Link Input with App Standard Marquee Rule */}
+            {/* Live Link Input with AutoMarqueeText Rule */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 p-2 bg-slate-100 rounded-xl border border-slate-200 overflow-hidden">
                 <div className="flex-1 min-w-0 overflow-hidden px-1">
                   <AutoMarqueeText
                     text={currentUrl}
-                    speed={36}
+                    speed={32}
+                    pauseAtEndMs={1500}
                     className="text-xs text-slate-700 font-mono select-all block w-full outline-none"
                   />
                 </div>

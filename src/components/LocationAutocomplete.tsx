@@ -176,27 +176,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         {isPickup && onLocateGps && (
           <button
             type="button"
-            onClick={() => {
-              setIsOpen(false);
-              const uLat = userGps?.lat;
-              const uLng = userGps?.lng;
-              if (uLat && uLng && places.length > 0) {
-                let bestName = 'গফরগাঁও পৌরসভা চত্বর';
-                let minD = 9999;
-                for (const p of places) {
-                  if (typeof p.lat === 'number' && typeof p.lng === 'number') {
-                    const d = Math.hypot(p.lat - uLat, p.lng - uLng);
-                    if (d < minD) {
-                      minD = d;
-                      bestName = p.bengaliName || p.name || 'গফরগাঁও পৌরসভা চত্বর';
-                    }
-                  }
-                }
-                setInputValue(bestName);
-                onChangeLocation(bestName, { lat: uLat, lng: uLng });
-              }
-              onLocateGps();
-            }}
+            onClick={onLocateGps}
             className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors cursor-pointer ${
               isGpsActive
                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
@@ -205,7 +185,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
             title="লাইভ GPS লোকেশন চিহ্নিত করুন"
           >
             <Navigation className={`w-3 h-3 ${isGpsActive ? 'text-emerald-600 animate-pulse' : ''}`} />
-            <span>{isGpsActive ? 'আমার লোকেশন নিন (সক্রিয়)' : 'আমার লোকেশন নিন'}</span>
+            <span>{isGpsActive ? 'GPS সক্রিয়' : 'আমার লোকেশন নিন'}</span>
           </button>
         )}
       </div>

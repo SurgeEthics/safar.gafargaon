@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { toBengaliNumber } from '../utils/calculator';
 import {
   Shield,
@@ -44,8 +44,7 @@ import {
   Copy,
   Key,
   Lock,
-  EyeOff,
-  RefreshCw
+  EyeOff
 } from 'lucide-react';
 import { Stand, Driver, VehicleCategoryItem } from '../App';
 import { EmergencyContact } from '../types';
@@ -158,9 +157,6 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [downloadReadySize, setDownloadReadySize] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৫০ MB');
-  const [isUploadingZip, setIsUploadingZip] = useState(false);
-  const [isRegeneratingZip, setIsRegeneratingZip] = useState(false);
-  const zipFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Dedicated Admin Password / PIN Change Slot State
   const [currentPinInput, setCurrentPinInput] = useState('');
@@ -169,30 +165,20 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [showPinCharacters, setShowPinCharacters] = useState(false);
   const [pinChangeFeedback, setPinChangeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // Dynamically fetch exact zip file size from API or HEAD request
   useEffect(() => {
     if (!isOpen) return;
-    fetch('/api/zip-info', { cache: 'no-store' })
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.sizeMb) {
-          setZipDisplaySize(`${toBengaliNumber(data.sizeMb)} MB`);
+    fetch('/safar-gafargaon-clean-source.zip', { method: 'HEAD', cache: 'no-store' })
+      .then(res => {
+        const cl = res.headers.get('content-length');
+        if (cl) {
+          const bytes = parseInt(cl, 10);
+          if (bytes > 0) {
+            const mb = (bytes / (1024 * 1024)).toFixed(2);
+            setZipDisplaySize(`${toBengaliNumber(mb)} MB`);
+          }
         }
       })
-      .catch(() => {
-        fetch('/safar-gafargaon-clean-source.zip', { method: 'HEAD', cache: 'no-store' })
-          .then(res => {
-            const cl = res.headers.get('content-length');
-            if (cl) {
-              const bytes = parseInt(cl, 10);
-              if (bytes > 0) {
-                const mb = (bytes / (1024 * 1024)).toFixed(2);
-                setZipDisplaySize(`${toBengaliNumber(mb)} MB`);
-              }
-            }
-          })
-          .catch(() => {});
-      });
+      .catch(() => {});
   }, [isOpen, activeTab]);
 
   // Stand Form Modal State
@@ -742,66 +728,6 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       showToast(`ডাউনলোড সমস্যা: ${err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন'}`);
     } finally {
       setIsZipDownloading(false);
-    }
-  };
-
-  // Upload Custom ZIP file
-  const handleUploadZipFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.name.endsWith('.zip')) {
-      showToast('⚠️ অনুগ্রহ করে একটি বৈধ .ZIP ফাইল নির্বাচন করুন');
-      return;
-    }
-    setIsUploadingZip(true);
-    try {
-      showToast('⏳ জিপ ফাইল সার্ভারে আপলোড হচ্ছে...');
-      const arrayBuf = await file.arrayBuffer();
-      const res = await fetch('/api/upload-zip', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/zip',
-        },
-        body: arrayBuf,
-      });
-      const data = await res.json();
-      if (data && data.success) {
-        const sizeStr = `${toBengaliNumber(data.sizeMb)} MB`;
-        setZipDisplaySize(sizeStr);
-        setDownloadReadyUrl('/safar-gafargaon-clean-source.zip');
-        setDownloadReadySize(sizeStr);
-        showToast(data.message || `🎉 নতুন জিপ ফাইল (${sizeStr}) সফলভাবে আপলোড হয়েছে!`);
-      } else {
-        throw new Error(data?.error || 'আপলোড ব্যর্থ হয়েছে');
-      }
-    } catch (err: any) {
-      showToast(`আপলোড সমস্যা: ${err?.message || 'পুনরায় চেষ্টা করুন'}`);
-    } finally {
-      setIsUploadingZip(false);
-      if (zipFileInputRef.current) zipFileInputRef.current.value = '';
-    }
-  };
-
-  // Regenerate clean ZIP archive from current project code
-  const handleRegenerateZip = async () => {
-    setIsRegeneratingZip(true);
-    try {
-      showToast('⏳ বর্তমান প্রজেক্ট কোডবেস থেকে ফ্রেশ জিপ তৈরি হচ্ছে...');
-      const res = await fetch('/api/regenerate-zip', { method: 'POST' });
-      const data = await res.json();
-      if (data && data.success) {
-        const sizeStr = `${toBengaliNumber(data.sizeMb)} MB`;
-        setZipDisplaySize(sizeStr);
-        setDownloadReadyUrl('/safar-gafargaon-clean-source.zip');
-        setDownloadReadySize(sizeStr);
-        showToast(data.message || `🎉 ফ্রেশ জিপ (${sizeStr}) প্রস্তুত হয়েছে!`);
-      } else {
-        throw new Error(data?.error || 'জিপ তৈরি ব্যর্থ হয়েছে');
-      }
-    } catch (err: any) {
-      showToast(`সমস্যা: ${err?.message || 'পুনরায় চেষ্টা করুন'}`);
-    } finally {
-      setIsRegeneratingZip(false);
     }
   };
 
@@ -2805,37 +2731,6 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                       <span>ডিপ্লয় গাইড ও বিবরণ</span>
                     </button>
                   )}
-                </div>
-
-                {/* Dynamic Upload & Regenerate Row */}
-                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-amber-300/70">
-                  <input
-                    ref={zipFileInputRef}
-                    type="file"
-                    accept=".zip,application/zip"
-                    onChange={handleUploadZipFile}
-                    className="hidden"
-                    id="admin-zip-upload-input"
-                  />
-                  <label
-                    htmlFor="admin-zip-upload-input"
-                    className={`inline-flex items-center gap-1.5 bg-white hover:bg-amber-50 active:scale-95 text-slate-800 font-bold px-3.5 py-2 rounded-xl text-xs shadow-2xs border border-amber-400 cursor-pointer transition ${
-                      isUploadingZip ? 'opacity-50 pointer-events-none' : ''
-                    }`}
-                  >
-                    <Upload className="w-3.5 h-3.5 text-amber-600" />
-                    <span>{isUploadingZip ? 'আপলোড হচ্ছে...' : '📤 কাস্টম জিপ ফাইল আপলোড'}</span>
-                  </label>
-
-                  <button
-                    type="button"
-                    onClick={handleRegenerateZip}
-                    disabled={isRegeneratingZip}
-                    className="inline-flex items-center gap-1.5 bg-white hover:bg-emerald-50 active:scale-95 text-emerald-800 font-bold px-3.5 py-2 rounded-xl text-xs shadow-2xs border border-emerald-300 cursor-pointer transition disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isRegeneratingZip ? 'animate-spin' : ''}`} />
-                    <span>{isRegeneratingZip ? 'জিপ তৈরি হচ্ছে...' : '🔄 বর্তমান কোড থেকে নতুন জিপ প্রস্তুত'}</span>
-                  </button>
                 </div>
 
                 {/* Download Ready Banner */}

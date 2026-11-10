@@ -52,8 +52,7 @@ import {
   Sparkles,
   Camera,
   Download,
-  UserPlus,
-  Smartphone
+  UserPlus
 } from 'lucide-react';
 import L from 'leaflet';
 import { SafarLogo } from './components/SafarLogo';
@@ -77,7 +76,6 @@ import {
   findMatchingIncomingRideRequest,
   mergeAcceptedRequestIntoList
 } from './utils/rideMatching';
-import { formatDynamicTripDate } from './utils/dateFormatter';
 import { PassengerRideCockpit } from './components/PassengerRideCockpit';
 import { DriverIncomingAlert } from './components/DriverIncomingAlert';
 import { DriverScreenOpenNotificationPopup } from './components/DriverScreenOpenNotificationPopup';
@@ -128,8 +126,6 @@ export interface VehicleCategoryItem {
 export interface PassengerTripRecord {
   id: string;
   date: string;
-  createdAtMs?: number;
-  createdAt?: string;
   pickupPoint: string;
   destination: string;
   driverName: string;
@@ -140,6 +136,57 @@ export interface PassengerTripRecord {
   fare: number;
   status: 'সম্পন্ন' | 'বাতিল';
   ratingGiven: number;
+  createdAt?: string;
+  createdAtMs?: number;
+}
+
+export function formatPassengerTripDisplayDate(trip: PassengerTripRecord, index = 0): string {
+  let tripMs = trip.createdAtMs;
+  if (!tripMs && trip.createdAt) {
+    const parsed = Date.parse(trip.createdAt);
+    if (!isNaN(parsed)) tripMs = parsed;
+  }
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterdayStart = todayStart - 24 * 60 * 60 * 1000;
+
+  // Extract existing time portion if present in trip.date (e.g. '০৯:৪৯ PM', '09:49 PM')
+  let timePart = '';
+  if (trip.date) {
+    const timeMatch = trip.date.match(/([০-৯0-9]{1,2}:[০-৯0-9]{2}\s*(?:AM|PM|পূর্বাহ্ন|অপরাহ্ন|am|pm)?)/i);
+    if (timeMatch) {
+      timePart = timeMatch[1];
+    }
+  }
+
+  if (tripMs) {
+    const dt = new Date(tripMs);
+    const t = timePart || dt.toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
+    if (tripMs >= todayStart) {
+      return `আজ, ${t}`;
+    }
+    if (tripMs >= yesterdayStart) {
+      return `গতকাল, ${t}`;
+    }
+    return `${dt.toLocaleDateString('bn-BD', { day: 'numeric', month: 'long', year: 'numeric' })}, ${t}`;
+  }
+
+  // If no timestamp was recorded and the legacy trip.date contains 'আজ,' for older trips:
+  if (trip.date && trip.date.includes('আজ')) {
+    const t = timePart || trip.date.replace(/^আজ[,\s]*/, '').trim() || '১২:০০ PM';
+    if (index === 0) {
+      return `আজ, ${t}`;
+    } else if (index <= 2) {
+      return `গতকাল, ${t}`;
+    } else {
+      const daysAgo = Math.min(index, 7);
+      const pastDate = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+      return `${pastDate.toLocaleDateString('bn-BD', { day: 'numeric', month: 'long', year: 'numeric' })}, ${t}`;
+    }
+  }
+
+  return trip.date || 'আজ';
 }
 
 export interface PassengerRideRequest {
@@ -1026,19 +1073,14 @@ function recordDriverTripLog(driverPhone: string | undefined, driverId: string |
       list.unshift(entry);
       localStorage.setItem(`safar_driver_trip_log_${cleanP}`, JSON.stringify(list.slice(0, 100)));
     }
-    try {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('safar-driver-trip-completed', { detail: entry }));
-      }
-    } catch {}
-
-    if (driverKey) {
-      setDoc(doc(db, 'drivers', driverKey, 'completed_trips', trip.id), entry, { merge: true }).catch(() => {});
-    }
-    if (cleanP && cleanP !== driverKey) {
-      setDoc(doc(db, 'drivers', cleanP, 'completed_trips', trip.id), entry, { merge: true }).catch(() => {});
-    }
   } catch {}
+
+  if (cleanP) {
+    setDoc(doc(db, 'drivers', cleanP, 'completed_trips', trip.id), entry, { merge: true }).catch(() => {});
+  }
+  if (driverKey && driverKey !== cleanP) {
+    setDoc(doc(db, 'drivers', driverKey, 'completed_trips', trip.id), entry, { merge: true }).catch(() => {});
+  }
 }
 
 // Category Badge Logo Component (Ensuring Red Medical Cross '+' for Ambulance)
@@ -2659,13 +2701,20 @@ export default function App() {
             destination: d.destination || '',
             driverName: d.driverName || '',
             driverPhone: d.driverPhone || '',
-            vehicleCategory: d.vehicleCategory || 'auto',
+            vehicleCategory: d.vehicleCategory || 'bike',
             vehicleModel: d.vehicleModel || '',
             plateNumber: d.plateNumber || '',
-            fare: d.fare || 0,
+            fare: Number(d.fare) || 0,
             status: d.status || 'সম্পন্ন',
-            ratingGiven: d.ratingGiven || 5.0
+            ratingGiven: d.ratingGiven || 5.0,
+            createdAt: d.createdAt,
+            createdAtMs: d.createdAtMs || (d.createdAt ? Date.parse(d.createdAt) : undefined)
           });
+        });
+        cloudTrips.sort((a, b) => {
+          const aMs = a.createdAtMs || (a.createdAt ? Date.parse(a.createdAt) : 0);
+          const bMs = b.createdAtMs || (b.createdAt ? Date.parse(b.createdAt) : 0);
+          return bMs - aMs;
         });
         setTripHistory(cloudTrips);
       }
@@ -2744,57 +2793,6 @@ export default function App() {
       localStorage.setItem('safar_active_driver_profile_v6', JSON.stringify(driverProfile));
     } catch {}
   }, [driverProfile]);
-
-  // Real-Time Multi-Device Live Sync for Logged-In Driver Profile from Firestore
-  useEffect(() => {
-    const cleanPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
-    if (!driverProfile.isRegistered) return;
-
-    const keysToListen = Array.from(new Set([driverProfile.id, cleanPhone].filter(Boolean))) as string[];
-    if (keysToListen.length === 0) return;
-
-    const unsubs = keysToListen.map((k) => {
-      return onSnapshot(doc(db, 'drivers', k), (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const todayStr = getTodayDateString();
-          const isSameDay = data.todayDate === todayStr;
-          const liveTodayTrips = isSameDay ? (Number(data.todayTrips) || 0) : 0;
-          const liveTodayEarnings = isSameDay ? (Number(data.todayEarnings) || 0) : 0;
-          const liveTotalTrips = typeof data.totalTrips === 'number' ? data.totalTrips : (Number(data.todayTrips) || 0);
-          const liveRating = typeof data.rating === 'number' ? data.rating : undefined;
-
-          setDriverProfile(prev => {
-            const updatedTrips = Math.max(prev.todayTrips || 0, liveTodayTrips);
-            const updatedEarnings = Math.max(prev.todayEarnings || 0, liveTodayEarnings);
-            const updatedTotal = Math.max(prev.totalTrips || 0, liveTotalTrips, updatedTrips);
-            if (
-              prev.todayTrips !== updatedTrips ||
-              prev.todayEarnings !== updatedEarnings ||
-              prev.totalTrips !== updatedTotal ||
-              (liveRating !== undefined && prev.rating !== liveRating)
-            ) {
-              return {
-                ...prev,
-                todayDate: todayStr,
-                todayTrips: updatedTrips,
-                todayEarnings: updatedEarnings,
-                totalTrips: updatedTotal,
-                rating: liveRating !== undefined ? liveRating : prev.rating
-              };
-            }
-            return prev;
-          });
-        }
-      }, (err) => {
-        console.warn('Driver profile live sync notice:', err);
-      });
-    });
-
-    return () => {
-      unsubs.forEach(u => u());
-    };
-  }, [driverProfile.id, driverProfile.phone, driverProfile.isRegistered]);
 
   // Dynamic Driver Reviews & Ratings (Loaded from LocalStorage & Firestore)
   const [driverReviews, setDriverReviews] = useState<{
@@ -3147,43 +3145,50 @@ export default function App() {
     return GAFARGAON_PLACES;
   });
 
-  // Real-time Firestore Sync for Popular Places (Cross-device, real-time live sync via settings collection)
+  // Real-time Firestore Sync for Popular Places (Cross-device, real-time live sync)
   useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, 'settings', 'popular_places'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (Array.isArray(data.places) && data.places.length > 0) {
-          const cleanedPlaces: GafargaonPlace[] = data.places
-            .filter((p: any) => !p.bengaliName?.includes('গয়েশপুর ইউনিয়ন পরিষদ') && !p.id?.includes('gayeshpur-up'))
-            .map((p: any) => {
-              let area = p.area || 'গফরগাঁও পৌরসভা';
-              if (area.includes('গয়েশপুর ইউনিয়ন')) {
-                area = area.replace(/গয়েশপুর ইউনিয়ন( \(পাগলা\))?/g, 'পাইথল ইউনিয়ন (পাগলা)');
-              }
-              return {
-                id: p.id || `place-${Math.random()}`,
-                name: p.name || p.id,
-                bengaliName: p.bengaliName || p.name || '',
-                category: p.category || 'অন্যান্য',
-                area: area,
-                lat: typeof p.lat === 'number' ? p.lat : 24.4536,
-                lng: typeof p.lng === 'number' ? p.lng : 90.5479
-              };
-            });
-          setPopularPlaces(cleanedPlaces);
-          try {
-            localStorage.setItem('safar_popular_places_v1', JSON.stringify(cleanedPlaces));
-          } catch {}
-        }
+    const unsubscribe = onSnapshot(collection(db, 'places'), (snapshot) => {
+      if (!snapshot.empty) {
+        const firestorePlaces: GafargaonPlace[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const bName = data.bengaliName || data.name || '';
+          // Permanently purge any erroneous Goyeshpur UP bhaban
+          if (bName.includes('গয়েশপুর ইউনিয়ন পরিষদ') || bName.includes('গয়েশপুর ইউপি') || docSnap.id.includes('gayeshpur-up')) {
+            deleteDoc(doc(db, 'places', docSnap.id)).catch(() => {});
+            return;
+          }
+
+          let area = data.area || 'গফরগাঁও পৌরসভা';
+          if (area.includes('গয়েশপুর ইউনিয়ন')) {
+            area = area.replace(/গয়েশপুর ইউনিয়ন( \(পাগলা\))?/g, 'পাইথল ইউনিয়ন (পাগলা)');
+          }
+
+          firestorePlaces.push({
+            id: docSnap.id,
+            name: data.name || docSnap.id,
+            bengaliName: bName,
+            category: data.category || 'অন্যান্য',
+            area: area,
+            lat: typeof data.lat === 'number' ? data.lat : 24.4536,
+            lng: typeof data.lng === 'number' ? data.lng : 90.5479
+          });
+        });
+        setPopularPlaces(firestorePlaces);
+        try {
+          localStorage.setItem('safar_popular_places_v1', JSON.stringify(firestorePlaces));
+        } catch {}
       } else {
-        // Seed default places to settings/popular_places so all devices can sync
-        setDoc(doc(db, 'settings', 'popular_places'), {
-          places: GAFARGAON_PLACES,
-          updatedAt: new Date().toISOString()
-        }, { merge: true }).catch(() => {});
+        // First-time seed initial 42 places to Firestore
+        GAFARGAON_PLACES.forEach(p => {
+          setDoc(doc(db, 'places', p.id), {
+            ...p,
+            updatedAt: new Date().toISOString()
+          }).catch(() => {});
+        });
       }
-    }, () => {
-      // Graceful offline fallback to local storage & constants without warning
+    }, (error) => {
+      console.warn('Firestore places sync fallback:', error);
     });
 
     return () => unsubscribe();
@@ -3202,12 +3207,12 @@ export default function App() {
       try {
         localStorage.setItem('safar_popular_places_v1', JSON.stringify(updated));
       } catch {}
-      setDoc(doc(db, 'settings', 'popular_places'), {
-        places: updated,
-        updatedAt: new Date().toISOString()
-      }, { merge: true }).catch(() => {});
       return updated;
     });
+    setDoc(doc(db, 'places', place.id), {
+      ...place,
+      updatedAt: new Date().toISOString()
+    }, { merge: true }).catch(() => {});
     showAdminToastMessage(`'${place.bengaliName}' স্থানটি ক্লাউড ফায়ারবেসে সেভ ও লাইভ সিঙ্ক হয়েছে!`);
   };
 
@@ -3217,12 +3222,9 @@ export default function App() {
       try {
         localStorage.setItem('safar_popular_places_v1', JSON.stringify(updated));
       } catch {}
-      setDoc(doc(db, 'settings', 'popular_places'), {
-        places: updated,
-        updatedAt: new Date().toISOString()
-      }, { merge: true }).catch(() => {});
       return updated;
     });
+    deleteDoc(doc(db, 'places', placeId)).catch(() => {});
     showAdminToastMessage(`'${name}' স্থানটি সফলভাবে মুছে ফেলা হয়েছে`);
   };
 
@@ -3231,10 +3233,12 @@ export default function App() {
     try {
       localStorage.setItem('safar_popular_places_v1', JSON.stringify(GAFARGAON_PLACES));
     } catch {}
-    setDoc(doc(db, 'settings', 'popular_places'), {
-      places: GAFARGAON_PLACES,
-      updatedAt: new Date().toISOString()
-    }, { merge: true }).catch(() => {});
+    GAFARGAON_PLACES.forEach(p => {
+      setDoc(doc(db, 'places', p.id), {
+        ...p,
+        updatedAt: new Date().toISOString()
+      }).catch(() => {});
+    });
     showAdminToastMessage('জনপ্রিয় স্থানসমূহ ডিফল্ট তালিকায় রিস্টোর ও ক্লাউডে সিঙ্ক হয়েছে');
   };
 
@@ -3527,10 +3531,12 @@ export default function App() {
               rating: data.driverRating || 5.0
             };
 
+            const rawPickup = data.pickupPoint || activeBooking?.pickupTitle || passengerPickup || 'শুরুর স্থান';
+            const cleanPickup = rawPickup.replace(/\s*\([^) ]*লাইভ[^)]*\)/gi, '').replace(/\s*\(লাইভ অবস্থান\)/gi, '').trim();
             const newTripRecord: PassengerTripRecord = {
               id: tripDocId,
               date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
-              pickupPoint: data.pickupPoint || activeBooking?.pickupTitle || passengerPickup || 'শুরুর স্থান',
+              pickupPoint: cleanPickup,
               destination: data.destination || activeBooking?.destTitle || passengerDestination || 'গন্তব্য স্থান',
               driverName: data.driverName || matchedDriverData.name,
               driverPhone: data.driverPhone || matchedDriverData.phone,
@@ -3539,7 +3545,9 @@ export default function App() {
               plateNumber: data.driverLicensePlate || matchedDriverData.plateNumber,
               fare: finalFare,
               status: 'সম্পন্ন',
-              ratingGiven: 5.0
+              ratingGiven: 5.0,
+              createdAt: new Date().toISOString(),
+              createdAtMs: Date.now()
             };
             (newTripRecord as any).requestId = docSnap.id;
 
@@ -3590,7 +3598,6 @@ export default function App() {
             }
 
             setActiveBooking(null);
-            setPassengerPendingRequest(null);
             setPickupCoords(null);
             setDestCoords(null);
             setPassengerPickup('');
@@ -3598,7 +3605,6 @@ export default function App() {
             try {
               localStorage.removeItem('safar_active_booking_v2');
               localStorage.removeItem('safar_my_ride_request_id');
-              localStorage.removeItem('safar_passenger_pending_v2');
             } catch {}
           }
           return;
@@ -3836,13 +3842,6 @@ export default function App() {
   const [showScreenOpenPopup, setShowScreenOpenPopup] = useState<boolean>(true);
   const [skipVoiceForCurrentAlert, setSkipVoiceForCurrentAlert] = useState<boolean>(false);
 
-  // Always re-arm the screen-open popup whenever in passenger mode
-  useEffect(() => {
-    if (userRole === 'passenger') {
-      setShowScreenOpenPopup(true);
-    }
-  }, [userRole]);
-
   // Subscribe to ScreenWakeLock status changes
   useEffect(() => {
     const unsub = screenWakeLock.subscribe((active) => {
@@ -3882,11 +3881,6 @@ export default function App() {
     };
     const handleGestureUnlock = () => {
       sounds.unlockAudio();
-      try {
-        if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
-          navigator.vibrate(15);
-        }
-      } catch {}
     };
     document.addEventListener('visibilitychange', handleScreenTurnOn);
     window.addEventListener('focus', handleScreenTurnOn);
@@ -4451,7 +4445,7 @@ export default function App() {
 
     const targetPassengerPhone = targetReq?.passengerPhone || '';
 
-    // Immediately dismiss alert modal for this specific request
+    // Immediately dismiss alert modal for this specific request ID only
     setDismissedAlertIds(prev => ({
       ...prev,
       [requestId]: true
@@ -4815,42 +4809,36 @@ export default function App() {
 
   // Dynamic Height Sync: Active Drivers Section ALWAYS depends on & equals Category Section height pixel-perfect
   useLayoutEffect(() => {
-    const catEl = categorySectionRef.current;
-    const driverEl = driverListRef.current;
-    if (!catEl) return;
+    const el = categorySectionRef.current;
+    if (!el) return;
 
-    const syncHeights = () => {
-      if (catEl) {
-        const height = catEl.getBoundingClientRect().height || catEl.offsetHeight;
+    const measureCategoryHeight = () => {
+      if (el) {
+        const height = el.getBoundingClientRect().height || el.offsetHeight;
         if (height > 50) {
-          const roundedH = Math.round(height);
-          setCategoryBoxHeight(roundedH);
-          if (driverEl) {
-            driverEl.style.height = `${roundedH}px`;
-            driverEl.style.maxHeight = `${roundedH}px`;
-          }
+          setCategoryBoxHeight(Math.round(height));
         }
       }
     };
 
     // Immediate initial calculation
-    syncHeights();
+    measureCategoryHeight();
 
     // Auto-update on font scaling, window resize or category DOM changes
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => {
-        syncHeights();
+        measureCategoryHeight();
       });
-      ro.observe(catEl);
+      ro.observe(el);
     }
 
-    window.addEventListener('resize', syncHeights);
+    window.addEventListener('resize', measureCategoryHeight);
     return () => {
       if (ro) ro.disconnect();
-      window.removeEventListener('resize', syncHeights);
+      window.removeEventListener('resize', measureCategoryHeight);
     };
-  }, [categories, appCustomSettings.fontSizeMode]);
+  }, [categories, appCustomSettings.fontSizeMode, passengerPendingRequest, activeBooking, userRole]);
 
   // Seamless, Frictionless Mouse Wheel Handler:
   // Completely eliminates screen freezing by immediately delegating scroll delta to parent window
@@ -5625,9 +5613,7 @@ export default function App() {
       destCoords: { lat: dLat, lng: dLng },
       status: 'pending',
       driverId: driver.id,
-      driverName: driver.name || 'নিবন্ধিত চালক',
-      driverPhone: driver.phone || '',
-      driverCategory: driver.category || 'cng'
+      driverName: driver.name || 'নিবন্ধিত চালক'
     };
 
     setPassengerPendingRequest(newRideRequest);
@@ -5653,8 +5639,6 @@ export default function App() {
       status: 'pending',
       driverId: driver.id,
       driverName: driver.name,
-      driverPhone: driver.phone || '',
-      driverCategory: driver.category || 'cng',
       createdAtMs: Date.now(),
       requestedAt: new Date().toISOString()
     }).catch(err => console.warn('Firestore ride request sync error:', err));
@@ -5767,18 +5751,14 @@ export default function App() {
       }
       // Live sync to driver document in Firestore so any device logged in as this driver sees the update live
       const driverDocKey = driverProfile.id || cleanPhone;
-      const statsPayload = {
-        todayDate: todayStr,
-        todayTrips: newTrips,
-        todayEarnings: newEarnings,
-        totalTrips: newLifetime,
-        updatedAt: new Date().toISOString()
-      };
       if (driverDocKey) {
-        setDoc(doc(db, 'drivers', driverDocKey), statsPayload, { merge: true }).catch(() => {});
-      }
-      if (cleanPhone && cleanPhone !== driverDocKey) {
-        setDoc(doc(db, 'drivers', cleanPhone), statsPayload, { merge: true }).catch(() => {});
+        setDoc(doc(db, 'drivers', driverDocKey), {
+          todayDate: todayStr,
+          todayTrips: newTrips,
+          todayEarnings: newEarnings,
+          totalTrips: newLifetime,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
       }
 
       recordDriverTripLog(driverProfile.phone, driverProfile.id, {
@@ -5794,12 +5774,12 @@ export default function App() {
     // Record in passenger trip history in Firestore for the ACTUAL PASSENGER who booked the ride
     if (matchedReq) {
       const tripDocId = `trip-${tripId}`;
+      const rawPickup = matchedReq.pickupPoint || 'শুরুর স্থান';
+      const cleanPickup = rawPickup.replace(/\s*\([^) ]*লাইভ[^)]*\)/gi, '').replace(/\s*\(লাইভ অবস্থান\)/gi, '').trim();
       const newTripRecord: PassengerTripRecord = {
         id: tripDocId,
         date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
-        createdAtMs: typeof matchedReq.createdAtMs === 'number' ? matchedReq.createdAtMs : Date.now(),
-        createdAt: new Date().toISOString(),
-        pickupPoint: matchedReq.pickupPoint || 'শুরুর স্থান',
+        pickupPoint: cleanPickup,
         destination: matchedReq.destination || 'গন্তব্য স্থান',
         driverName: driverProfile.name || 'নিবন্ধিত চালক',
         driverPhone: driverProfile.phone || '',
@@ -5808,7 +5788,9 @@ export default function App() {
         plateNumber: driverProfile.plateNumber || '',
         fare: finalFare,
         status: 'সম্পন্ন',
-        ratingGiven: 5.0
+        ratingGiven: 5.0,
+        createdAt: new Date().toISOString(),
+        createdAtMs: Date.now()
       };
 
       const targetPassengerPhone = (matchedReq.passengerPhone || '').replace(/[^0-9]/g, '');
@@ -5829,14 +5811,6 @@ export default function App() {
       }
     }
 
-    // Immediately mark as dismissed trip so driver can accept new rides right away without 15m delay
-    addDismissedTripId(tripId);
-    stopUnifiedIncomingAlert();
-    activeIncomingCoordinatorIdRef.current = null;
-    if (isAcceptingRef.current) {
-      delete isAcceptingRef.current[tripId];
-    }
-
     // Clear active booking if it corresponds to this completed trip
     if (activeBooking && ((activeBooking as any).requestId === tripId || activeBooking.id === tripId)) {
       setActiveBooking(null);
@@ -5846,18 +5820,18 @@ export default function App() {
       } catch {}
     }
 
+    addDismissedTripId(tripId);
+    setDismissedAlertIds(prev => {
+      const copy = { ...prev };
+      delete copy[tripId];
+      return copy;
+    });
     setPassengerRequests(prev => prev.filter(r => r.id !== tripId));
     showAdminToastMessage(`🎉 ট্রিপ সফলভাবে সম্পন্ন হয়েছে! ৳ ${finalFare} ভাড়া আয় হয়েছে।`);
   };
 
   // Driver Cancels an Accepted Trip
   const handleDriverCancelActiveTrip = async (tripId: string) => {
-    addDismissedTripId(tripId);
-    stopUnifiedIncomingAlert();
-    activeIncomingCoordinatorIdRef.current = null;
-    if (isAcceptingRef.current) {
-      delete isAcceptingRef.current[tripId];
-    }
     try {
       await updateDoc(doc(db, 'ride_requests', tripId), {
         status: 'cancelled',
@@ -5867,6 +5841,12 @@ export default function App() {
     } catch (err) {
       console.warn('Failed to cancel trip in Firestore:', err);
     }
+    addDismissedTripId(tripId);
+    setDismissedAlertIds(prev => {
+      const copy = { ...prev };
+      delete copy[tripId];
+      return copy;
+    });
     setPassengerRequests(prev => prev.filter(r => r.id !== tripId));
   };
 
@@ -6766,12 +6746,12 @@ export default function App() {
                   const tripDocId = `trip-${reqId}`;
                   const matchedDriver = drivers.find(d => d.id === activeBooking.driver.id) || activeBooking.driver;
                   const finalFare = (fare && fare > 0) ? fare : (activeBooking.fare || 40);
+                  const rawPickup = activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান';
+                  const cleanPickup = rawPickup.replace(/\s*\([^) ]*লাইভ[^)]*\)/gi, '').replace(/\s*\(লাইভ অবস্থান\)/gi, '').trim();
                   const newTripRecord: PassengerTripRecord = {
                     id: tripDocId,
                     date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
-                    createdAtMs: Date.now(),
-                    createdAt: new Date().toISOString(),
-                    pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
+                    pickupPoint: cleanPickup,
                     destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
                     driverName: matchedDriver.name || activeBooking.driver.name,
                     driverPhone: matchedDriver.phone || activeBooking.driver.phone,
@@ -6780,7 +6760,9 @@ export default function App() {
                     plateNumber: matchedDriver.plateNumber || activeBooking.driver.plateNumber,
                     fare: finalFare,
                     status: 'সম্পন্ন',
-                    ratingGiven: 5.0
+                    ratingGiven: 5.0,
+                    createdAt: new Date().toISOString(),
+                    createdAtMs: Date.now()
                   };
                   (newTripRecord as any).requestId = reqId;
 
@@ -6891,15 +6873,6 @@ export default function App() {
                     distanceKm: activeBooking.distanceKm || 1.2
                   });
 
-                  if (reqId) {
-                    addDismissedTripId(reqId);
-                  }
-                  stopUnifiedIncomingAlert();
-                  activeIncomingCoordinatorIdRef.current = null;
-                  if (isAcceptingRef.current && reqId) {
-                    delete isAcceptingRef.current[reqId];
-                  }
-
                   // Remove from pending driver queue
                   setPassengerRequests(prev => prev.filter(r => r.id !== reqId));
 
@@ -6961,19 +6934,21 @@ export default function App() {
                 }
 
                 // 5. Dismiss review cockpit modal and remember this trip ID so it never prompts again
-                setCompletedBookingForReview(null);
                 setActiveBooking(null);
                 setPassengerPendingRequest(null);
+                setCompletedBookingForReview(null);
                 if (completedBookingForReview?.requestId || completedBookingForReview?.id) {
                   const rId = completedBookingForReview.requestId || completedBookingForReview.id;
                   promptedReviewDocIdsRef.current[rId] = true;
                   try {
                     localStorage.setItem(`safar_reviewed_${rId}`, 'true');
-                    localStorage.removeItem('safar_active_booking_v2');
-                    localStorage.removeItem('safar_passenger_pending_v2');
-                    localStorage.removeItem('safar_my_ride_request_id');
                   } catch {}
                 }
+                try {
+                  localStorage.removeItem('safar_active_booking_v2');
+                  localStorage.removeItem('safar_passenger_pending_v2');
+                  localStorage.removeItem('safar_my_ride_request_id');
+                } catch {}
 
                 showAdminToastMessage(`আপনার মূল্যবান ${toBengaliNumber(rating)}-স্টার রিভিউ ও রেটিং সফলভাবে জমা হয়েছে!`);
               }}
@@ -6983,18 +6958,19 @@ export default function App() {
                   promptedReviewDocIdsRef.current[rId] = true;
                   try {
                     localStorage.setItem(`safar_review_dismissed_${rId}`, 'true');
-                    localStorage.removeItem('safar_active_booking_v2');
-                    localStorage.removeItem('safar_passenger_pending_v2');
-                    localStorage.removeItem('safar_my_ride_request_id');
                   } catch {}
                 }
-                setCompletedBookingForReview(null);
                 setActiveBooking(null);
                 setPassengerPendingRequest(null);
+                setCompletedBookingForReview(null);
+                try {
+                  localStorage.removeItem('safar_active_booking_v2');
+                  localStorage.removeItem('safar_passenger_pending_v2');
+                  localStorage.removeItem('safar_my_ride_request_id');
+                } catch {}
               }}
               onDismissCockpit={() => {
                 setActiveBooking(null);
-                setPassengerPendingRequest(null);
                 setCompletedBookingForReview(null);
                 setPickupCoords(null);
                 setDestCoords(null);
@@ -7003,7 +6979,6 @@ export default function App() {
                 try {
                   localStorage.removeItem('safar_active_booking_v2');
                   localStorage.removeItem('safar_my_ride_request_id');
-                  localStorage.removeItem('safar_passenger_pending_v2');
                 } catch {}
               }}
               onFocusMap={() => {
@@ -7125,36 +7100,65 @@ export default function App() {
                         userGps={liveGps}
                         onLocateGps={() => {
                           startGpsTracking();
+                          showAdminToastMessage('🛰️ লাইভ GPS অবস্থান অনুসন্ধান চলছে...');
 
-                          const handleLocated = (lat: number, lng: number, accuracy: number) => {
+                          const handleLocated = (lat: number, lng: number, accuracy: number, isSilent = false) => {
                             setPassengerLocation({ lat, lng, isLiveGps: true });
                             setPickupCoords({ lat, lng });
                             const nearest = findNearestLandmark(lat, lng);
                             // Pure place name without any "(লাইভ অবস্থান)" bracket
-                            setPassengerPickup(nearest.name);
+                            const cleanName = nearest.name.replace(/\s*\([^) ]*লাইভ[^)]*\)/gi, '').replace(/\s*\(লাইভ অবস্থান\)/gi, '').trim();
+                            setPassengerPickup(cleanName);
                             if (nearest.distanceMeters > 30) {
-                              setPassengerPickupLandmark(`${nearest.name} থেকে ~${toBengaliNumber(nearest.distanceMeters)} মি.`);
+                              setPassengerPickupLandmark(`${cleanName} থেকে ~${toBengaliNumber(nearest.distanceMeters)} মি.`);
                             } else {
                               setPassengerPickupLandmark('');
                             }
-                            showAdminToastMessage(`📍 অবস্থান চিহ্নিত: ${nearest.name}`);
+                            try {
+                              localStorage.setItem('safar_last_known_gps_lat', String(lat));
+                              localStorage.setItem('safar_last_known_gps_lng', String(lng));
+                              localStorage.setItem('safar_last_known_gps_name', cleanName);
+                            } catch {}
+                            if (!isSilent) {
+                              showAdminToastMessage(`📍 অবস্থান চিহ্নিত: ${cleanName}`);
+                            }
                           };
 
-                          // 1. Immediately provide instant location from live GPS or known coordinates so search bar is NEVER empty
-                          const instantLat = (liveGps.lat && liveGps.lng) ? liveGps.lat : (passengerLocation.lat || 24.4536);
-                          const instantLng = (liveGps.lat && liveGps.lng) ? liveGps.lng : (passengerLocation.lng || 90.5479);
-                          handleLocated(instantLat, instantLng, liveGps.accuracy || 20);
+                          // 1. Instant instant resolution so search bar is NEVER empty
+                          let initialLat = (liveGps.lat && liveGps.lng) ? liveGps.lat : (passengerLocation.lat && passengerLocation.lng ? passengerLocation.lat : 0);
+                          let initialLng = (liveGps.lat && liveGps.lng) ? liveGps.lng : (passengerLocation.lat && passengerLocation.lng ? passengerLocation.lng : 0);
+                          if (!initialLat || !initialLng) {
+                            try {
+                              const sLat = Number(localStorage.getItem('safar_last_known_gps_lat'));
+                              const sLng = Number(localStorage.getItem('safar_last_known_gps_lng'));
+                              if (sLat && sLng) {
+                                initialLat = sLat;
+                                initialLng = sLng;
+                              }
+                            } catch {}
+                          }
+                          if (!initialLat || !initialLng) {
+                            initialLat = 24.4536;
+                            initialLng = 90.5479;
+                          }
+                          handleLocated(initialLat, initialLng, 30, false);
 
-                          // 2. Concurrently query navigator.geolocation to refine with precise real device coordinates
-                          if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+                          // 2. Continuous real-time GPS hardware pinpointing
+                          if ('geolocation' in navigator) {
                             navigator.geolocation.getCurrentPosition(
                               (pos) => {
-                                handleLocated(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy || 10);
+                                handleLocated(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy || 10, true);
                               },
                               () => {
-                                // Silent fallback already populated immediately
+                                navigator.geolocation.getCurrentPosition(
+                                  (pos2) => {
+                                    handleLocated(pos2.coords.latitude, pos2.coords.longitude, pos2.coords.accuracy || 30, true);
+                                  },
+                                  () => {},
+                                  { enableHighAccuracy: false, timeout: 6000, maximumAge: 120000 }
+                                );
                               },
-                              { enableHighAccuracy: true, timeout: 3500, maximumAge: 30000 }
+                              { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
                             );
                           }
                         }}
@@ -7622,34 +7626,6 @@ export default function App() {
                         </button>
                       )}
 
-                      {/* Vibration Test Button */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const canVib = typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function';
-                          if (canVib) {
-                            try {
-                              const pattern = [400, 150, 400, 150, 500];
-                              const ok = navigator.vibrate(pattern);
-                              if (ok !== false) {
-                                showAdminToastMessage('📳 ভাইব্রেশন টেস্ট সফল! আপনার ফোনে কম্পন অনুভূত হচ্ছে।');
-                              } else {
-                                showAdminToastMessage('⚠️ ফোন ভাইব্রেশন রেসপন্স করেনি। সাইলেন্ট মোড বা ব্রাউজার ভাইব্রেশন চেক করুন।');
-                              }
-                            } catch {
-                              showAdminToastMessage('⚠️ সিস্টেমে ভাইব্রেশন অনুমতি দেওয়া নেই।');
-                            }
-                          } else {
-                            showAdminToastMessage('⚠️ আইফোন/সাফারি বা পিসিতে Web Vibration সাপোর্ট নেই। অ্যান্ড্রয়েড ক্রোমে এটি কাজ করে।');
-                          }
-                        }}
-                        className="flex items-center gap-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-950 border border-emerald-300 px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all shadow-xs active:scale-95"
-                        title="ফোনের ভাইব্রেশন মোটর সরাসরি পরীক্ষা করুন"
-                      >
-                        <Smartphone className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>📳 ভাইব্রেশন টেস্ট</span>
-                      </button>
-
                       <button
                         type="button"
                         onClick={() => setUserRole('passenger')}
@@ -7724,19 +7700,19 @@ export default function App() {
                 <DriverDailyEarningsLog
                   driverPhone={driverProfile.phone}
                   driverId={driverProfile.id}
+                  driverName={driverProfile.name}
                   todayTrips={driverProfile.todayTrips || 0}
                   todayEarnings={driverProfile.todayEarnings || 0}
                   totalTrips={driverProfile.totalTrips || driverProfile.todayTrips || 0}
+                  syncedTrips={tripHistory}
                   onSyncTodayStats={(liveTrips, liveEarnings) => {
                     setDriverProfile(prev => {
-                      const effectiveTrips = Math.max(prev.todayTrips || 0, liveTrips);
-                      const effectiveEarnings = Math.max(prev.todayEarnings || 0, liveEarnings);
-                      if (prev.todayTrips !== effectiveTrips || prev.todayEarnings !== effectiveEarnings) {
+                      if (prev.todayTrips !== liveTrips || prev.todayEarnings !== liveEarnings) {
                         return {
                           ...prev,
                           todayDate: getTodayDateString(),
-                          todayTrips: effectiveTrips,
-                          todayEarnings: effectiveEarnings
+                          todayTrips: liveTrips,
+                          todayEarnings: liveEarnings
                         };
                       }
                       return prev;
@@ -8167,16 +8143,16 @@ export default function App() {
           <>
             <section className="max-w-7xl mx-auto w-full px-3 sm:px-4 lg:px-6 pt-2.5 pb-1">
               {/* PARALLEL ROW: CATEGORY MENU (PC 33% / MOBILE 40%) & ACTIVE DRIVERS (PC 64% / MOBILE 60%) */}
-              <div className="flex flex-row gap-2 sm:gap-3 lg:gap-4 items-stretch w-full h-[520px] sm:h-[540px] md:h-[560px] min-h-0">
+              <div className="flex flex-row gap-2 sm:gap-3 lg:gap-4 items-stretch w-full">
                 
                 {/* ============================================================ */}
                 {/* LEFT SECTION: VEHICLE CATEGORIES MENU (PC 33%, MOBILE 40%)    */}
-                {/* Height is locked to parent and parallel to Active Drivers    */}
+                {/* Height is fixed by its 8 categories and serves as reference  */}
                 {/* ============================================================ */}
-                <div className="w-[40%] md:w-[33%] shrink-0 h-full flex flex-col min-h-0">
+                <div className="w-[40%] md:w-[33%] shrink-0 flex flex-col">
                   <div 
                     ref={categorySectionRef}
-                    className="bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 shadow-xs border border-slate-200 h-full flex flex-col justify-between overflow-hidden min-h-0"
+                    className="bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 shadow-xs border border-slate-200 flex flex-col justify-between h-[410px] sm:h-[450px] max-h-[410px] sm:max-h-[450px]"
                   >
                     <div className="flex-1 flex flex-col min-h-0">
                       <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100 shrink-0">
@@ -8251,15 +8227,16 @@ export default function App() {
 
                 {/* ============================================================ */}
                 {/* RIGHT SECTION: ACTIVE DRIVERS LIST (PC 64%, MOBILE 60%)      */}
-                {/* Strictly 100% EQUAL & PARALLEL HEIGHT TO CATEGORY SECTION    */}
+                {/* Height is PIXEL-PERFECT strictly equal to Category Section   */}
                 {/* Grid: PC 3-col, Tab 2-col, Mobile 1-col                      */}
                 {/* Independent scrolling facility with no trapping / freezing   */}
                 {/* ============================================================ */}
                 <div 
                   ref={driverListRef} 
-                  className="w-[60%] md:w-[67%] lg:w-[64%] flex-1 min-w-0 h-full flex flex-col min-h-0"
+                  className="w-[60%] md:w-[67%] lg:w-[64%] flex-1 min-w-0 flex flex-col h-[410px] sm:h-[450px] max-h-[410px] sm:max-h-[450px]"
+                  style={categoryBoxHeight > 0 ? { height: `${categoryBoxHeight}px`, maxHeight: `${categoryBoxHeight}px` } : undefined}
                 >
-                  <div className="bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 shadow-xs border border-slate-200 h-full flex flex-col overflow-hidden min-h-0">
+                  <div className="bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 shadow-xs border border-slate-200 h-full flex flex-col overflow-hidden">
                     
                     {/* Header: Selected Category & Active Count */}
                     <div className="flex items-center justify-between pb-1.5 sm:pb-2 mb-1.5 sm:mb-2 border-b border-slate-100 shrink-0 flex-wrap gap-1">
@@ -9928,7 +9905,9 @@ export default function App() {
                       </button>
                     </div>
                   ) : (
-                    tripHistory.map((trip, idx) => (
+                    tripHistory.map((trip, idx) => {
+                      const cleanPickup = (trip.pickupPoint || '').replace(/\s*\([^) ]*লাইভ[^)]*\)/gi, '').replace(/\s*\(লাইভ অবস্থান\)/gi, '').trim();
+                      return (
                       <div 
                         key={trip.id} 
                         className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 p-3 sm:p-3.5 shadow-xs space-y-2 hover:border-emerald-300 transition-colors"
@@ -9937,7 +9916,7 @@ export default function App() {
                           <div className="flex items-center gap-2">
                             <CategoryBadgeLogo category={trip.vehicleCategory} size="compact" />
                             <div>
-                              <span className="text-[10px] text-slate-400 block">{formatDynamicTripDate(trip, undefined, idx)}</span>
+                              <span className="text-[10px] text-slate-400 block">{formatPassengerTripDisplayDate(trip, idx)}</span>
                               <h4 className="text-xs sm:text-sm font-bold text-slate-900 leading-snug">
                                 {trip.driverName}
                               </h4>
@@ -9958,7 +9937,7 @@ export default function App() {
                           <div className="flex items-center gap-1.5 text-slate-700">
                             <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
                             <span className="text-[11px] text-slate-500">শুরুর স্থান:</span>
-                            <span className="text-[11px] font-semibold text-slate-800 truncate">{trip.pickupPoint}</span>
+                            <span className="text-[11px] font-semibold text-slate-800 truncate">{cleanPickup}</span>
                           </div>
                           <div className="flex items-center gap-1.5 text-slate-700">
                             <Navigation className="w-3 h-3 text-blue-600 shrink-0" />
@@ -10000,7 +9979,8 @@ export default function App() {
                           );
                         })()}
                       </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               ) : (

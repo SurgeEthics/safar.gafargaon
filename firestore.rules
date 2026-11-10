@@ -2,14 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Places collection (Viewable and syncable for Gafargaon navigation and pickup)
-    match /places/{placeId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
     // Drivers collection (Viewable by all passengers, editable by admin/drivers)
-    match /drivers/{driverId}/{document=**} {
+    match /drivers/{driverId} {
       allow read: if true;
       allow write: if true;
     }
@@ -58,12 +52,6 @@ service cloud.firestore {
 
     // Driver Reviews collection (Ratings & Reviews submitted by passengers)
     match /driver_reviews/{reviewId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    // WhatsApp verifications collection
-    match /whatsapp_verifications/{verificationId} {
       allow read: if true;
       allow write: if true;
     }

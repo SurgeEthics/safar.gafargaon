@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "DISABLE_HMR=true tsx server.ts",
-    "build": "vite build && node scripts/create-clean-zip.mjs",
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "rm -f public/*.zip dist/*.zip && vite build && node scripts/create-clean-zip.mjs",
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -29,9 +29,10 @@
     "qrcode": "^1.5.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "sharp": "^0.35.5",
     "vite": "^8.3.0",
     "vite-plugin-pwa": "^2.0.0",
-    "ws": "^8.22.2"
+    "ws": "^8.22.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

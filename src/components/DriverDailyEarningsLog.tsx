@@ -34,6 +34,7 @@ export interface DriverDailyEarningsLogProps {
   todayTrips: number;
   todayEarnings: number;
   totalTrips?: number;
+  onSyncTodayStats?: (todayTrips: number, todayEarnings: number) => void;
 }
 
 export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
@@ -41,7 +42,8 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
   driverId,
   todayTrips,
   todayEarnings,
-  totalTrips
+  totalTrips,
+  onSyncTodayStats
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
@@ -79,10 +81,40 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
             const list: DriverTripLogEntry[] = [];
             snapshot.forEach((docSnap) => {
               const d = docSnap.data();
+              let tripDate = d.date;
+              if (!tripDate && d.createdAtMs && typeof d.createdAtMs === 'number') {
+                const dt = new Date(d.createdAtMs);
+                const y = dt.getFullYear();
+                const m = String(dt.getMonth() + 1).padStart(2, '0');
+                const day = String(dt.getDate()).padStart(2, '0');
+                tripDate = `${y}-${m}-${day}`;
+              } else if (!tripDate && d.createdAt && typeof d.createdAt === 'string') {
+                tripDate = d.createdAt.split('T')[0];
+              }
+              if (!tripDate) {
+                tripDate = '2026-11-09';
+              }
+
+              let dateBn = d.dateBengali;
+              if (!dateBn || dateBn.includes('(আজ)')) {
+                try {
+                  const parts = tripDate.split('-').map(Number);
+                  if (parts.length === 3) {
+                    dateBn = new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString('bn-BD', {
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric'
+                    });
+                  }
+                } catch {
+                  dateBn = tripDate;
+                }
+              }
+
               list.push({
                 id: docSnap.id,
-                date: d.date || (d.createdAt ? d.createdAt.split('T')[0] : '2026-11-09'),
-                dateBengali: d.dateBengali || 'আজ',
+                date: tripDate,
+                dateBengali: dateBn || tripDate,
                 time: d.time || 'এইমাত্র',
                 pickup: d.pickup || d.pickupPoint || 'পিকআপ স্থান',
                 destination: d.destination || 'গন্তব্য স্থান',
@@ -108,23 +140,43 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
   }, [cleanPhone, driverId]);
 
   // Current today's date formatted
-  const todayStr = useMemo(() => {
+  const [todayStr, setTodayStr] = useState(() => {
     const now = new Date();
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
-  }, []);
+  });
 
-  const todayBengaliStr = useMemo(() => {
+  const [todayBengaliStr, setTodayBengaliStr] = useState(() => {
     return new Date().toLocaleDateString('bn-BD', {
       day: 'numeric',
       month: 'long',
       year: 'numeric'
     });
-  }, []);
+  });
 
-  // Group trips by date
+  // Keep today's date updated actively across midnight / day rollover
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      const currentToday = `${y}-${m}-${d}`;
+      if (currentToday !== todayStr) {
+        setTodayStr(currentToday);
+        setTodayBengaliStr(now.toLocaleDateString('bn-BD', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        }));
+      }
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [todayStr]);
+
+  // Group trips strictly by date for this individual driver
   const groupedData = useMemo(() => {
     const map = new Map<string, {
       date: string;
@@ -137,7 +189,8 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
 
     // Group actual trips
     tripLogs.forEach((trip) => {
-      const dateKey = trip.date || todayStr;
+      const dateKey = trip.date;
+      if (!dateKey) return;
       if (!map.has(dateKey)) {
         map.set(dateKey, {
           date: dateKey,
@@ -150,26 +203,24 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
       }
       const entry = map.get(dateKey)!;
       entry.totalTrips += 1;
-      entry.totalEarnings += trip.fare;
+      entry.totalEarnings += (Number(trip.fare) || 0);
       entry.trips.push(trip);
     });
 
-    // Ensure TODAY is always present and synchronized with live todayTrips & todayEarnings
+    // Ensure TODAY is always present in list, strictly reflecting today's completed trips
     if (!map.has(todayStr)) {
       map.set(todayStr, {
         date: todayStr,
-        dateBengali: `${todayBengaliStr} (আজ)`,
+        dateBengali: todayBengaliStr,
         isToday: true,
-        totalTrips: todayTrips,
-        totalEarnings: todayEarnings,
+        totalTrips: 0,
+        totalEarnings: 0,
         trips: []
       });
     } else {
       const todayEntry = map.get(todayStr)!;
-      // Guarantee live today values take precedence if higher
-      todayEntry.totalTrips = Math.max(todayEntry.totalTrips, todayTrips);
-      todayEntry.totalEarnings = Math.max(todayEntry.totalEarnings, todayEarnings);
-      todayEntry.dateBengali = `${todayBengaliStr} (আজ)`;
+      todayEntry.dateBengali = todayBengaliStr;
+      todayEntry.isToday = true;
     }
 
     // Sort by date descending (newest dates first)
@@ -180,7 +231,22 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
       return sorted.slice(0, 7);
     }
     return sorted;
-  }, [tripLogs, todayStr, todayBengaliStr, todayTrips, todayEarnings, filterMode]);
+  }, [tripLogs, todayStr, todayBengaliStr, filterMode]);
+
+  // Today's actual live figures
+  const todayEntry = useMemo(() => {
+    return groupedData.find(g => g.date === todayStr);
+  }, [groupedData, todayStr]);
+
+  const liveTodayTrips = todayEntry ? todayEntry.totalTrips : 0;
+  const liveTodayEarnings = todayEntry ? todayEntry.totalEarnings : 0;
+
+  // Sync today's verified actual numbers back to driver dashboard
+  useEffect(() => {
+    if (onSyncTodayStats) {
+      onSyncTodayStats(liveTodayTrips, liveTodayEarnings);
+    }
+  }, [liveTodayTrips, liveTodayEarnings, onSyncTodayStats]);
 
   // Overall statistics
   const totalReportEarnings = useMemo(() => {
@@ -279,7 +345,7 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
               </div>
               <div className="min-w-0">
                 <span className="text-[10px] text-slate-500 block leading-tight">আজকের সক্রিয় আয়</span>
-                <span className="text-xs sm:text-sm font-black text-amber-900">৳ {toBengaliNumber(todayEarnings)}</span>
+                <span className="text-xs sm:text-sm font-black text-amber-900">৳ {toBengaliNumber(liveTodayEarnings)}</span>
               </div>
             </div>
           </div>
@@ -336,9 +402,9 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
                   {isExpanded && (
                     <div className="px-3 pb-2.5 pt-1 border-t border-slate-100 bg-white divide-y divide-slate-100 text-xs">
                       {group.trips.length === 0 ? (
-                        <div className="py-2 text-center text-[11px] text-slate-500 italic">
-                          {group.isToday && group.totalTrips > 0
-                            ? `আজ মোট ${toBengaliNumber(group.totalTrips)}টি ট্রিপ সম্পন্ন হয়েছে এবং ৳ ${toBengaliNumber(group.totalEarnings)} যোগ হয়েছে। নতুন ট্রিপ সম্পন্ন হলে এখানে স্বয়ংক্রিয়ভাবে বিস্তারিত যুক্ত হবে।`
+                        <div className="py-2.5 text-center text-[11px] text-slate-500 italic bg-slate-50/70 rounded-lg">
+                          {group.isToday
+                            ? 'আজ এখনো কোনো ট্রিপ সম্পন্ন হয়নি। নতুন ট্রিপ সম্পন্ন হলে এখানে স্বয়ংক্রিয়ভাবে বিস্তারিত খতিয়ান যুক্ত হবে।'
                             : 'এই তারিখে কোনো সম্পন্ন ট্রিপের রেকর্ড নেই।'}
                         </div>
                       ) : (

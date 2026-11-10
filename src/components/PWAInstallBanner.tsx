@@ -299,10 +299,10 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
                 />
                 <div>
                   <h3 className="font-bold text-slate-900 text-base sm:text-lg">
-                    সফর অ্যাপটি ফ্রিতে ছড়িয়ে দিন
+                    সফর অ্যাপটি ছড়িয়ে দিন
                   </h3>
                   <p className="text-xs text-slate-500">
-                    গফরগাঁওয়ের যেকোনো সাধারণ মানুষ এক স্ক্যানেই অ্যাপ চালাতে পারবে
+                    যেকোনো সাধারণ মানুষ এক স্ক্যানেই অ্যাপ চালাতে পারবে
                   </p>
                 </div>
               </div>
@@ -319,7 +319,7 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
             <div className="py-4 flex flex-col items-center text-center">
               <div className="bg-gradient-to-b from-emerald-50 to-teal-50 p-4 sm:p-5 rounded-2xl border-2 border-dashed border-emerald-300 w-full max-w-xs flex flex-col items-center">
                 <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-1">
-                  গফরগাঁও স্মার্ট ট্রান্সপোর্ট
+                  Smart Transport and Emergency Service
                 </span>
                 <h4 className="text-sm font-bold text-slate-800 mb-3">
                   ক্যামেরা দিয়ে স্ক্যান করে অ্যাপ নামান
@@ -345,15 +345,18 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
               </div>
             </div>
 
-            {/* Live Link Input */}
+            {/* Live Link Input with Marquee Rule */}
             <div className="space-y-3">
-              <div className="flex items-center gap-2 p-2 bg-slate-100 rounded-xl border border-slate-200">
-                <input
-                  type="text"
-                  readOnly
-                  value={currentUrl}
-                  className="bg-transparent text-xs text-slate-700 flex-1 outline-none px-2 font-mono truncate"
-                />
+              <div className="flex items-center gap-2 p-2 bg-slate-100 rounded-xl border border-slate-200 overflow-hidden">
+                <div className="flex-1 min-w-0 overflow-hidden px-1">
+                  {React.createElement('marquee', {
+                    className: 'text-xs text-slate-700 font-mono select-all block w-full outline-none',
+                    scrollamount: '4',
+                    behavior: 'scroll',
+                    direction: 'left',
+                    title: currentUrl
+                  }, currentUrl)}
+                </div>
                 <button
                   type="button"
                   onClick={handleCopy}

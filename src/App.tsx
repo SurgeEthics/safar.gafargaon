@@ -2792,16 +2792,32 @@ export default function App() {
     const unsub = onSnapshot(doc(db, 'drivers', driverProfile.id), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        const currentToday = getTodayDateString();
+        const isSameDay = data.todayDate === currentToday;
+        const validTodayTrips = isSameDay && typeof data.todayTrips === 'number' ? data.todayTrips : 0;
+        const validTodayEarnings = isSameDay && typeof data.todayEarnings === 'number' ? data.todayEarnings : 0;
+        const validTotalTrips = typeof data.totalTrips === 'number' ? data.totalTrips : (data.todayTrips || undefined);
+
         setDriverProfile(prev => ({
           ...prev,
           rating: typeof data.rating === 'number' ? data.rating : prev.rating,
-          totalTrips: typeof data.totalTrips === 'number' ? data.totalTrips : (data.todayTrips || prev.totalTrips),
-          todayTrips: typeof data.todayTrips === 'number' ? data.todayTrips : prev.todayTrips,
-          todayEarnings: typeof data.todayEarnings === 'number' ? data.todayEarnings : prev.todayEarnings,
+          totalTrips: validTotalTrips !== undefined ? validTotalTrips : prev.totalTrips,
+          todayDate: currentToday,
+          todayTrips: validTodayTrips,
+          todayEarnings: validTodayEarnings,
           verificationStatus: data.verificationStatus || prev.verificationStatus,
           isVerified: data.isVerified ?? prev.isVerified,
           isOnline: data.isOnline ?? prev.isOnline,
         }));
+
+        // If Firestore had an outdated date, update it with today's date and clean 0 counts
+        if (data.todayDate !== currentToday && (data.todayTrips || data.todayEarnings)) {
+          setDoc(docSnap.ref, {
+            todayDate: currentToday,
+            todayTrips: 0,
+            todayEarnings: 0
+          }, { merge: true }).catch(() => {});
+        }
       }
     }, (err) => {
       console.warn('Driver profile Firestore live sync warning:', err);
@@ -2809,6 +2825,25 @@ export default function App() {
 
     return () => unsub();
   }, [driverProfile.isRegistered, driverProfile.id]);
+
+  // Active Midnight / Date Rollover Checker (Resets Today's Count Automatically at 12:00 AM)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const currentToday = getTodayDateString();
+      setDriverProfile(prev => {
+        if (prev.isRegistered && prev.todayDate && prev.todayDate !== currentToday) {
+          return {
+            ...prev,
+            todayDate: currentToday,
+            todayTrips: 0,
+            todayEarnings: 0
+          };
+        }
+        return prev;
+      });
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
 
   const [driverLoginPhoneInput, setDriverLoginPhoneInput] = useState('');
   const [driverLoginError, setDriverLoginError] = useState<string | null>(null);
@@ -2899,16 +2934,13 @@ export default function App() {
     let savedTodayTrips = (driverData.todayDate === todayStr && typeof driverData.todayTrips === 'number') ? driverData.todayTrips : 0;
     let savedTodayEarnings = (driverData.todayDate === todayStr && typeof driverData.todayEarnings === 'number') ? driverData.todayEarnings : 0;
     try {
-      const localStats = localStorage.getItem(`safar_driver_stats_${clean}`);
-      if (localStats) {
-        const parsed = JSON.parse(localStats);
-        if (parsed.date === todayStr) {
-          if (typeof parsed.todayTrips === 'number') {
-            savedTodayTrips = Math.max(savedTodayTrips, parsed.todayTrips);
-          }
-          if (typeof parsed.todayEarnings === 'number') {
-            savedTodayEarnings = Math.max(savedTodayEarnings, parsed.todayEarnings);
-          }
+      const rawLogs = localStorage.getItem(`safar_driver_trip_log_${clean}`);
+      if (rawLogs) {
+        const parsedLogs = JSON.parse(rawLogs);
+        if (Array.isArray(parsedLogs)) {
+          const tripsToday = parsedLogs.filter((t: any) => t.date === todayStr);
+          savedTodayTrips = tripsToday.length;
+          savedTodayEarnings = tripsToday.reduce((sum: number, t: any) => sum + (Number(t.fare) || 0), 0);
         }
       }
     } catch {}
@@ -7514,11 +7546,11 @@ export default function App() {
                     </div>
                     <div className="bg-white/90 p-2 rounded-xl border border-slate-200">
                       <span className="text-[10.5px] text-slate-500 block">আজকের ট্রিপ</span>
-                      <span className="font-bold text-xs text-blue-700">{driverProfile.todayTrips} টি সফল রাইড</span>
+                      <span className="font-bold text-xs text-blue-700">{toBengaliNumber(driverProfile.todayTrips || 0)} টি সফল রাইড</span>
                     </div>
                     <div className="bg-white/90 p-2 rounded-xl border border-slate-200">
                       <span className="text-[10.5px] text-slate-500 block">আজকের আনুমানিক আয়</span>
-                      <span className="font-extrabold text-xs text-emerald-800">৳ {driverProfile.todayEarnings}</span>
+                      <span className="font-extrabold text-xs text-emerald-800">৳ {toBengaliNumber(driverProfile.todayEarnings || 0)}</span>
                     </div>
                     {(() => {
                       const cleanPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
@@ -7559,6 +7591,19 @@ export default function App() {
                   todayTrips={driverProfile.todayTrips || 0}
                   todayEarnings={driverProfile.todayEarnings || 0}
                   totalTrips={driverProfile.totalTrips || driverProfile.todayTrips || 0}
+                  onSyncTodayStats={(liveTrips, liveEarnings) => {
+                    setDriverProfile(prev => {
+                      if (prev.todayTrips !== liveTrips || prev.todayEarnings !== liveEarnings) {
+                        return {
+                          ...prev,
+                          todayDate: getTodayDateString(),
+                          todayTrips: liveTrips,
+                          todayEarnings: liveEarnings
+                        };
+                      }
+                      return prev;
+                    });
+                  }}
                 />
 
                 {/* DRIVER ACTIVE ACCEPTED TRIP COCKPIT (IF DRIVER HAS ACCEPTED A TRIP) */}

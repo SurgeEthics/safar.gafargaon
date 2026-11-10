@@ -76,6 +76,7 @@ import {
   findMatchingIncomingRideRequest,
   mergeAcceptedRequestIntoList
 } from './utils/rideMatching';
+import { formatDynamicTripDate } from './utils/dateFormatter';
 import { PassengerRideCockpit } from './components/PassengerRideCockpit';
 import { DriverIncomingAlert } from './components/DriverIncomingAlert';
 import { DriverScreenOpenNotificationPopup } from './components/DriverScreenOpenNotificationPopup';
@@ -126,6 +127,8 @@ export interface VehicleCategoryItem {
 export interface PassengerTripRecord {
   id: string;
   date: string;
+  createdAtMs?: number;
+  createdAt?: string;
   pickupPoint: string;
   destination: string;
   driverName: string;
@@ -3084,50 +3087,43 @@ export default function App() {
     return GAFARGAON_PLACES;
   });
 
-  // Real-time Firestore Sync for Popular Places (Cross-device, real-time live sync)
+  // Real-time Firestore Sync for Popular Places (Cross-device, real-time live sync via settings collection)
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'places'), (snapshot) => {
-      if (!snapshot.empty) {
-        const firestorePlaces: GafargaonPlace[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          const bName = data.bengaliName || data.name || '';
-          // Permanently purge any erroneous Goyeshpur UP bhaban
-          if (bName.includes('গয়েশপুর ইউনিয়ন পরিষদ') || bName.includes('গয়েশপুর ইউপি') || docSnap.id.includes('gayeshpur-up')) {
-            deleteDoc(doc(db, 'places', docSnap.id)).catch(() => {});
-            return;
-          }
-
-          let area = data.area || 'গফরগাঁও পৌরসভা';
-          if (area.includes('গয়েশপুর ইউনিয়ন')) {
-            area = area.replace(/গয়েশপুর ইউনিয়ন( \(পাগলা\))?/g, 'পাইথল ইউনিয়ন (পাগলা)');
-          }
-
-          firestorePlaces.push({
-            id: docSnap.id,
-            name: data.name || docSnap.id,
-            bengaliName: bName,
-            category: data.category || 'অন্যান্য',
-            area: area,
-            lat: typeof data.lat === 'number' ? data.lat : 24.4536,
-            lng: typeof data.lng === 'number' ? data.lng : 90.5479
-          });
-        });
-        setPopularPlaces(firestorePlaces);
-        try {
-          localStorage.setItem('safar_popular_places_v1', JSON.stringify(firestorePlaces));
-        } catch {}
+    const unsubscribe = onSnapshot(doc(db, 'settings', 'popular_places'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (Array.isArray(data.places) && data.places.length > 0) {
+          const cleanedPlaces: GafargaonPlace[] = data.places
+            .filter((p: any) => !p.bengaliName?.includes('গয়েশপুর ইউনিয়ন পরিষদ') && !p.id?.includes('gayeshpur-up'))
+            .map((p: any) => {
+              let area = p.area || 'গফরগাঁও পৌরসভা';
+              if (area.includes('গয়েশপুর ইউনিয়ন')) {
+                area = area.replace(/গয়েশপুর ইউনিয়ন( \(পাগলা\))?/g, 'পাইথল ইউনিয়ন (পাগলা)');
+              }
+              return {
+                id: p.id || `place-${Math.random()}`,
+                name: p.name || p.id,
+                bengaliName: p.bengaliName || p.name || '',
+                category: p.category || 'অন্যান্য',
+                area: area,
+                lat: typeof p.lat === 'number' ? p.lat : 24.4536,
+                lng: typeof p.lng === 'number' ? p.lng : 90.5479
+              };
+            });
+          setPopularPlaces(cleanedPlaces);
+          try {
+            localStorage.setItem('safar_popular_places_v1', JSON.stringify(cleanedPlaces));
+          } catch {}
+        }
       } else {
-        // First-time seed initial 42 places to Firestore
-        GAFARGAON_PLACES.forEach(p => {
-          setDoc(doc(db, 'places', p.id), {
-            ...p,
-            updatedAt: new Date().toISOString()
-          }).catch(() => {});
-        });
+        // Seed default places to settings/popular_places so all devices can sync
+        setDoc(doc(db, 'settings', 'popular_places'), {
+          places: GAFARGAON_PLACES,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
       }
-    }, (error) => {
-      console.warn('Firestore places sync fallback:', error);
+    }, () => {
+      // Graceful offline fallback to local storage & constants without warning
     });
 
     return () => unsubscribe();
@@ -3146,12 +3142,12 @@ export default function App() {
       try {
         localStorage.setItem('safar_popular_places_v1', JSON.stringify(updated));
       } catch {}
+      setDoc(doc(db, 'settings', 'popular_places'), {
+        places: updated,
+        updatedAt: new Date().toISOString()
+      }, { merge: true }).catch(() => {});
       return updated;
     });
-    setDoc(doc(db, 'places', place.id), {
-      ...place,
-      updatedAt: new Date().toISOString()
-    }, { merge: true }).catch(() => {});
     showAdminToastMessage(`'${place.bengaliName}' স্থানটি ক্লাউড ফায়ারবেসে সেভ ও লাইভ সিঙ্ক হয়েছে!`);
   };
 
@@ -3161,9 +3157,12 @@ export default function App() {
       try {
         localStorage.setItem('safar_popular_places_v1', JSON.stringify(updated));
       } catch {}
+      setDoc(doc(db, 'settings', 'popular_places'), {
+        places: updated,
+        updatedAt: new Date().toISOString()
+      }, { merge: true }).catch(() => {});
       return updated;
     });
-    deleteDoc(doc(db, 'places', placeId)).catch(() => {});
     showAdminToastMessage(`'${name}' স্থানটি সফলভাবে মুছে ফেলা হয়েছে`);
   };
 
@@ -3172,12 +3171,10 @@ export default function App() {
     try {
       localStorage.setItem('safar_popular_places_v1', JSON.stringify(GAFARGAON_PLACES));
     } catch {}
-    GAFARGAON_PLACES.forEach(p => {
-      setDoc(doc(db, 'places', p.id), {
-        ...p,
-        updatedAt: new Date().toISOString()
-      }).catch(() => {});
-    });
+    setDoc(doc(db, 'settings', 'popular_places'), {
+      places: GAFARGAON_PLACES,
+      updatedAt: new Date().toISOString()
+    }, { merge: true }).catch(() => {});
     showAdminToastMessage('জনপ্রিয় স্থানসমূহ ডিফল্ট তালিকায় রিস্টোর ও ক্লাউডে সিঙ্ক হয়েছে');
   };
 
@@ -4380,11 +4377,10 @@ export default function App() {
 
     const targetPassengerPhone = targetReq?.passengerPhone || '';
 
-    // Immediately dismiss alert modal for this request and passenger
+    // Immediately dismiss alert modal for this specific request
     setDismissedAlertIds(prev => ({
       ...prev,
-      [requestId]: true,
-      ...(targetPassengerPhone ? { [targetPassengerPhone]: true } : {})
+      [requestId]: true
     }));
 
     if (!liveGps.isTracking) {
@@ -4745,34 +4741,40 @@ export default function App() {
 
   // Dynamic Height Sync: Active Drivers Section ALWAYS depends on & equals Category Section height pixel-perfect
   useLayoutEffect(() => {
-    const el = categorySectionRef.current;
-    if (!el) return;
+    const catEl = categorySectionRef.current;
+    const driverEl = driverListRef.current;
+    if (!catEl) return;
 
-    const measureCategoryHeight = () => {
-      if (el) {
-        const height = el.getBoundingClientRect().height || el.offsetHeight;
+    const syncHeights = () => {
+      if (catEl) {
+        const height = catEl.getBoundingClientRect().height || catEl.offsetHeight;
         if (height > 50) {
-          setCategoryBoxHeight(Math.round(height));
+          const roundedH = Math.round(height);
+          setCategoryBoxHeight(roundedH);
+          if (driverEl) {
+            driverEl.style.height = `${roundedH}px`;
+            driverEl.style.maxHeight = `${roundedH}px`;
+          }
         }
       }
     };
 
     // Immediate initial calculation
-    measureCategoryHeight();
+    syncHeights();
 
     // Auto-update on font scaling, window resize or category DOM changes
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => {
-        measureCategoryHeight();
+        syncHeights();
       });
-      ro.observe(el);
+      ro.observe(catEl);
     }
 
-    window.addEventListener('resize', measureCategoryHeight);
+    window.addEventListener('resize', syncHeights);
     return () => {
       if (ro) ro.disconnect();
-      window.removeEventListener('resize', measureCategoryHeight);
+      window.removeEventListener('resize', syncHeights);
     };
   }, [categories, appCustomSettings.fontSizeMode]);
 
@@ -5713,6 +5715,8 @@ export default function App() {
       const newTripRecord: PassengerTripRecord = {
         id: tripDocId,
         date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+        createdAtMs: typeof matchedReq.createdAtMs === 'number' ? matchedReq.createdAtMs : Date.now(),
+        createdAt: new Date().toISOString(),
         pickupPoint: matchedReq.pickupPoint || 'শুরুর স্থান',
         destination: matchedReq.destination || 'গন্তব্য স্থান',
         driverName: driverProfile.name || 'নিবন্ধিত চালক',
@@ -5743,6 +5747,14 @@ export default function App() {
       }
     }
 
+    // Immediately mark as dismissed trip so driver can accept new rides right away without 15m delay
+    addDismissedTripId(tripId);
+    stopUnifiedIncomingAlert();
+    activeIncomingCoordinatorIdRef.current = null;
+    if (isAcceptingRef.current) {
+      delete isAcceptingRef.current[tripId];
+    }
+
     // Clear active booking if it corresponds to this completed trip
     if (activeBooking && ((activeBooking as any).requestId === tripId || activeBooking.id === tripId)) {
       setActiveBooking(null);
@@ -5758,6 +5770,12 @@ export default function App() {
 
   // Driver Cancels an Accepted Trip
   const handleDriverCancelActiveTrip = async (tripId: string) => {
+    addDismissedTripId(tripId);
+    stopUnifiedIncomingAlert();
+    activeIncomingCoordinatorIdRef.current = null;
+    if (isAcceptingRef.current) {
+      delete isAcceptingRef.current[tripId];
+    }
     try {
       await updateDoc(doc(db, 'ride_requests', tripId), {
         status: 'cancelled',
@@ -6669,6 +6687,8 @@ export default function App() {
                   const newTripRecord: PassengerTripRecord = {
                     id: tripDocId,
                     date: 'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+                    createdAtMs: Date.now(),
+                    createdAt: new Date().toISOString(),
                     pickupPoint: activeBooking.pickupTitle || passengerPickup || 'শুরুর স্থান',
                     destination: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
                     driverName: matchedDriver.name || activeBooking.driver.name,
@@ -6788,6 +6808,15 @@ export default function App() {
                     destTitle: activeBooking.destTitle || passengerDestination || 'গন্তব্য স্থান',
                     distanceKm: activeBooking.distanceKm || 1.2
                   });
+
+                  if (reqId) {
+                    addDismissedTripId(reqId);
+                  }
+                  stopUnifiedIncomingAlert();
+                  activeIncomingCoordinatorIdRef.current = null;
+                  if (isAcceptingRef.current && reqId) {
+                    delete isAcceptingRef.current[reqId];
+                  }
 
                   // Remove from pending driver queue
                   setPassengerRequests(prev => prev.filter(r => r.id !== reqId));
@@ -7002,7 +7031,6 @@ export default function App() {
                         userGps={liveGps}
                         onLocateGps={() => {
                           startGpsTracking();
-                          showAdminToastMessage('🛰️ লাইভ GPS অবস্থান অনুসন্ধান চলছে...');
 
                           const handleLocated = (lat: number, lng: number, accuracy: number) => {
                             setPassengerLocation({ lat, lng, isLiveGps: true });
@@ -7018,36 +7046,22 @@ export default function App() {
                             showAdminToastMessage(`📍 অবস্থান চিহ্নিত: ${nearest.name}`);
                           };
 
-                          if (liveGps.lat && liveGps.lng) {
-                            handleLocated(liveGps.lat, liveGps.lng, liveGps.accuracy || 10);
-                            return;
-                          }
-                          if ('geolocation' in navigator) {
+                          // 1. Immediately provide instant location from live GPS or known coordinates so search bar is NEVER empty
+                          const instantLat = (liveGps.lat && liveGps.lng) ? liveGps.lat : (passengerLocation.lat || 24.4536);
+                          const instantLng = (liveGps.lat && liveGps.lng) ? liveGps.lng : (passengerLocation.lng || 90.5479);
+                          handleLocated(instantLat, instantLng, liveGps.accuracy || 20);
+
+                          // 2. Concurrently query navigator.geolocation to refine with precise real device coordinates
+                          if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
                             navigator.geolocation.getCurrentPosition(
                               (pos) => {
                                 handleLocated(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy || 10);
                               },
                               () => {
-                                // Fallback: try with lower accuracy / network location
-                                navigator.geolocation.getCurrentPosition(
-                                  (pos2) => {
-                                    handleLocated(pos2.coords.latitude, pos2.coords.longitude, pos2.coords.accuracy || 30);
-                                  },
-                                  () => {
-                                    // Final safety fallback: use previous location or Gafargaon center
-                                    const fallbackLat = (passengerLocation.lat && passengerLocation.lng) ? passengerLocation.lat : 24.4536;
-                                    const fallbackLng = (passengerLocation.lat && passengerLocation.lng) ? passengerLocation.lng : 90.5479;
-                                    handleLocated(fallbackLat, fallbackLng, 50);
-                                  },
-                                  { enableHighAccuracy: false, timeout: 6000, maximumAge: 120000 }
-                                );
+                                // Silent fallback already populated immediately
                               },
-                              { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+                              { enableHighAccuracy: true, timeout: 3500, maximumAge: 30000 }
                             );
-                          } else {
-                            const fallbackLat = (passengerLocation.lat && passengerLocation.lng) ? passengerLocation.lat : 24.4536;
-                            const fallbackLng = (passengerLocation.lat && passengerLocation.lng) ? passengerLocation.lng : 90.5479;
-                            handleLocated(fallbackLat, fallbackLng, 50);
                           }
                         }}
                         onChangeLocation={(name, coords) => {
@@ -8029,16 +8043,16 @@ export default function App() {
           <>
             <section className="max-w-7xl mx-auto w-full px-3 sm:px-4 lg:px-6 pt-2.5 pb-1">
               {/* PARALLEL ROW: CATEGORY MENU (PC 33% / MOBILE 40%) & ACTIVE DRIVERS (PC 64% / MOBILE 60%) */}
-              <div className="flex flex-row gap-2 sm:gap-3 lg:gap-4 items-start w-full">
+              <div className="flex flex-row gap-2 sm:gap-3 lg:gap-4 items-stretch w-full h-[520px] sm:h-[540px] md:h-[560px] min-h-0">
                 
                 {/* ============================================================ */}
                 {/* LEFT SECTION: VEHICLE CATEGORIES MENU (PC 33%, MOBILE 40%)    */}
-                {/* Height is fixed by its 8 categories and serves as reference  */}
+                {/* Height is locked to parent and parallel to Active Drivers    */}
                 {/* ============================================================ */}
-                <div className="w-[40%] md:w-[33%] shrink-0 flex flex-col">
+                <div className="w-[40%] md:w-[33%] shrink-0 h-full flex flex-col min-h-0">
                   <div 
                     ref={categorySectionRef}
-                    className="bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 shadow-xs border border-slate-200 flex flex-col justify-between h-[410px] sm:h-[450px] max-h-[410px] sm:max-h-[450px]"
+                    className="bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 shadow-xs border border-slate-200 h-full flex flex-col justify-between overflow-hidden min-h-0"
                   >
                     <div className="flex-1 flex flex-col min-h-0">
                       <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100 shrink-0">
@@ -8113,16 +8127,15 @@ export default function App() {
 
                 {/* ============================================================ */}
                 {/* RIGHT SECTION: ACTIVE DRIVERS LIST (PC 64%, MOBILE 60%)      */}
-                {/* Height is PIXEL-PERFECT strictly equal to Category Section   */}
+                {/* Strictly 100% EQUAL & PARALLEL HEIGHT TO CATEGORY SECTION    */}
                 {/* Grid: PC 3-col, Tab 2-col, Mobile 1-col                      */}
                 {/* Independent scrolling facility with no trapping / freezing   */}
                 {/* ============================================================ */}
                 <div 
                   ref={driverListRef} 
-                  className="w-[60%] md:w-[67%] lg:w-[64%] flex-1 min-w-0 flex flex-col"
-                  style={categoryBoxHeight > 0 ? { height: `${categoryBoxHeight}px`, maxHeight: `${categoryBoxHeight}px` } : undefined}
+                  className="w-[60%] md:w-[67%] lg:w-[64%] flex-1 min-w-0 h-full flex flex-col min-h-0"
                 >
-                  <div className="bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 shadow-xs border border-slate-200 h-full flex flex-col overflow-hidden">
+                  <div className="bg-white rounded-xl sm:rounded-2xl p-2 sm:p-3 shadow-xs border border-slate-200 h-full flex flex-col overflow-hidden min-h-0">
                     
                     {/* Header: Selected Category & Active Count */}
                     <div className="flex items-center justify-between pb-1.5 sm:pb-2 mb-1.5 sm:mb-2 border-b border-slate-100 shrink-0 flex-wrap gap-1">
@@ -9791,7 +9804,7 @@ export default function App() {
                       </button>
                     </div>
                   ) : (
-                    tripHistory.map((trip) => (
+                    tripHistory.map((trip, idx) => (
                       <div 
                         key={trip.id} 
                         className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 p-3 sm:p-3.5 shadow-xs space-y-2 hover:border-emerald-300 transition-colors"
@@ -9800,7 +9813,7 @@ export default function App() {
                           <div className="flex items-center gap-2">
                             <CategoryBadgeLogo category={trip.vehicleCategory} size="compact" />
                             <div>
-                              <span className="text-[10px] text-slate-400 block">{trip.date}</span>
+                              <span className="text-[10px] text-slate-400 block">{formatDynamicTripDate(trip, undefined, idx)}</span>
                               <h4 className="text-xs sm:text-sm font-bold text-slate-900 leading-snug">
                                 {trip.driverName}
                               </h4>

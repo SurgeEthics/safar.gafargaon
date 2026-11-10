@@ -176,7 +176,16 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         {isPickup && onLocateGps && (
           <button
             type="button"
-            onClick={onLocateGps}
+            onClick={() => {
+              setIsOpen(false);
+              onLocateGps();
+              // Guarantee input bar is never left blank for even 1 millisecond
+              if (!inputValue || !inputValue.trim()) {
+                const instantName = places[0]?.bengaliName || 'গফরগাঁও পৌরসভা চত্বর';
+                setInputValue(instantName);
+                onChangeLocation(instantName);
+              }
+            }}
             className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors cursor-pointer ${
               isGpsActive
                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'

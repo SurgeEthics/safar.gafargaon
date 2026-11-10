@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Download, Share2, QrCode, Check, Copy, X, Sparkles, Smartphone, ExternalLink, ArrowUp } from 'lucide-react';
 import QRCode from 'qrcode';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { AutoMarqueeText } from './AutoMarqueeText';
 
 interface PWAInstallBannerProps {
   appName?: string;
@@ -319,7 +320,7 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
             <div className="py-4 flex flex-col items-center text-center">
               <div className="bg-gradient-to-b from-emerald-50 to-teal-50 p-4 sm:p-5 rounded-2xl border-2 border-dashed border-emerald-300 w-full max-w-xs flex flex-col items-center">
                 <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-1">
-                  Smart Transport and Emergency Service
+                  স্মার্ট ট্রান্সপোর্ট ও ইমার্জেন্সি সার্ভিস
                 </span>
                 <h4 className="text-sm font-bold text-slate-800 mb-3">
                   ক্যামেরা দিয়ে স্ক্যান করে অ্যাপ নামান
@@ -345,17 +346,15 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
               </div>
             </div>
 
-            {/* Live Link Input with Marquee Rule */}
+            {/* Live Link Input with App Standard Marquee Rule */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 p-2 bg-slate-100 rounded-xl border border-slate-200 overflow-hidden">
                 <div className="flex-1 min-w-0 overflow-hidden px-1">
-                  {React.createElement('marquee', {
-                    className: 'text-xs text-slate-700 font-mono select-all block w-full outline-none',
-                    scrollamount: '4',
-                    behavior: 'scroll',
-                    direction: 'left',
-                    title: currentUrl
-                  }, currentUrl)}
+                  <AutoMarqueeText
+                    text={currentUrl}
+                    speed={36}
+                    className="text-xs text-slate-700 font-mono select-all block w-full outline-none"
+                  />
                 </div>
                 <button
                   type="button"

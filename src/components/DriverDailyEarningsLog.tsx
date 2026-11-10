@@ -47,7 +47,7 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
   totalTrips,
   onSyncTodayStats
 }) => {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
   const [filterMode, setFilterMode] = useState<'all' | 'week' | 'date'>('all');
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -253,6 +253,23 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
     }
   }, [cleanPhone, driverId]);
 
+  // Real-time custom event listener: immediately unshift completed trip into local tripLogs state
+  useEffect(() => {
+    const handleTripCompleted = (e: any) => {
+      const entry = e.detail as DriverTripLogEntry;
+      if (!entry || !entry.id) return;
+      setTripLogs(prev => {
+        if (prev.some(t => t.id === entry.id)) return prev;
+        return [entry, ...prev];
+      });
+    };
+
+    window.addEventListener('safar-driver-trip-completed', handleTripCompleted);
+    return () => {
+      window.removeEventListener('safar-driver-trip-completed', handleTripCompleted);
+    };
+  }, []);
+
   // Current today's date formatted
   const [todayStr, setTodayStr] = useState(() => {
     const now = new Date();
@@ -373,12 +390,12 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
   const liveTodayTrips = todayEntry ? todayEntry.totalTrips : 0;
   const liveTodayEarnings = todayEntry ? todayEntry.totalEarnings : 0;
 
-  // Sync today's verified actual numbers back to driver dashboard
+  // Sync today's verified actual numbers back to driver dashboard (never overwrite with lower or zero stats)
   useEffect(() => {
-    if (onSyncTodayStats) {
+    if (onSyncTodayStats && (liveTodayTrips >= todayTrips || todayTrips === 0)) {
       onSyncTodayStats(liveTodayTrips, liveTodayEarnings);
     }
-  }, [liveTodayTrips, liveTodayEarnings, onSyncTodayStats]);
+  }, [liveTodayTrips, liveTodayEarnings, todayTrips, onSyncTodayStats]);
 
   // Overall statistics for current active filter
   const totalReportEarnings = useMemo(() => {
@@ -395,8 +412,11 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
 
   return (
     <div className="bg-white rounded-2xl border-2 border-emerald-500/40 shadow-md p-3.5 sm:p-4 mb-3.5 transition-all">
-      {/* Slot Header */}
-      <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 flex-wrap gap-2">
+      {/* Slot Header - Clickable anywhere to fold/unfold */}
+      <div 
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 flex-wrap gap-2 cursor-pointer select-none"
+      >
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black shadow-xs">
             <Calendar className="w-4 h-4" />
@@ -407,6 +427,9 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
               <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.2 rounded">
                 লাইভ লগ
               </span>
+              <span className="text-[10px] text-slate-400 font-normal">
+                ({isOpen ? 'সংক্ষেপ করতে ট্যাপ করুন' : 'বিস্তারিত দেখতে ট্যাপ করুন'})
+              </span>
             </h3>
             <p className="text-[10px] sm:text-[11px] text-slate-500">
               প্রতিদিনের ট্রিপ সংখ্যা এবং উপার্জিত টাকার সম্পূর্ণ তারিখভিত্তিক খতিয়ান
@@ -414,7 +437,7 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-[10px] font-bold">
             <button
               type="button"

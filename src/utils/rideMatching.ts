@@ -37,7 +37,8 @@ export interface DriverMatchIdentity {
 
 export function normalizeCleanPhone(phone?: string | null): string {
   if (!phone) return '';
-  return String(phone).replace(/[^0-9]/g, '');
+  const digits = String(phone).replace(/[^0-9]/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
 export function formatSafeRating(rating?: number | string | null, fallback = 5.0): string {
@@ -54,7 +55,7 @@ export function formatSafeRating(rating?: number | string | null, fallback = 5.0
  *
  * Key guarantees:
  * - Suppresses alerts if the driver already has an active accepted/in_transit trip.
- * - Filters out stale pending requests (> 90 seconds old) so historical DB items never ring on startup.
+ * - Filters out stale pending requests (> 180 seconds old) so historical DB items never ring on startup.
  * - In 'passenger' mode, ONLY matches when the device belongs to a registered driver
  *   (`driverProfile.isRegistered === true`) AND the request is NOT the user's own
  *   currently-submitted `passengerPendingRequestId`.
@@ -94,8 +95,8 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
         return false;
       }
       return (
-        (driverProfile.id && r.driverId === driverProfile.id) ||
-        (cleanDriverPhone &&
+        Boolean(driverProfile.id && r.driverId === driverProfile.id) ||
+        Boolean(cleanDriverPhone &&
           r.driverPhone &&
           normalizeCleanPhone(r.driverPhone) === cleanDriverPhone)
       );
@@ -121,7 +122,7 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
 
   // Pending ride request freshness:
   // Allow up to 5 minutes into the future (-300s) for cross-device clock skew when phone clocks differ,
-  // and up to 100 seconds in the past so real-time passenger requests alert reliably across devices.
+  // and up to 180 seconds in the past so real-time passenger requests alert reliably across devices.
   const isFresh = (req: T): boolean => {
     let reqTime = typeof req.createdAtMs === 'number' ? req.createdAtMs : 0;
     if (!reqTime && req.id.startsWith('req-')) {
@@ -132,8 +133,8 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
     }
     if (reqTime > 0) {
       const diff = now - reqTime;
-      // Allow -300s (future skew) and up to 100s past
-      return diff >= -300000 && diff < 100 * 1000;
+      // Allow -300s (future skew) and up to 180s past
+      return diff >= -300000 && diff < 180 * 1000;
     }
     return true;
   };

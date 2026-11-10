@@ -52,7 +52,8 @@ import {
   Sparkles,
   Camera,
   Download,
-  UserPlus
+  UserPlus,
+  Smartphone
 } from 'lucide-react';
 import L from 'leaflet';
 import { SafarLogo } from './components/SafarLogo';
@@ -1025,11 +1026,19 @@ function recordDriverTripLog(driverPhone: string | undefined, driverId: string |
       list.unshift(entry);
       localStorage.setItem(`safar_driver_trip_log_${cleanP}`, JSON.stringify(list.slice(0, 100)));
     }
-  } catch {}
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('safar-driver-trip-completed', { detail: entry }));
+      }
+    } catch {}
 
-  if (driverKey) {
-    setDoc(doc(db, 'drivers', driverKey, 'completed_trips', trip.id), entry, { merge: true }).catch(() => {});
-  }
+    if (driverKey) {
+      setDoc(doc(db, 'drivers', driverKey, 'completed_trips', trip.id), entry, { merge: true }).catch(() => {});
+    }
+    if (cleanP && cleanP !== driverKey) {
+      setDoc(doc(db, 'drivers', cleanP, 'completed_trips', trip.id), entry, { merge: true }).catch(() => {});
+    }
+  } catch {}
 }
 
 // Category Badge Logo Component (Ensuring Red Medical Cross '+' for Ambulance)
@@ -2736,6 +2745,57 @@ export default function App() {
     } catch {}
   }, [driverProfile]);
 
+  // Real-Time Multi-Device Live Sync for Logged-In Driver Profile from Firestore
+  useEffect(() => {
+    const cleanPhone = (driverProfile.phone || '').replace(/[^0-9]/g, '');
+    if (!driverProfile.isRegistered) return;
+
+    const keysToListen = Array.from(new Set([driverProfile.id, cleanPhone].filter(Boolean))) as string[];
+    if (keysToListen.length === 0) return;
+
+    const unsubs = keysToListen.map((k) => {
+      return onSnapshot(doc(db, 'drivers', k), (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const todayStr = getTodayDateString();
+          const isSameDay = data.todayDate === todayStr;
+          const liveTodayTrips = isSameDay ? (Number(data.todayTrips) || 0) : 0;
+          const liveTodayEarnings = isSameDay ? (Number(data.todayEarnings) || 0) : 0;
+          const liveTotalTrips = typeof data.totalTrips === 'number' ? data.totalTrips : (Number(data.todayTrips) || 0);
+          const liveRating = typeof data.rating === 'number' ? data.rating : undefined;
+
+          setDriverProfile(prev => {
+            const updatedTrips = Math.max(prev.todayTrips || 0, liveTodayTrips);
+            const updatedEarnings = Math.max(prev.todayEarnings || 0, liveTodayEarnings);
+            const updatedTotal = Math.max(prev.totalTrips || 0, liveTotalTrips, updatedTrips);
+            if (
+              prev.todayTrips !== updatedTrips ||
+              prev.todayEarnings !== updatedEarnings ||
+              prev.totalTrips !== updatedTotal ||
+              (liveRating !== undefined && prev.rating !== liveRating)
+            ) {
+              return {
+                ...prev,
+                todayDate: todayStr,
+                todayTrips: updatedTrips,
+                todayEarnings: updatedEarnings,
+                totalTrips: updatedTotal,
+                rating: liveRating !== undefined ? liveRating : prev.rating
+              };
+            }
+            return prev;
+          });
+        }
+      }, (err) => {
+        console.warn('Driver profile live sync notice:', err);
+      });
+    });
+
+    return () => {
+      unsubs.forEach(u => u());
+    };
+  }, [driverProfile.id, driverProfile.phone, driverProfile.isRegistered]);
+
   // Dynamic Driver Reviews & Ratings (Loaded from LocalStorage & Firestore)
   const [driverReviews, setDriverReviews] = useState<{
     id: string;
@@ -3530,6 +3590,7 @@ export default function App() {
             }
 
             setActiveBooking(null);
+            setPassengerPendingRequest(null);
             setPickupCoords(null);
             setDestCoords(null);
             setPassengerPickup('');
@@ -3537,6 +3598,7 @@ export default function App() {
             try {
               localStorage.removeItem('safar_active_booking_v2');
               localStorage.removeItem('safar_my_ride_request_id');
+              localStorage.removeItem('safar_passenger_pending_v2');
             } catch {}
           }
           return;
@@ -3774,6 +3836,13 @@ export default function App() {
   const [showScreenOpenPopup, setShowScreenOpenPopup] = useState<boolean>(true);
   const [skipVoiceForCurrentAlert, setSkipVoiceForCurrentAlert] = useState<boolean>(false);
 
+  // Always re-arm the screen-open popup whenever in passenger mode
+  useEffect(() => {
+    if (userRole === 'passenger') {
+      setShowScreenOpenPopup(true);
+    }
+  }, [userRole]);
+
   // Subscribe to ScreenWakeLock status changes
   useEffect(() => {
     const unsub = screenWakeLock.subscribe((active) => {
@@ -3813,6 +3882,11 @@ export default function App() {
     };
     const handleGestureUnlock = () => {
       sounds.unlockAudio();
+      try {
+        if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
+          navigator.vibrate(15);
+        }
+      } catch {}
     };
     document.addEventListener('visibilitychange', handleScreenTurnOn);
     window.addEventListener('focus', handleScreenTurnOn);
@@ -5551,7 +5625,9 @@ export default function App() {
       destCoords: { lat: dLat, lng: dLng },
       status: 'pending',
       driverId: driver.id,
-      driverName: driver.name || 'নিবন্ধিত চালক'
+      driverName: driver.name || 'নিবন্ধিত চালক',
+      driverPhone: driver.phone || '',
+      driverCategory: driver.category || 'cng'
     };
 
     setPassengerPendingRequest(newRideRequest);
@@ -5577,6 +5653,8 @@ export default function App() {
       status: 'pending',
       driverId: driver.id,
       driverName: driver.name,
+      driverPhone: driver.phone || '',
+      driverCategory: driver.category || 'cng',
       createdAtMs: Date.now(),
       requestedAt: new Date().toISOString()
     }).catch(err => console.warn('Firestore ride request sync error:', err));
@@ -5689,14 +5767,18 @@ export default function App() {
       }
       // Live sync to driver document in Firestore so any device logged in as this driver sees the update live
       const driverDocKey = driverProfile.id || cleanPhone;
+      const statsPayload = {
+        todayDate: todayStr,
+        todayTrips: newTrips,
+        todayEarnings: newEarnings,
+        totalTrips: newLifetime,
+        updatedAt: new Date().toISOString()
+      };
       if (driverDocKey) {
-        setDoc(doc(db, 'drivers', driverDocKey), {
-          todayDate: todayStr,
-          todayTrips: newTrips,
-          todayEarnings: newEarnings,
-          totalTrips: newLifetime,
-          updatedAt: new Date().toISOString()
-        }, { merge: true }).catch(() => {});
+        setDoc(doc(db, 'drivers', driverDocKey), statsPayload, { merge: true }).catch(() => {});
+      }
+      if (cleanPhone && cleanPhone !== driverDocKey) {
+        setDoc(doc(db, 'drivers', cleanPhone), statsPayload, { merge: true }).catch(() => {});
       }
 
       recordDriverTripLog(driverProfile.phone, driverProfile.id, {
@@ -6880,11 +6962,16 @@ export default function App() {
 
                 // 5. Dismiss review cockpit modal and remember this trip ID so it never prompts again
                 setCompletedBookingForReview(null);
+                setActiveBooking(null);
+                setPassengerPendingRequest(null);
                 if (completedBookingForReview?.requestId || completedBookingForReview?.id) {
                   const rId = completedBookingForReview.requestId || completedBookingForReview.id;
                   promptedReviewDocIdsRef.current[rId] = true;
                   try {
                     localStorage.setItem(`safar_reviewed_${rId}`, 'true');
+                    localStorage.removeItem('safar_active_booking_v2');
+                    localStorage.removeItem('safar_passenger_pending_v2');
+                    localStorage.removeItem('safar_my_ride_request_id');
                   } catch {}
                 }
 
@@ -6896,12 +6983,18 @@ export default function App() {
                   promptedReviewDocIdsRef.current[rId] = true;
                   try {
                     localStorage.setItem(`safar_review_dismissed_${rId}`, 'true');
+                    localStorage.removeItem('safar_active_booking_v2');
+                    localStorage.removeItem('safar_passenger_pending_v2');
+                    localStorage.removeItem('safar_my_ride_request_id');
                   } catch {}
                 }
                 setCompletedBookingForReview(null);
+                setActiveBooking(null);
+                setPassengerPendingRequest(null);
               }}
               onDismissCockpit={() => {
                 setActiveBooking(null);
+                setPassengerPendingRequest(null);
                 setCompletedBookingForReview(null);
                 setPickupCoords(null);
                 setDestCoords(null);
@@ -6910,6 +7003,7 @@ export default function App() {
                 try {
                   localStorage.removeItem('safar_active_booking_v2');
                   localStorage.removeItem('safar_my_ride_request_id');
+                  localStorage.removeItem('safar_passenger_pending_v2');
                 } catch {}
               }}
               onFocusMap={() => {
@@ -7528,6 +7622,34 @@ export default function App() {
                         </button>
                       )}
 
+                      {/* Vibration Test Button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const canVib = typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function';
+                          if (canVib) {
+                            try {
+                              const pattern = [400, 150, 400, 150, 500];
+                              const ok = navigator.vibrate(pattern);
+                              if (ok !== false) {
+                                showAdminToastMessage('📳 ভাইব্রেশন টেস্ট সফল! আপনার ফোনে কম্পন অনুভূত হচ্ছে।');
+                              } else {
+                                showAdminToastMessage('⚠️ ফোন ভাইব্রেশন রেসপন্স করেনি। সাইলেন্ট মোড বা ব্রাউজার ভাইব্রেশন চেক করুন।');
+                              }
+                            } catch {
+                              showAdminToastMessage('⚠️ সিস্টেমে ভাইব্রেশন অনুমতি দেওয়া নেই।');
+                            }
+                          } else {
+                            showAdminToastMessage('⚠️ আইফোন/সাফারি বা পিসিতে Web Vibration সাপোর্ট নেই। অ্যান্ড্রয়েড ক্রোমে এটি কাজ করে।');
+                          }
+                        }}
+                        className="flex items-center gap-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-950 border border-emerald-300 px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all shadow-xs active:scale-95"
+                        title="ফোনের ভাইব্রেশন মোটর সরাসরি পরীক্ষা করুন"
+                      >
+                        <Smartphone className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>📳 ভাইব্রেশন টেস্ট</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => setUserRole('passenger')}
@@ -7607,12 +7729,14 @@ export default function App() {
                   totalTrips={driverProfile.totalTrips || driverProfile.todayTrips || 0}
                   onSyncTodayStats={(liveTrips, liveEarnings) => {
                     setDriverProfile(prev => {
-                      if (prev.todayTrips !== liveTrips || prev.todayEarnings !== liveEarnings) {
+                      const effectiveTrips = Math.max(prev.todayTrips || 0, liveTrips);
+                      const effectiveEarnings = Math.max(prev.todayEarnings || 0, liveEarnings);
+                      if (prev.todayTrips !== effectiveTrips || prev.todayEarnings !== effectiveEarnings) {
                         return {
                           ...prev,
                           todayDate: getTodayDateString(),
-                          todayTrips: liveTrips,
-                          todayEarnings: liveEarnings
+                          todayTrips: effectiveTrips,
+                          todayEarnings: effectiveEarnings
                         };
                       }
                       return prev;

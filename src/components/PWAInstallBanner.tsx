@@ -113,6 +113,12 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
               <img
                 src="/safar-logo.png"
                 alt="সফর লোগো"
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (target.src.includes('safar-logo.png')) {
+                    target.src = '/logo.png';
+                  }
+                }}
                 className="w-8 h-8 rounded-xl shadow-md border border-emerald-300/40 object-contain flex-shrink-0 hover:scale-105 transition-transform"
               />
               <div className="truncate">
@@ -296,6 +302,12 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
                 <img
                   src="/safar-logo.png"
                   alt="সফর লোগো"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (target.src.includes('safar-logo.png')) {
+                      target.src = '/logo.png';
+                    }
+                  }}
                   className="w-12 h-12 rounded-2xl shadow-md object-contain hover:scale-105 transition-transform"
                 />
                 <div>

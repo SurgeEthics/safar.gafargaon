@@ -29,6 +29,12 @@ export const SafarLogo: React.FC<SafarLogoProps> = ({
         <img
           src="/safar-logo.png"
           alt="সফর"
+          onError={(e) => {
+            const target = e.currentTarget;
+            if (target.src.includes('safar-logo.png')) {
+              target.src = '/logo.png';
+            }
+          }}
           className="w-full h-full object-contain rounded-2xl drop-shadow-md"
         />
       </div>

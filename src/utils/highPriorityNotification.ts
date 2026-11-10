@@ -59,7 +59,7 @@ class HighPriorityNotificationEngine {
       body,
       icon: '/pwa-192x192.png',
       badge: '/notification-badge.png',
-      tag: this.activeNotificationTag,
+      tag: `${this.activeNotificationTag}-${request.id}`,
       renotify: true,
       requireInteraction: true,
       silent: false,
@@ -99,7 +99,8 @@ class HighPriorityNotificationEngine {
           body,
           icon: '/pwa-192x192.png',
           badge: '/notification-badge.png',
-          tag: this.activeNotificationTag,
+          tag: `${this.activeNotificationTag}-${request.id}`,
+          renotify: true,
           requireInteraction: true,
           silent: false
         } as any);
@@ -169,8 +170,12 @@ class HighPriorityNotificationEngine {
       try {
         const registration = await navigator.serviceWorker.ready;
         if (registration && typeof registration.getNotifications === 'function') {
-          const notifications = await registration.getNotifications({ tag: this.activeNotificationTag });
-          notifications.forEach(n => n.close());
+          const notifications = await registration.getNotifications();
+          notifications.forEach(n => {
+            if (n.tag && n.tag.startsWith(this.activeNotificationTag)) {
+              n.close();
+            }
+          });
         }
       } catch {}
     }

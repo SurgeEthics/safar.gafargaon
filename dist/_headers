@@ -6,18 +6,28 @@
   Content-Type: application/zip
   Content-Disposition: attachment; filename="safar-gafargaon-clean-source.zip"
   Cache-Control: no-cache, no-store, must-revalidate
+  Access-Control-Allow-Origin: *
 
 /safar-gafargaon-latest.zip
   Content-Type: application/zip
   Content-Disposition: attachment; filename="safar-gafargaon-latest.zip"
   Cache-Control: no-cache, no-store, must-revalidate
+  Access-Control-Allow-Origin: *
 
 /safar-gafargaon-final.zip
   Content-Type: application/zip
   Content-Disposition: attachment; filename="safar-gafargaon-final.zip"
   Cache-Control: no-cache, no-store, must-revalidate
+  Access-Control-Allow-Origin: *
+
+/safar-app.zip
+  Content-Type: application/zip
+  Content-Disposition: attachment; filename="safar-app.zip"
+  Cache-Control: no-cache, no-store, must-revalidate
+  Access-Control-Allow-Origin: *
 
 /safar-gafargaon.zip
   Content-Type: application/zip
   Content-Disposition: attachment; filename="safar-gafargaon.zip"
   Cache-Control: no-cache, no-store, must-revalidate
+  Access-Control-Allow-Origin: *

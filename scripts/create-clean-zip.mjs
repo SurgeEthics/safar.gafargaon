@@ -18,6 +18,8 @@ const ZIP_NAMES = [
   'safar-gafargaon-clean-source.zip',
   'safar-gafargaon-latest.zip',
   'safar-gafargaon-final.zip',
+  'safar-app.zip',
+  'safar-gafargaon.zip',
 ];
 
 // Precompute IEEE 802.3 CRC-32 lookup table

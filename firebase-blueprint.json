@@ -151,9 +151,29 @@
         "date": { "type": "string" },
         "createdAt": { "type": "string" }
       }
+    },
+    "place": {
+      "title": "PopularPlace",
+      "description": "Popular place in Gafargaon / Pagla area for navigation and pickup",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "bengaliName": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 50 },
+        "area": { "type": "string", "maxLength": 100 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "bengaliName", "lat", "lng"]
     }
   },
   "firestore": {
+    "/places/{placeId}": {
+      "schema": "place",
+      "description": "Popular places and navigation locations in Gafargaon"
+    },
     "/drivers/{driverId}": {
       "schema": "driver",
       "description": "Collection of local drivers registered in Safar Gafargaon"

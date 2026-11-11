@@ -51,11 +51,13 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
   syncedTrips,
   onSyncTodayStats
 }) => {
-  const [isOpen, setIsOpen] = useState(true);
+  // Always default folded as requested by user
+  const [isOpen, setIsOpen] = useState(false);
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
   const [filterMode, setFilterMode] = useState<'all' | 'week' | 'custom'>('all');
   const [selectedCustomDate, setSelectedCustomDate] = useState<string | null>(null);
   const [tripLogs, setTripLogs] = useState<DriverTripLogEntry[]>([]);
+  const [cacheClearMessage, setCacheClearMessage] = useState<string | null>(null);
 
   const cleanPhone = (driverPhone || '').replace(/[^0-9]/g, '');
 
@@ -74,190 +76,119 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
     return dateStr;
   };
 
-  // Verified actual past trips (matching passenger history 15 trips, total ৳600, with identical dates, times & routes)
-  const getVerifiedInitialTrips = (): DriverTripLogEntry[] => {
-    return [
-      {
-        id: 'trip-tasnimul-today-1',
-        date: '2026-11-10',
-        dateBengali: '১০ নভেম্বর, ২০২৬',
-        time: '০৩:৫২ PM',
-        pickup: 'ইউ.এন.ও অফিস চত্বর (মোড়)',
-        destination: 'জামতলী মোড় স্ট্যান্ড',
-        fare: 30,
-        distanceKm: 1.8,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1794285120000
-      },
-      {
-        id: 'trip-tasnimul-yest-1',
-        date: '2026-11-09',
-        dateBengali: '০৯ নভেম্বর, ২০২৬',
-        time: '০৩:২৬ PM',
-        pickup: 'ইউ.এন.ও অফিস চত্বর (মোড়)',
-        destination: 'উপজেলা স্বাস্থ্য কমপ্লেক্স (হাসপাতাল) স্ট্যান্ড',
-        fare: 50,
-        distanceKm: 2.4,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1794197160000
-      },
-      {
-        id: 'trip-tasnimul-yest-2',
-        date: '2026-11-09',
-        dateBengali: '০৯ নভেম্বর, ২০২৬',
-        time: '০৫:২৪ AM',
-        pickup: 'আমার লাইভ অবস্থান (GPS)',
-        destination: 'উপজেলা স্বাস্থ্য কমপ্লেক্স (হাসপাতাল) স্ট্যান্ড',
-        fare: 50,
-        distanceKm: 2.2,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1794168240000
-      },
-      {
-        id: 'trip-tasnimul-nov7-1',
-        date: '2026-11-07',
-        dateBengali: '০৭ নভেম্বর, ২০২৬',
-        time: '০৫:২৮ AM',
-        pickup: 'আমার লাইভ অবস্থান (GPS)',
-        destination: 'উপজেলা স্বাস্থ্য কমপ্লেক্স (হাসপাতাল) স্ট্যান্ড',
-        fare: 50,
-        distanceKm: 2.2,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793995680000
-      },
-      {
-        id: 'trip-tasnimul-nov6-1',
-        date: '2026-11-06',
-        dateBengali: '০৬ নভেম্বর, ২০২৬',
-        time: '০৫:৩৭ AM',
-        pickup: 'আমার লাইভ অবস্থান (GPS)',
-        destination: 'উপজেলা স্বাস্থ্য কমপ্লেক্স (হাসপাতাল) স্ট্যান্ড',
-        fare: 50,
-        distanceKm: 2.2,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793909820000
-      },
-      {
-        id: 'trip-tasnimul-nov5-1',
-        date: '2026-11-05',
-        dateBengali: '০৫ নভেম্বর, ২০২৬',
-        time: '০২:১৫ PM',
-        pickup: 'গফরগাঁও রেলওয়ে স্টেশন',
-        destination: 'পৌরসভা চত্বর স্ট্যান্ড',
-        fare: 40,
-        distanceKm: 1.6,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793823300000
-      },
-      {
-        id: 'trip-tasnimul-nov5-2',
-        date: '2026-11-05',
-        dateBengali: '০৫ নভেম্বর, ২০২৬',
-        time: '০৯:১০ AM',
-        pickup: 'ইউ.এন.ও অফিস চত্বর (মোড়)',
-        destination: 'দত্তেরবাজার মোড়',
-        fare: 45,
-        distanceKm: 2.0,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793805000000
-      },
-      {
-        id: 'trip-tasnimul-nov4-1',
-        date: '2026-11-04',
-        dateBengali: '০৪ নভেম্বর, ২০২৬',
-        time: '০৬:২০ PM',
-        pickup: 'পাগলা থানা স্ট্যান্ড',
-        destination: 'পাঁচবাগ বাজার',
-        fare: 40,
-        distanceKm: 1.9,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793739600000
-      },
-      {
-        id: 'trip-tasnimul-nov4-2',
-        date: '2026-11-04',
-        dateBengali: '০৪ নভেম্বর, ২০২৬',
-        time: '১১:৩০ AM',
-        pickup: 'মিয়া বাজার চত্বর',
-        destination: 'গাফারগাঁও কলেজ গেট',
-        fare: 35,
-        distanceKm: 1.5,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793715000000
-      },
-      {
-        id: 'trip-tasnimul-nov3-1',
-        date: '2026-11-03',
-        dateBengali: '০৩ নভেম্বর, ২০২৬',
-        time: '০৫:৪৫ PM',
-        pickup: 'শহীদ মিনার চত্বর',
-        destination: 'নতুন বাজার স্ট্যান্ড',
-        fare: 40,
-        distanceKm: 1.7,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793653500000
-      },
-      {
-        id: 'trip-tasnimul-nov3-2',
-        date: '2026-11-03',
-        dateBengali: '০৩ নভেম্বর, ২০২৬',
-        time: '১০:১৫ AM',
-        pickup: 'ইসলামপুর মোড়',
-        destination: 'রওহা বাস স্ট্যান্ড',
-        fare: 35,
-        distanceKm: 1.6,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793626500000
-      },
-      {
-        id: 'trip-tasnimul-nov2-1',
-        date: '2026-11-02',
-        dateBengali: '০২ নভেম্বর, ২০২৬',
-        time: '০৪:১০ PM',
-        pickup: 'কান্দার বাজার স্ট্যান্ড',
-        destination: 'পৌরসভা চত্বর স্ট্যান্ড',
-        fare: 35,
-        distanceKm: 1.5,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793568600000
-      },
-      {
-        id: 'trip-tasnimul-nov2-2',
-        date: '2026-11-02',
-        dateBengali: '০২ নভেম্বর, ২০২৬',
-        time: '০৮:৪০ AM',
-        pickup: 'গফরগাঁও রেলওয়ে স্টেশন',
-        destination: 'ইউ.এন.ও অফিস চত্বর (মোড়)',
-        fare: 30,
-        distanceKm: 1.2,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793541600000
-      },
-      {
-        id: 'trip-tasnimul-nov1-1',
-        date: '2026-11-01',
-        dateBengali: '০১ নভেম্বর, ২০২৬',
-        time: '০৩:২০ PM',
-        pickup: 'শিবগঞ্জ বাজার',
-        destination: 'মশাখালী স্টেশন মোড়',
-        fare: 40,
-        distanceKm: 1.8,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793481600000
-      },
-      {
-        id: 'trip-tasnimul-nov1-2',
-        date: '2026-11-01',
-        dateBengali: '০১ নভেম্বর, ২০২৬',
-        time: '০৯:০০ AM',
-        pickup: 'উপজেলা পরিষদ রোড স্ট্যান্ড',
-        destination: 'জামতলী মোড় স্ট্যান্ড',
-        fare: 30,
-        distanceKm: 1.4,
-        passengerName: 'সম্মানিত যাত্রী',
-        createdAtMs: 1793458800000
+  // Helper to format time into authentic Bengali 12-hour format (e.g. "১২:৫৮ AM", "০৩:২৬ PM")
+  const formatBengaliTime = (rawTime?: string, createdAtMs?: number): string => {
+    if (createdAtMs && Number.isFinite(createdAtMs) && createdAtMs > 0) {
+      try {
+        return new Date(createdAtMs).toLocaleTimeString('bn-BD', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        });
+      } catch {}
+    }
+
+    if (!rawTime || rawTime === 'এইমাত্র') return 'এইমাত্র';
+
+    // If it's an ISO string like "2026-11-10T18:57:35.634Z"
+    if (rawTime.includes('T') || rawTime.includes('-')) {
+      try {
+        const d = new Date(rawTime);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleTimeString('bn-BD', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          });
+        }
+      } catch {}
+    }
+
+    // If already contains Bengali digits with AM/PM
+    return rawTime;
+  };
+
+  // Canonicalize trip ID by stripping any leading 'trip-' prefix
+  const getCanonicalTripId = (id: string): string => {
+    if (!id) return '';
+    return id.replace(/^trip-/, '');
+  };
+
+  // Derive local date string (YYYY-MM-DD) from local timestamp
+  const getLocalDateKey = (ms?: number, fallbackDateStr?: string): string => {
+    if (ms && Number.isFinite(ms) && ms > 0) {
+      const dt = new Date(ms);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    }
+    if (fallbackDateStr) {
+      if (fallbackDateStr.includes('T')) {
+        const d = new Date(fallbackDateStr);
+        if (!isNaN(d.getTime())) {
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
       }
-    ];
+      const match = fallbackDateStr.match(/\d{4}-\d{2}-\d{2}/);
+      if (match) return match[0];
+    }
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  };
+  // Clear cached/dummy trips from local storage and reload fresh Firestore data
+  const handleClearCacheAndDummy = () => {
+    try {
+      localStorage.removeItem(`safar_driver_trip_log_${cleanPhone}`);
+      if (driverId && driverId !== cleanPhone) {
+        localStorage.removeItem(`safar_driver_trip_log_${driverId}`);
+      }
+    } catch {}
+    setTripLogs([]);
+    setCacheClearMessage('ক্যাশ ও ডামি ট্রিপ মুছে ফেলা হয়েছে। এখন শুধু লাইভ ফায়ারবেস সিঙ্ক চালু আছে।');
+    setTimeout(() => setCacheClearMessage(null), 4000);
+  };
+
+  // Helper to deduplicate and insert an entry into trip list
+  const upsertTripEntry = (existingList: DriverTripLogEntry[], entry: DriverTripLogEntry): DriverTripLogEntry[] => {
+    const canonicalNewId = getCanonicalTripId(entry.id);
+    const newMs = entry.createdAtMs || 0;
+
+    // Check for exact canonical ID match
+    const existingIndex = existingList.findIndex(t => {
+      const canonicalExistingId = getCanonicalTripId(t.id);
+      if (canonicalExistingId && canonicalNewId && canonicalExistingId === canonicalNewId) {
+        return true;
+      }
+      // Check for fuzzy route match within 15 minutes (same ride recorded from multiple clients)
+      const existingMs = t.createdAtMs || 0;
+      const isSameRoute = t.pickup.trim() === entry.pickup.trim() &&
+                          t.destination.trim() === entry.destination.trim() &&
+                          Number(t.fare) === Number(entry.fare);
+      if (isSameRoute && Math.abs(existingMs - newMs) < 15 * 60 * 1000) {
+        return true;
+      }
+      return false;
+    });
+
+    if (existingIndex >= 0) {
+      // Merge: prefer entry with authentic Bengali time over raw ISO or 'এইমাত্র'
+      const existing = existingList[existingIndex];
+      const preferredTime = (entry.time && !entry.time.includes('T') && entry.time !== 'এইমাত্র')
+        ? entry.time
+        : (existing.time && !existing.time.includes('T') && existing.time !== 'এইমাত্র' ? existing.time : entry.time);
+      
+      const updated = [...existingList];
+      updated[existingIndex] = {
+        ...existing,
+        ...entry,
+        id: canonicalNewId || existing.id,
+        time: preferredTime,
+        date: entry.date || existing.date,
+        dateBengali: entry.dateBengali || existing.dateBengali,
+        createdAtMs: Math.max(existing.createdAtMs || 0, entry.createdAtMs || 0)
+      };
+      return updated;
+    }
+
+    return [...existingList, { ...entry, id: canonicalNewId || entry.id }];
   };
 
   // 1. Load persistent trips log with multi-source real-time Firestore sync
@@ -266,79 +197,35 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
 
     const isTasnimul = cleanPhone.endsWith('304841550') || cleanPhone.endsWith('1711223344') || Boolean(driverName && driverName.toUpperCase().includes('TASNIMUL'));
 
-    // 1. Initial fast load from localStorage cache
-    let cachedList: DriverTripLogEntry[] = [];
+    // Initial load from localStorage cache (strip any old dummy test trips)
+    let currentTrips: DriverTripLogEntry[] = [];
     try {
       const localData = localStorage.getItem(`safar_driver_trip_log_${cleanPhone}`);
       if (localData) {
         const parsed = JSON.parse(localData);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          cachedList = parsed;
+          // Filter out any legacy dummy seeded trips with hardcoded IDs
+          currentTrips = parsed
+            .filter((p: any) => p && p.id && !p.id.startsWith('trip-tasnimul-'))
+            .map((p: any) => ({
+              ...p,
+              id: getCanonicalTripId(p.id),
+              time: formatBengaliTime(p.time, p.createdAtMs),
+              date: getLocalDateKey(p.createdAtMs, p.date)
+            }));
         }
       }
     } catch {}
 
-    // If cache is empty and this is Tasnimul Kabeer, seed verified initial trips
-    if (cachedList.length === 0 && isTasnimul) {
-      cachedList = getVerifiedInitialTrips();
+    if (currentTrips.length > 0) {
+      setTripLogs(currentTrips);
     }
 
-    if (cachedList.length > 0) {
-      setTripLogs(cachedList);
-    }
-
-    // 2. Real-time multi-source Firestore synchronization
     const unsubs: (() => void)[] = [];
-    const mergedMap = new Map<string, DriverTripLogEntry>();
 
-    // Put cached items into map
-    cachedList.forEach(t => mergedMap.set(t.id, t));
-
-    // Also merge syncedTrips passed from App.tsx (passenger history on same device)
-    if (Array.isArray(syncedTrips) && syncedTrips.length > 0) {
-      syncedTrips.forEach((st: any) => {
-        const stDriverPhone = (st.driverPhone || '').replace(/[^0-9]/g, '');
-        const stDriverName = st.driverName || '';
-        const matches = (cleanPhone && stDriverPhone && (cleanPhone === stDriverPhone || cleanPhone.endsWith(stDriverPhone) || stDriverPhone.endsWith(cleanPhone))) ||
-                        (driverName && stDriverName && driverName === stDriverName) ||
-                        (isTasnimul && stDriverName.toUpperCase().includes('TASNIMUL'));
-        if (matches) {
-          let dateStr = st.date || '';
-          let timeStr = '';
-          const timeMatch = dateStr.match(/([০-৯0-9]{1,2}:[০-৯0-9]{2}\s*(?:AM|PM|am|pm|পূর্বাহ্ন|অপরাহ্ন)?)/i);
-          if (timeMatch) timeStr = timeMatch[1];
-          let dateKey = '';
-          if (st.createdAtMs) {
-            const dt = new Date(st.createdAtMs);
-            dateKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-          } else if (dateStr.includes('আজ')) {
-            dateKey = todayStr;
-          } else if (dateStr.includes('গতকাল')) {
-            const y = new Date();
-            y.setDate(y.getDate() - 1);
-            dateKey = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`;
-          } else {
-            dateKey = todayStr;
-          }
-
-          mergedMap.set(st.id, {
-            id: st.id,
-            date: dateKey,
-            dateBengali: formatBengaliDate(dateKey),
-            time: timeStr || 'এইমাত্র',
-            pickup: st.pickupPoint || 'পিকআপ স্থান',
-            destination: st.destination || 'গন্তব্য স্থান',
-            fare: Number(st.fare) || 30,
-            distanceKm: st.distanceKm,
-            passengerName: 'সম্মানিত যাত্রী',
-            createdAtMs: st.createdAtMs || Date.now()
-          });
-        }
-      });
-    }
-
-    const updateAndSaveTrips = () => {
-      const sorted = Array.from(mergedMap.values()).sort((a, b) => {
+    // Helper to re-sort and persist
+    const saveTripsState = (list: DriverTripLogEntry[]) => {
+      const sorted = [...list].sort((a, b) => {
         const aMs = a.createdAtMs || 0;
         const bMs = b.createdAtMs || 0;
         if (bMs !== aMs) return bMs - aMs;
@@ -350,7 +237,35 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
       } catch {}
     };
 
-    updateAndSaveTrips();
+    // Merge syncedTrips (passenger history on same device for this driver)
+    if (Array.isArray(syncedTrips) && syncedTrips.length > 0) {
+      syncedTrips.forEach((st: any) => {
+        if (!st) return;
+        const stDriverPhone = (st.driverPhone || '').replace(/[^0-9]/g, '');
+        const stDriverName = st.driverName || '';
+        const matches = (cleanPhone && stDriverPhone && (cleanPhone === stDriverPhone || cleanPhone.endsWith(stDriverPhone) || stDriverPhone.endsWith(cleanPhone))) ||
+                        (driverName && stDriverName && driverName === stDriverName) ||
+                        (isTasnimul && stDriverName.toUpperCase().includes('TASNIMUL'));
+        if (matches) {
+          const dateKey = getLocalDateKey(st.createdAtMs, st.date);
+          const timeFormatted = formatBengaliTime(st.time || st.date, st.createdAtMs);
+          const entry: DriverTripLogEntry = {
+            id: getCanonicalTripId(st.id),
+            date: dateKey,
+            dateBengali: formatBengaliDate(dateKey),
+            time: timeFormatted,
+            pickup: st.pickupPoint || 'পিকআপ স্থান',
+            destination: st.destination || 'গন্তব্য স্থান',
+            fare: Number(st.fare) || 30,
+            distanceKm: st.distanceKm,
+            passengerName: 'সম্মানিত যাত্রী',
+            createdAtMs: st.createdAtMs || Date.now()
+          };
+          currentTrips = upsertTripEntry(currentTrips, entry);
+        }
+      });
+      saveTripsState(currentTrips);
+    }
 
     // Listener A: drivers/${cleanPhone}/completed_trips
     try {
@@ -363,26 +278,23 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
         if (!snap.empty) {
           snap.forEach((docSnap) => {
             const d = docSnap.data();
-            let tripDate = d.date;
-            if (!tripDate && d.createdAtMs) {
-              const dt = new Date(d.createdAtMs);
-              tripDate = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-            }
-            if (!tripDate) tripDate = todayStr;
-            mergedMap.set(docSnap.id, {
-              id: docSnap.id,
-              date: tripDate,
-              dateBengali: d.dateBengali || formatBengaliDate(tripDate),
-              time: d.time || 'এইমাত্র',
+            const dateKey = getLocalDateKey(d.createdAtMs, d.date);
+            const timeFormatted = formatBengaliTime(d.time, d.createdAtMs);
+            const entry: DriverTripLogEntry = {
+              id: getCanonicalTripId(docSnap.id),
+              date: dateKey,
+              dateBengali: d.dateBengali || formatBengaliDate(dateKey),
+              time: timeFormatted,
               pickup: d.pickup || d.pickupPoint || 'পিকআপ স্থান',
               destination: d.destination || 'গন্তব্য স্থান',
               fare: Number(d.fare) || 30,
               distanceKm: d.distanceKm,
               passengerName: d.passengerName || 'সম্মানিত যাত্রী',
               createdAtMs: d.createdAtMs || Date.now()
-            });
+            };
+            currentTrips = upsertTripEntry(currentTrips, entry);
           });
-          updateAndSaveTrips();
+          saveTripsState(currentTrips);
         }
       }, () => {}));
     } catch {}
@@ -400,26 +312,23 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
           if (!snap.empty) {
             snap.forEach((docSnap) => {
               const d = docSnap.data();
-              let tripDate = d.date;
-              if (!tripDate && d.createdAtMs) {
-                const dt = new Date(d.createdAtMs);
-                tripDate = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-              }
-              if (!tripDate) tripDate = todayStr;
-              mergedMap.set(docSnap.id, {
-                id: docSnap.id,
-                date: tripDate,
-                dateBengali: d.dateBengali || formatBengaliDate(tripDate),
-                time: d.time || 'এইমাত্র',
+              const dateKey = getLocalDateKey(d.createdAtMs, d.date);
+              const timeFormatted = formatBengaliTime(d.time, d.createdAtMs);
+              const entry: DriverTripLogEntry = {
+                id: getCanonicalTripId(docSnap.id),
+                date: dateKey,
+                dateBengali: d.dateBengali || formatBengaliDate(dateKey),
+                time: timeFormatted,
                 pickup: d.pickup || d.pickupPoint || 'পিকআপ স্থান',
                 destination: d.destination || 'গন্তব্য স্থান',
                 fare: Number(d.fare) || 30,
                 distanceKm: d.distanceKm,
                 passengerName: d.passengerName || 'সম্মানিত যাত্রী',
                 createdAtMs: d.createdAtMs || Date.now()
-              });
+              };
+              currentTrips = upsertTripEntry(currentTrips, entry);
             });
-            updateAndSaveTrips();
+            saveTripsState(currentTrips);
           }
         }, () => {}));
       } catch {}
@@ -444,32 +353,26 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
                             (driverName && dName && driverName === dName) ||
                             (isTasnimul && dName.toUpperCase().includes('TASNIMUL'));
             if (matches) {
-              let tripDate = '';
-              if (d.createdAtMs) {
-                const dt = new Date(d.createdAtMs);
-                tripDate = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-              } else if (d.completedAt) {
-                tripDate = d.completedAt.split('T')[0];
-              } else {
-                tripDate = todayStr;
-              }
-              mergedMap.set(docSnap.id, {
-                id: docSnap.id,
-                date: tripDate,
-                dateBengali: formatBengaliDate(tripDate),
-                time: d.requestedAt || 'এইমাত্র',
+              const dateKey = getLocalDateKey(d.createdAtMs, d.completedAt || d.requestedAt);
+              const timeFormatted = formatBengaliTime(d.requestedAt, d.createdAtMs);
+              const entry: DriverTripLogEntry = {
+                id: getCanonicalTripId(docSnap.id),
+                date: dateKey,
+                dateBengali: formatBengaliDate(dateKey),
+                time: timeFormatted,
                 pickup: d.pickupPoint || 'পিকআপ স্থান',
                 destination: d.destination || 'গন্তব্য স্থান',
                 fare: Number(d.estFare) || Number(d.fare) || 30,
                 distanceKm: d.distanceKm,
                 passengerName: d.passengerName || 'সম্মানিত যাত্রী',
                 createdAtMs: d.createdAtMs || Date.now()
-              });
+              };
+              currentTrips = upsertTripEntry(currentTrips, entry);
               updated = true;
             }
           });
           if (updated) {
-            updateAndSaveTrips();
+            saveTripsState(currentTrips);
           }
         }
       }, () => {}));
@@ -700,6 +603,16 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
             )}
           </div>
 
+          {/* Cache & Dummy Trips Clear Button */}
+          <button
+            type="button"
+            onClick={handleClearCacheAndDummy}
+            className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+            title="ক্যাশ মেমোরিতে জমে থাকা ডামি বা টেস্ট ট্রিপ মুছে শুধু লাইভ ফায়ারবেস হিস্ট্রি রিফ্রেশ করুন"
+          >
+            <span>🗑️ ক্যাশ ট্রিপ পরিষ্কার</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsOpen(!isOpen)}
@@ -710,6 +623,14 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Cache clear alert feedback toast */}
+      {cacheClearMessage && (
+        <div className="mb-2 p-2 bg-emerald-50 border border-emerald-300 text-emerald-800 text-[11px] font-bold rounded-xl flex items-center justify-between animate-in fade-in">
+          <span>✓ {cacheClearMessage}</span>
+          <button type="button" onClick={() => setCacheClearMessage(null)} className="text-slate-400 hover:text-slate-700 ml-2">✕</button>
+        </div>
+      )}
 
       {isOpen && (
         <div className="space-y-3 animate-in fade-in">

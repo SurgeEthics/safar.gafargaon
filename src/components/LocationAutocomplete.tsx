@@ -176,7 +176,13 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         {isPickup && onLocateGps && (
           <button
             type="button"
-            onClick={onLocateGps}
+            onClick={() => {
+              onLocateGps();
+              if (!inputValue && unifiedPlaces.length > 0) {
+                const fallbackName = unifiedPlaces[0].name;
+                setInputValue(fallbackName);
+              }
+            }}
             className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors cursor-pointer ${
               isGpsActive
                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'

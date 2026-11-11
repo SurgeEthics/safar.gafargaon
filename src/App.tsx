@@ -3504,6 +3504,7 @@ export default function App() {
               });
 
               sounds.playTripCompletedFanfare();
+              addDismissedTripId(docSnap.id);
               showAdminToastMessage(`🎉 ট্রিপ সম্পন্ন! আজকের আয় যোগ হয়েছে: ৳ ${tripFare}`);
             }
           }
@@ -3951,9 +3952,11 @@ export default function App() {
     setIncomingAlertSecondsRemaining(25);
     setShowScreenOpenPopup(true);
     setSkipVoiceForCurrentAlert(false);
-
-    // Trigger system notification with sound + vibration for this incoming ride request
-    highPriorityNotifications.showIncomingRideAlert(req).catch(() => {});
+    // Only fire background system push notification when app is in background or user is in passenger mode
+    const isForegroundDriverDashboard = (userRole === 'driver' && typeof document !== 'undefined' && !document.hidden);
+    if (!isForegroundDriverDashboard) {
+      highPriorityNotifications.showIncomingRideAlert(req).catch(() => {});
+    }
 
     let dafStarted = false;
     const startDafLoop = () => {
@@ -6860,6 +6863,7 @@ export default function App() {
                       distanceKm: activeBooking.distanceKm,
                       passengerName: passengerProfile.name || 'সম্মানিত যাত্রী'
                     });
+                    addDismissedTripId(reqId);
                   }
 
                   // Save snapshot for Review Modal
@@ -7106,8 +7110,12 @@ export default function App() {
                             setPassengerLocation({ lat, lng, isLiveGps: true });
                             setPickupCoords({ lat, lng });
                             const nearest = findNearestLandmark(lat, lng);
+                            const rawName = (nearest && nearest.name) ? nearest.name : 'গফরগাঁও পৌরসভা চত্বর';
                             // Pure place name without any "(লাইভ অবস্থান)" bracket
-                            const cleanName = nearest.name.replace(/\s*\([^) ]*লাইভ[^)]*\)/gi, '').replace(/\s*\(লাইভ অবস্থান\)/gi, '').trim();
+                            let cleanName = rawName.replace(/\s*\([^) ]*লাইভ[^)]*\)/gi, '').replace(/\s*\(লাইভ অবস্থান\)/gi, '').trim();
+                            if (!cleanName || cleanName === 'আমার' || cleanName.length < 2) {
+                              cleanName = 'গফরগাঁও পৌরসভা চত্বর';
+                            }
                             setPassengerPickup(cleanName);
                             if (nearest.distanceMeters > 30) {
                               setPassengerPickupLandmark(`${cleanName} থেকে ~${toBengaliNumber(nearest.distanceMeters)} মি.`);

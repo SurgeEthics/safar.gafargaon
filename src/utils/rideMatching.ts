@@ -82,15 +82,15 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
   const isDriverMode = userRole === 'driver';
   const cleanDriverPhone = normalizeCleanPhone(driverProfile.phone);
 
-  // 1. Check if current driver is already on a truly active trip (accepted or in_transit within last 5m)
+  // 1. Check if current driver is already on a truly active trip (accepted or in_transit within last 3m)
   const hasActiveTrip = passengerRequests.some(
     (r) => {
       if ((r.status !== 'accepted' && r.status !== 'in_transit') || dismissedTripIds.has(r.id)) {
         return false;
       }
-      // If trip is older than 5 minutes, treat as stale/abandoned so driver is never permanently blocked
+      // If trip is older than 3 minutes, treat as completed/stale so driver is never permanently blocked
       const tripTime = r.createdAtMs || 0;
-      if (tripTime > 0 && now - tripTime > 5 * 60 * 1000) {
+      if (tripTime > 0 && now - tripTime > 3 * 60 * 1000) {
         return false;
       }
       return (

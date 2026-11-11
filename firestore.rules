@@ -2,10 +2,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Drivers collection (Viewable by all passengers, editable by admin/drivers)
-    match /drivers/{driverId} {
-      allow read: if true;
-      allow write: if true;
+    // Drivers collection and all subcollections (completed_trips, etc.)
+    match /drivers/{driverId}/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Places collection (Viewable and manageable by app/admin)
+    match /places/{placeId} {
+      allow read, write: if true;
     }
 
     // Stands collection (Viewable by all, editable from Super Admin Control Panel)

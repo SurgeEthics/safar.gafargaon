@@ -39,38 +39,40 @@ export const DriverScreenOpenNotificationPopup: React.FC<DriverScreenOpenNotific
     setSecondsRemaining(remainingSeconds ?? 25);
     setIsProcessing(false);
 
-    // Initial and periodic haptic vibration pulse while notification popup is active
+    // If managed by parent (App.tsx), let parent handle the synchronized vibration & countdown
+    if (managedByParent) {
+      return;
+    }
+
+    // Initial and periodic haptic vibration pulse only when unmanaged
     try {
       if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
-        navigator.vibrate([600, 250, 600, 250, 800]);
+        navigator.vibrate([450, 150, 450, 150, 600]);
       }
     } catch {}
 
     const vibInterval = setInterval(() => {
       try {
         if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
-          navigator.vibrate([500, 200, 500]);
+          navigator.vibrate([450, 150, 450, 150, 600]);
         }
       } catch {}
-    }, 2500);
+    }, 2000);
 
-    let declineInterval: any = null;
-    if (!managedByParent) {
-      declineInterval = setInterval(() => {
-        setSecondsRemaining(prev => {
-          if (prev <= 1) {
-            clearInterval(declineInterval);
-            onDecline(request.id);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
+    const declineInterval = setInterval(() => {
+      setSecondsRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(declineInterval);
+          onDecline(request.id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
     return () => {
       clearInterval(vibInterval);
-      if (declineInterval) clearInterval(declineInterval);
+      clearInterval(declineInterval);
       try {
         if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
           navigator.vibrate(0);

@@ -88,9 +88,17 @@ export function findMatchingIncomingRideRequest<T extends RideRequestCandidate>(
       if ((r.status !== 'accepted' && r.status !== 'in_transit') || dismissedTripIds.has(r.id)) {
         return false;
       }
-      // If trip is older than 3 minutes, treat as completed/stale so driver is never permanently blocked
-      const tripTime = r.createdAtMs || 0;
-      if (tripTime > 0 && now - tripTime > 3 * 60 * 1000) {
+      // If trip is older than 3 minutes or has no fresh timestamp, treat as completed/stale so driver is never permanently blocked
+      let tripTime = typeof r.createdAtMs === 'number' ? r.createdAtMs : 0;
+      if (!tripTime && r.acceptedAt) {
+        const parsed = Date.parse(r.acceptedAt);
+        if (Number.isFinite(parsed)) tripTime = parsed;
+      }
+      if (!tripTime && r.requestedAt) {
+        const parsed = Date.parse(r.requestedAt);
+        if (Number.isFinite(parsed)) tripTime = parsed;
+      }
+      if (!tripTime || now - tripTime > 3 * 60 * 1000) {
         return false;
       }
       return (

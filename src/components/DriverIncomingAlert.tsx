@@ -137,7 +137,9 @@ export const DriverIncomingAlert: React.FC<DriverIncomingAlertProps> = ({
     }, 1000);
 
     return () => {
-      cleanupTimersAndAudio();
+      if (!managedByParent) {
+        cleanupTimersAndAudio();
+      }
     };
   }, [request?.id, managedByParent]);
 

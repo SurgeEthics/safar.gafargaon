@@ -2014,6 +2014,17 @@ export default function App() {
         }
         const saved = localStorage.getItem('safar_user_role');
         if (saved === 'driver' || saved === 'passenger') return saved;
+
+        // If this device belongs to a registered driver, default directly to driver mode
+        const isRegisteredDriver = localStorage.getItem('safar_driver_registered') === 'true';
+        if (isRegisteredDriver) return 'driver';
+        const driverProfileStr = localStorage.getItem('safar_active_driver_profile_v6') || localStorage.getItem('safar_driver_profile');
+        if (driverProfileStr) {
+          try {
+            const parsed = JSON.parse(driverProfileStr);
+            if (parsed && (parsed.isRegistered || parsed.phone)) return 'driver';
+          } catch {}
+        }
       }
     } catch {}
     return 'passenger';
@@ -3948,6 +3959,10 @@ export default function App() {
     }
 
     stopUnifiedIncomingAlert();
+    setShowAppSplash(false);
+    if (driverProfile.isRegistered || (typeof window !== 'undefined' && localStorage.getItem('safar_driver_registered') === 'true')) {
+      setUserRole('driver');
+    }
     activeIncomingCoordinatorIdRef.current = req.id;
     setIncomingAlertSecondsRemaining(25);
     setShowScreenOpenPopup(true);
@@ -4742,6 +4757,7 @@ export default function App() {
 
     const handleNotificationAction = (action: string, requestId: string) => {
       sounds.unlockAudio();
+      setShowAppSplash(false);
       setUserRole('driver');
       setShowScreenOpenPopup(false);
       if (action === 'accept' && requestId) {
@@ -4765,6 +4781,7 @@ export default function App() {
       const actionParam = params.get('action');
 
       if (roleParam === 'driver' || reqId) {
+        setShowAppSplash(false);
         setUserRole('driver');
         setShowScreenOpenPopup(false);
       }
@@ -6454,8 +6471,8 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col selection:bg-emerald-600 selection:text-white font-['Hind_Siliguri',sans-serif]">
       {/* App Launch Splash Screen (Matching IMG-13 with centered logo & Arabic Dua) */}
-      {showAppSplash && (
-        <SplashScreen onFinish={() => setShowAppSplash(false)} durationMs={3000} />
+      {showAppSplash && !activeIncomingRideForDriver && (
+        <SplashScreen onFinish={() => setShowAppSplash(false)} durationMs={2000} />
       )}
 
       {/* PWA 1-Tap Mobile Install Banner & Viral Share Modal */}

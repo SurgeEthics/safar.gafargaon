@@ -103,3 +103,29 @@ test('mergeAcceptedRequestIntoList inserts cold-start request when not yet in pa
   assert.equal(merged[0].status, 'accepted');
   assert.equal(merged[0].driverName, 'করিম মিয়া');
 });
+
+test('findMatchingIncomingRideRequest allows new incoming requests when past accepted trip is stale or completed', () => {
+  const staleAcceptedTrip = makeReq({
+    id: 'req-old-accepted',
+    status: 'accepted',
+    driverId: 'drv-1',
+    driverPhone: '01799000000',
+    createdAtMs: 1750000000000 - 4 * 60 * 1000 // 4 mins old
+  });
+  const newPendingReq = makeReq({
+    id: 'req-new-pending',
+    status: 'pending',
+    createdAtMs: 1750000000000
+  });
+
+  const matched = findMatchingIncomingRideRequest({
+    passengerRequests: [staleAcceptedTrip, newPendingReq],
+    passengerPendingRequest: null,
+    dismissedAlertIds: {},
+    dismissedTripIds: new Set(),
+    driverProfile: { id: 'drv-1', phone: '01799000000', category: 'cng', isRegistered: true },
+    userRole: 'driver',
+    now: 1750000010000,
+  });
+  assert.equal(matched?.id, newPendingReq.id);
+});

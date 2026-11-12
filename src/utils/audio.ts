@@ -271,7 +271,8 @@ class SoundEffects {
     this.stopAlertVibration();
     if (!this.canVibrate()) return;
 
-    const pattern = [500, 150, 500, 150, 600];
+    this.isAlarmRinging = true;
+    const pattern = [450, 150, 450, 150, 600];
     try {
       navigator.vibrate(pattern);
       this.isVibrating = true;
@@ -279,8 +280,9 @@ class SoundEffects {
 
     this.alertVibrationInterval = setInterval(() => {
       try {
-        if (this.canVibrate()) {
+        if (this.canVibrate() && this.isAlarmRinging) {
           navigator.vibrate(pattern);
+          this.isVibrating = true;
         }
       } catch {}
     }, 2000);
@@ -288,6 +290,17 @@ class SoundEffects {
     this.alertVibrationTimeout = setTimeout(() => {
       this.stopAlertVibration();
     }, durationMs);
+  }
+
+  /**
+   * Pulses an authentic rhythmic vibration burst in sync with Daf drum beats.
+   */
+  pulseRhythmicVibration() {
+    if (!this.canVibrate()) return;
+    try {
+      navigator.vibrate([450, 150, 450, 150, 600]);
+      this.isVibrating = true;
+    } catch {}
   }
 
   stopAlertVibration() {
@@ -441,9 +454,9 @@ class SoundEffects {
         this.alarmGain.gain.setValueAtTime(1.8, ctx.currentTime);
       }
 
-      // Continuous rhythmic vibration during the entire 25s alert period
-      // (Rhythmic pattern persists seamlessly into the Duff drum rhythm)
+      // Continuous rhythmic vibration persists seamlessly throughout Daf drum beats
       this.isAlarmRinging = true;
+      this.pulseRhythmicVibration();
       const now = ctx.currentTime;
       const targetNode = this.getDestinationNode(ctx);
 

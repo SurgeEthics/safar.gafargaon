@@ -34,7 +34,11 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
   return (
     <div
       id="safar-app-splash-screen"
-      className={`fixed inset-0 z-[999999] bg-white flex flex-col items-center justify-between px-6 pt-12 pb-14 select-none transition-opacity duration-400 ease-out ${
+      onClick={() => {
+        setIsVisible(false);
+        onFinish?.();
+      }}
+      className={`fixed inset-0 z-[999999] bg-white flex flex-col items-center justify-between px-6 pt-12 pb-14 select-none cursor-pointer transition-opacity duration-300 ease-out ${
         isFading ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
     >

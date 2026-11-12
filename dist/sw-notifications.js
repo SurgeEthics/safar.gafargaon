@@ -64,16 +64,10 @@ self.addEventListener('notificationclick', (event) => {
             });
           } catch (e) {}
 
-          if (
-            client.url &&
-            self.location &&
-            client.url.startsWith(self.location.origin)
-          ) {
-            return client;
-          }
-
           if ('navigate' in client) {
-            return client.navigate(targetUrl);
+            try {
+              client.navigate(targetUrl);
+            } catch (err) {}
           }
           return client;
         }

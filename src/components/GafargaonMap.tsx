@@ -40,7 +40,21 @@ import {
 } from '../utils/gafargaonGeo';
 import { reverseGeocodeFree } from '../services/freeMapSearchService';
 import { GAFARGAON_UNIONS } from '../data/gafargaonUnionData';
-import { buildAdminPlaceAndStandPayloads } from '../utils/adminPersistence';
+import {
+  GafargaonPlace,
+  PLACE_CATEGORY_OPTIONS,
+  PlaceCategory,
+  STATIC_GAFARGAON_PLACE_IDS
+} from '../data/gafargaonPlaces';
+import {
+  buildAdminPlaceAndStandPayloads,
+  CategoryMetaCandidate,
+  computeStandVehicleTypesSummary,
+  filterCustomMapPlaces,
+  parseGoogleMapsCoordinates,
+  resolveDriverMapPosition,
+  resolveVehicleCategoryMeta
+} from '../utils/adminPersistence';
 import { AutoMarqueeText } from './AutoMarqueeText';
 import { PauseMarqueeText } from './PauseMarqueeText';
 
@@ -50,6 +64,7 @@ interface GafargaonMapProps {
   // Static/Fallback drivers & stands
   drivers: Driver[];
   stands: Stand[];
+  categories?: CategoryMetaCandidate[];
   
   // Real-time server state
   liveDrivers: LiveDriverLocation[];
@@ -112,16 +127,18 @@ interface GafargaonMapProps {
 
   // Expanded area places & interactive pin-to-save support
   allPlaces?: PlaceReferenceCandidate[];
+  popularPlaces?: GafargaonPlace[];
   externalPinRequest?: { mode: 'none' | 'pickup' | 'dest'; triggerId: number };
   onSaveCustomPlace?: (place: {
     id: string;
     name: string;
     bengaliName: string;
-    category: 'স্ট্যান্ড' | 'মোড়' | 'বাজার' | 'হাসপাতাল' | 'শিক্ষা প্রতিষ্ঠান' | 'প্রশাসন' | 'ইউনিয়ন';
+    category: PlaceCategory;
     area: string;
     lat: number;
     lng: number;
     isPopular?: boolean;
+    showOnMap?: boolean;
   }) => void;
   onSaveCustomStand?: (stand: {
     id: string;
@@ -139,6 +156,7 @@ interface GafargaonMapProps {
 export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   drivers,
   stands,
+  categories = [],
   liveDrivers,
   livePassengers,
   connectionStatus,
@@ -164,6 +182,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   isTripActive = false,
   activeDriverId,
   allPlaces = [],
+  popularPlaces = [],
   externalPinRequest,
   onSaveCustomPlace,
   onSaveCustomStand
@@ -181,6 +200,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [filterMode, setFilterMode] = useState<'all' | 'drivers' | 'passengers'>('all');
+  const [vehicleCategoryFilter, setVehicleCategoryFilter] = useState<string>('all');
   const [mapLayer, setMapLayer] = useState<MapLayerMode>('standard');
   const [isLandscapeMode, setIsLandscapeMode] = useState<boolean>(false);
 
@@ -196,10 +216,11 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   } | null>(null);
   const [isAdminPinSaveModalOpen, setIsAdminPinSaveModalOpen] = useState<boolean>(false);
   const [adminPinSaveTarget, setAdminPinSaveTarget] = useState<'both' | 'place' | 'stand'>('both');
+  const [adminPinCoordInput, setAdminPinCoordInput] = useState<string>('');
   const [adminPinForm, setAdminPinForm] = useState<{
     bengaliName: string;
     name: string;
-    category: 'স্ট্যান্ড' | 'মোড়' | 'বাজার' | 'হাসপাতাল' | 'শিক্ষা প্রতিষ্ঠান' | 'প্রশাসন' | 'ইউনিয়ন';
+    category: PlaceCategory;
     area: string;
     lat: number;
     lng: number;
@@ -538,21 +559,9 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       userMarkerRef.current = null;
     }
 
-    // Helper: Category badge styling
-    const getCategoryDetails = (cat: string) => {
-      switch (cat) {
-        case 'ambulance': return { symbol: '✚', color: '#dc2626', name: 'এম্বুলেন্স' };
-        case 'fire':
-        case 'fire_service': return { symbol: '🚒', color: '#ea580c', name: 'ফায়ার সার্ভিস' };
-        case 'cng': return { symbol: '🛺', color: '#059669', name: 'সিএনজি' };
-        case 'auto': return { symbol: '🔋', color: '#0d9488', name: 'অটো রিকশা' };
-        case 'car': return { symbol: '🚗', color: '#2563eb', name: 'কার' };
-        case 'microbus':
-        case 'maxi': return { symbol: '🚐', color: '#4f46e5', name: 'মাইক্রোবাস' };
-        case 'bike': return { symbol: '🏍️', color: '#d97706', name: 'মোটরসাইকেল' };
-        default: return { symbol: '🚖', color: '#059669', name: 'যানবাহন' };
-      }
-    };
+    // Helper: Dynamic Category badge styling using Admin-configured categories + fallback
+    const activeCategoriesList = categories && categories.length > 0 ? categories : undefined;
+    const getCategoryDetails = (cat: string) => resolveVehicleCategoryMeta(cat, activeCategoriesList);
 
     // A. Render Gafargaon Registered Stands (HIDDEN when ride request or trip is active!)
     if (!isTripCurrentlyActive) {
@@ -571,19 +580,32 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
         });
 
         const marker = L.marker([stand.lat, stand.lng], { icon: standIcon });
-        const standBn = (stand as any).bengaliName || stand.nameBn;
-        const count = stand.driverCount || (stand as any).activeDrivers || 5;
+        const standBn = (stand as any).bengaliName || stand.nameBn || stand.name || 'স্ট্যান্ড';
+        const standSummary = computeStandVehicleTypesSummary(standBn, activeCategoriesList, drivers as any);
+        const typeChipsHtml = standSummary.typeNames
+          .slice(0, 10)
+          .map(
+            (name) =>
+              `<span style="display:inline-block;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;border-radius:9999px;padding:1px 6px;font-size:9.5px;font-weight:700;">${name}</span>`
+          )
+          .join('');
 
         marker.bindPopup(`
-          <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 175px;">
+          <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 195px; max-width: 245px;">
             <h4 style="font-weight: 800; color: #065f46; margin: 0 0 4px 0; font-size: 13.5px;">${standBn}</h4>
-            <p style="font-size: 11px; color: #334155; margin: 0 0 6px 0;">সক্রিয় যানবাহন: <b>${toBengaliNumber(count)} টি</b></p>
+            <p style="font-size: 11px; color: #334155; margin: 0 0 4px 0;">
+              সক্রিয় যানবাহন: <b>${toBengaliNumber(standSummary.typeCount)} প্রকার</b>
+              ${standSummary.driverCountAtStand > 0 ? ` • চালক: <b>${toBengaliNumber(standSummary.driverCountAtStand)} জন</b>` : ''}
+            </p>
+            <div style="display:flex;flex-wrap:wrap;gap:3px;margin:0 0 7px 0;">
+              ${typeChipsHtml}
+            </div>
             <div style="display: flex; flex-direction: column; gap: 4px;">
-              <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${standBn}')" 
+              <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${standBn.replace(/'/g, "\\'")}', ${stand.lat}, ${stand.lng})" 
                       style="width: 100%; background: #059669; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
                 🚖 এই স্ট্যান্ড পিকআপ করুন
               </button>
-              <button onclick="window.__selectDestPlace && window.__selectDestPlace('${standBn}')" 
+              <button onclick="window.__selectDestPlace && window.__selectDestPlace('${standBn.replace(/'/g, "\\'")}', ${stand.lat}, ${stand.lng})" 
                       style="width: 100%; background: #dc2626; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
                 🎯 এখানে যাব (গন্তব্য করুন)
               </button>
@@ -593,15 +615,68 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
 
         marker.bindTooltip(`
           <div style="font-family: 'Hind Siliguri', sans-serif; font-weight: 700; font-size: 11px; padding: 1px 4px;">
-            📍 ${standBn} <span style="color: #059669; font-weight: 800;">(${toBengaliNumber(count)}টি গাড়ি)</span>
+            📍 ${standBn} • <span style="color: #059669; font-weight: 800;">সক্রিয় যানবাহন: ${toBengaliNumber(standSummary.typeCount)} প্রকার</span>
           </div>
         `, { direction: 'top', offset: [0, -32], opacity: 0.95 });
 
         markersGroup.addLayer(marker);
       });
+
+      // A2. Render Admin-Added / Custom Popular Places as Green Map Pins (deduplicated against stands)
+      const customMapPlaces = filterCustomMapPlaces(popularPlaces, stands, STATIC_GAFARGAON_PLACE_IDS);
+      customMapPlaces.forEach((place) => {
+        if (!isValidLatLng(place.lat, place.lng)) return;
+        const placePinIcon = L.divIcon({
+          className: 'custom-stand-marker custom-popular-place-marker',
+          html: `
+            <div style="background-color: #065f46; color: white; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.35); border: 2.5px solid #ffffff; cursor: pointer;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+            </div>
+          `,
+          iconSize: [34, 34],
+          iconAnchor: [17, 34],
+          popupAnchor: [0, -34]
+        });
+
+        const placeMarker = L.marker([place.lat, place.lng], { icon: placePinIcon });
+        const placeBn = place.bengaliName || place.name || 'নতুন স্থান';
+        const safePlaceBn = placeBn.replace(/'/g, "\\'");
+        const catLabel = place.category || 'জনপ্রিয় স্থান';
+        const areaLabel = place.area || 'গফরগাঁও';
+        const placeSummary = computeStandVehicleTypesSummary(placeBn, activeCategoriesList, drivers as any);
+
+        placeMarker.bindPopup(`
+          <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 185px;">
+            <h4 style="font-weight: 800; color: #065f46; margin: 0 0 3px 0; font-size: 13.5px;">${placeBn}</h4>
+            <p style="font-size: 10.5px; color: #334155; margin: 0 0 4px 0;">
+              <span style="background: #ecfdf5; color: #065f46; font-weight: 700; padding: 1px 5px; border-radius: 4px; border: 1px solid #a7f3d0;">${catLabel}</span>
+              • ${areaLabel}
+            </p>
+            <p style="font-size: 11px; color: #334155; margin: 0 0 6px 0;">সক্রিয় যানবাহন: <b>${toBengaliNumber(placeSummary.typeCount)} প্রকার</b></p>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${safePlaceBn}', ${place.lat}, ${place.lng})"
+                      style="width: 100%; background: #059669; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                📍 এই স্থান পিকআপ করুন
+              </button>
+              <button onclick="window.__selectDestPlace && window.__selectDestPlace('${safePlaceBn}', ${place.lat}, ${place.lng})"
+                      style="width: 100%; background: #dc2626; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                🎯 এখানে যাব (গন্তব্য করুন)
+              </button>
+            </div>
+          </div>
+        `);
+
+        placeMarker.bindTooltip(`
+          <div style="font-family: 'Hind Siliguri', sans-serif; font-weight: 700; font-size: 11px; padding: 1px 4px;">
+            📍 ${placeBn} <span style="color: #059669; font-weight: 800;">(${catLabel} • সক্রিয় যানবাহন: ${toBengaliNumber(placeSummary.typeCount)} প্রকার)</span>
+          </div>
+        `, { direction: 'top', offset: [0, -32], opacity: 0.95 });
+
+        markersGroup.addLayer(placeMarker);
+      });
     }
 
-    // B. Combine Server Live Drivers with Seed Drivers for maximum coverage
+    // B. Combine Server Live Drivers with Seed/Registered Drivers for maximum coverage
     const displayedDriversMap = new Map<string, {
       id: string;
       name: string;
@@ -617,7 +692,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       isLiveEdge: boolean;
     }>();
 
-    // First populate fallback seed drivers
+    // First populate fallback / registered drivers
     drivers.forEach((d) => {
       displayedDriversMap.set(d.id, {
         id: d.id,
@@ -631,7 +706,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
         lng: d.lng,
         speed: (d as any).approxSpeedKmh || 25,
         rating: d.rating || 4.8,
-        isLiveEdge: false
+        isLiveEdge: (d as any).isAvailable !== false
       });
     });
 
@@ -655,10 +730,22 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
 
     // Plot Drivers if filter permits AND trip is NOT currently active
     if (!isTripCurrentlyActive && (filterMode === 'all' || filterMode === 'drivers')) {
+      const standDriverCounters = new Map<string, number>();
+
       displayedDriversMap.forEach((driver) => {
-        if (!isValidLatLng(driver.lat, driver.lng)) return;
+        if (vehicleCategoryFilter !== 'all' && driver.category !== vehicleCategoryFilter) {
+          return;
+        }
+        const standKey = (driver.standName || 'default').trim().toLowerCase();
+        const standIdx = standDriverCounters.get(standKey) || 0;
+        standDriverCounters.set(standKey, standIdx + 1);
+
+        const resolvedPos = resolveDriverMapPosition(driver, stands, standIdx);
+        if (!isValidLatLng(resolvedPos.lat, resolvedPos.lng)) return;
+
         const catInfo = getCategoryDetails(driver.category);
         const isSelected = selectedDriver?.id === driver.id;
+        const safeStandName = (driver.standName || resolvedPos.matchedStandName || 'গফরগাঁও স্ট্যান্ড').replace(/'/g, "\\'");
 
         const driverIcon = L.divIcon({
           className: 'custom-driver-marker',
@@ -691,29 +778,32 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
           popupAnchor: [0, -20]
         });
 
-        const marker = L.marker([driver.lat, driver.lng], { icon: driverIcon });
+        const marker = L.marker([resolvedPos.lat, resolvedPos.lng], { icon: driverIcon });
 
         marker.bindPopup(`
           <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 195px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; gap: 4px;">
               <span style="font-size: 10px; background: #ecfdf5; color: #047857; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">
-                ${driver.isLiveEdge ? '⚡ ক্লাউডফ্লেয়ার লাইভ' : '📍 সফর ভেরিফাইড'}
+                ${driver.isLiveEdge ? '⚡ সক্রিয় লাইভ' : '📍 নিবন্ধিত চালক'}
+              </span>
+              <span style="font-size: 10px; background: ${catInfo.color}18; color: ${catInfo.color}; font-weight: 800; padding: 1px 6px; border-radius: 4px; border: 1px solid ${catInfo.color}40;">
+                ${catInfo.symbol} ${catInfo.name}
               </span>
               <span style="font-size: 11px; color: #d97706; font-weight: 800;">★ ${toBengaliNumber(driver.rating)}</span>
             </div>
             <h4 style="font-weight: 800; color: #0f172a; margin: 2px 0 2px 0; font-size: 13px;">${driver.name}</h4>
-            <div style="font-size: 11px; color: #0284c7; font-weight: 700; margin-bottom: 2px;">${driver.vehicleModel}</div>
-            <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">স্ট্যান্ড: ${driver.standName} • গতি: ${toBengaliNumber(driver.speed)} কিমি/ঘণ্টা</div>
+            <div style="font-size: 11px; color: #0284c7; font-weight: 700; margin-bottom: 2px;">${driver.vehicleModel || catInfo.name}</div>
+            <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">স্ট্যান্ড: ${driver.standName || resolvedPos.matchedStandName || 'গফরগাঁও'} • গতি: ${toBengaliNumber(driver.speed)} কিমি/ঘণ্টা</div>
             <div style="display: flex; flex-direction: column; gap: 4px;">
               <a href="tel:${(driver.phone || '').replace(/[^0-9]/g, '')}" 
                  style="display: block; text-align: center; background: #059669; color: white; padding: 5px 8px; border-radius: 6px; font-weight: 700; font-size: 11px; text-decoration: none;">
                 📞 সরাসরি কল করুন (${driver.phone || ''})
               </a>
-              <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${driver.standName}')"
+              <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${safeStandName}', ${resolvedPos.lat}, ${resolvedPos.lng})"
                       style="display: block; width: 100%; text-align: center; background-color: #ecfdf5; color: #047857; padding: 4px 8px; border-radius: 6px; border: 1px solid #a7f3d0; font-size: 10.5px; font-weight: 700; cursor: pointer;">
                 🚖 এই স্ট্যান্ড পিকআপ করুন
               </button>
-              <button onclick="window.__selectDestPlace && window.__selectDestPlace('${driver.standName}')"
+              <button onclick="window.__selectDestPlace && window.__selectDestPlace('${safeStandName}', ${resolvedPos.lat}, ${resolvedPos.lng})"
                       style="display: block; width: 100%; text-align: center; background-color: #fef2f2; color: #b91c1c; padding: 4px 8px; border-radius: 6px; border: 1px solid #fecaca; font-size: 10.5px; font-weight: 700; cursor: pointer;">
                 🎯 এই স্ট্যান্ডে যাব (গন্তব্য)
               </button>
@@ -726,7 +816,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
           <div style="font-family: 'Hind Siliguri', sans-serif; padding: 2px 5px; font-size: 11px; font-weight: 700; display: flex; align-items: center; gap: 4px;">
             <span>${catInfo.symbol}</span>
             <span>${driver.name}</span>
-            <span style="color: #0284c7; font-size: 10px;">(${driver.vehicleModel})</span>
+            <span style="color: ${catInfo.color}; font-size: 10px;">(${catInfo.name})</span>
             <span style="color: #d97706; font-size: 10px;">★${toBengaliNumber(driver.rating)}</span>
           </div>
         `, { direction: 'top', offset: [0, -20], opacity: 0.95 });
@@ -1148,10 +1238,13 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   }, [
     drivers,
     stands,
+    categories,
+    popularPlaces,
     liveDrivers,
     livePassengers,
     userGps,
     filterMode,
+    vehicleCategoryFilter,
     selectedDriver,
     pickupCoords,
     destCoords,
@@ -1166,14 +1259,20 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
 
   // Expose global window pickup and destination selector for popups
   useEffect(() => {
-    (window as any).__selectPickupPlace = (placeName: string) => {
+    (window as any).__selectPickupPlace = (placeName: string, lat?: number, lng?: number) => {
       if (onSelectPickupPlace) {
-        onSelectPickupPlace(placeName);
+        onSelectPickupPlace(
+          placeName,
+          typeof lat === 'number' && typeof lng === 'number' ? { lat, lng } : undefined
+        );
       }
     };
-    (window as any).__selectDestPlace = (placeName: string) => {
+    (window as any).__selectDestPlace = (placeName: string, lat?: number, lng?: number) => {
       if (onSelectDestPlace) {
-        onSelectDestPlace(placeName);
+        onSelectDestPlace(
+          placeName,
+          typeof lat === 'number' && typeof lng === 'number' ? { lat, lng } : undefined
+        );
       }
     };
     return () => {
@@ -1299,34 +1398,56 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
               <span>অ্যাক্টিভ ট্রিপ: শুধুমাত্র চালক, পিকআপ ও গন্তব্য ফোকাস</span>
             </div>
           ) : (
-            <div className="flex items-center bg-slate-200/80 p-0.5 rounded-lg text-[10px] font-bold">
-              <button
-                type="button"
-                onClick={() => setFilterMode('all')}
-                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                  filterMode === 'all' ? 'bg-white text-slate-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                সবাই ({toBengaliNumber(drivers.length + livePassengers.length)})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterMode('drivers')}
-                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                  filterMode === 'drivers' ? 'bg-white text-emerald-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                চালক ({toBengaliNumber(drivers.length)})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterMode('passengers')}
-                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                  filterMode === 'passengers' ? 'bg-white text-blue-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                যাত্রী ({toBengaliNumber(livePassengers.length)})
-              </button>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center bg-slate-200/80 p-0.5 rounded-lg text-[10px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setFilterMode('all')}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    filterMode === 'all' ? 'bg-white text-slate-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  সবাই ({toBengaliNumber(drivers.length + livePassengers.length)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterMode('drivers')}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    filterMode === 'drivers' ? 'bg-white text-emerald-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  চালক ({toBengaliNumber(drivers.length)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterMode('passengers')}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    filterMode === 'passengers' ? 'bg-white text-blue-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  যাত্রী ({toBengaliNumber(livePassengers.length)})
+                </button>
+              </div>
+
+              {categories && categories.filter(c => c.id !== 'all').length > 0 && (
+                <select
+                  data-testid="map-vehicle-filter"
+                  aria-label="ম্যাপে বাহনের ধরন ফিল্টার"
+                  value={vehicleCategoryFilter}
+                  onChange={(e) => setVehicleCategoryFilter(e.target.value)}
+                  className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-[10.5px] font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                  title="ম্যাপে নির্দিষ্ট বাহনের ধরন ফিল্টার করুন"
+                >
+                  <option value="all">
+                    সকল বাহন
+                  </option>
+                  {categories.filter(c => c.id !== 'all').map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.nameBengali}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           )}
 
@@ -1582,6 +1703,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                       lat: Number(droppedPin.lat.toFixed(6)),
                       lng: Number(droppedPin.lng.toFixed(6))
                     });
+                    setAdminPinCoordInput('');
                     setAdminPinSaveTarget('both');
                     setIsAdminPinSaveModalOpen(true);
                   }}
@@ -1687,16 +1809,14 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                     <label className="font-bold text-slate-700 block mb-1">ক্যাটাগরি / ধরন:</label>
                     <select
                       value={adminPinForm.category}
-                      onChange={(e) => setAdminPinForm({ ...adminPinForm, category: e.target.value as any })}
+                      onChange={(e) => setAdminPinForm({ ...adminPinForm, category: e.target.value as PlaceCategory })}
                       className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      <option value="স্ট্যান্ড">স্ট্যান্ড পয়েন্ট</option>
-                      <option value="মোড়">চৌরাস্তা / মোড়</option>
-                      <option value="বাজার">বাজার / হাট</option>
-                      <option value="হাসপাতাল">হাসপাতাল / স্বাস্থ্যকেন্দ্র</option>
-                      <option value="শিক্ষা প্রতিষ্ঠান">স্কুল / কলেজ</option>
-                      <option value="প্রশাসন">থানা / সরকারি অফিস</option>
-                      <option value="ইউনিয়ন">ইউনিয়ন পরিষদ</option>
+                      {PLACE_CATEGORY_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -1742,6 +1862,34 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                       required
                     />
                   </div>
+                </div>
+
+                {/* Google Maps Coordinates Quick Paste Helper (Auto Detect) */}
+                <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+                  <label className="font-bold text-xs text-emerald-900 block mb-1">
+                    🌐 গুগল ম্যাপস কোঅর্ডিনেট পেস্ট করুন (অটো ডিটেক্ট):
+                  </label>
+                  <input
+                    type="text"
+                    value={adminPinCoordInput}
+                    placeholder="যেমন: 24.4536, 90.5479 (Google Maps থেকে কপি করা)"
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setAdminPinCoordInput(raw);
+                      const parsed = parseGoogleMapsCoordinates(raw);
+                      if (parsed) {
+                        setAdminPinForm((prev) => ({
+                          ...prev,
+                          lat: parsed.lat,
+                          lng: parsed.lng
+                        }));
+                      }
+                    }}
+                    className="w-full px-3 py-1.5 bg-white border border-emerald-300 rounded-lg text-xs font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <span className="text-[10px] text-emerald-700 block mt-1">
+                    গুগল ম্যাপে যেকোনো লোকেশনে ট্যাপ বা রাইট ক্লিক করে Lat, Lng কপি করে এখানে পেস্ট করলেই উপরে অক্ষাংশ ও দ্রাঘিমাংশ স্বয়ংক্রিয়ভাবে বসে যাবে।
+                  </span>
                 </div>
 
                 <div className="flex items-center gap-2 pt-2">

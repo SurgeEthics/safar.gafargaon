@@ -6,15 +6,41 @@ const ALL_STATIC_PLACES: ComprehensivePlace[] = [
   ...GAFARGAON_OSM_PLACES,
 ];
 
+export type PlaceCategory =
+  | 'স্ট্যান্ড'
+  | 'মোড়'
+  | 'বাজার'
+  | 'হাসপাতাল'
+  | 'শিক্ষা প্রতিষ্ঠান'
+  | 'প্রশাসন'
+  | 'ইউনিয়ন'
+  | 'বাসা / বাড়ি'
+  | 'মসজিদ / মাদ্রাসা'
+  | 'দোকান / ব্যাবসা প্রতিষ্ঠান';
+
+export const PLACE_CATEGORY_OPTIONS: Array<{ value: PlaceCategory; label: string }> = [
+  { value: 'স্ট্যান্ড', label: 'স্ট্যান্ড পয়েন্ট' },
+  { value: 'মোড়', label: 'চৌরাস্তা / মোড়' },
+  { value: 'বাজার', label: 'বাজার / হাট' },
+  { value: 'হাসপাতাল', label: 'হাসপাতাল / স্বাস্থ্যকেন্দ্র' },
+  { value: 'শিক্ষা প্রতিষ্ঠান', label: 'স্কুল / কলেজ' },
+  { value: 'প্রশাসন', label: 'থানা / সরকারি অফিস' },
+  { value: 'ইউনিয়ন', label: 'ইউনিয়ন পরিষদ' },
+  { value: 'বাসা / বাড়ি', label: 'বাসা / বাড়ি' },
+  { value: 'মসজিদ / মাদ্রাসা', label: 'মসজিদ / মাদ্রাসা' },
+  { value: 'দোকান / ব্যাবসা প্রতিষ্ঠান', label: 'দোকান / ব্যাবসা প্রতিষ্ঠান' },
+];
+
 export interface GafargaonPlace {
   id: string;
   name: string;
   bengaliName: string;
-  category: 'স্ট্যান্ড' | 'মোড়' | 'বাজার' | 'হাসপাতাল' | 'শিক্ষা প্রতিষ্ঠান' | 'প্রশাসন' | 'ইউনিয়ন';
+  category: PlaceCategory;
   area: string;
   lat: number;
   lng: number;
   isPopular?: boolean;
+  showOnMap?: boolean;
 }
 
 // Unified Gafargaon & Pagla Places (Derived from Comprehensive 15-Union + OSM Bounded Database)
@@ -28,6 +54,10 @@ export const GAFARGAON_PLACES: GafargaonPlace[] = ALL_STATIC_PLACES.map(p => ({
   lng: p.lng,
   isPopular: p.isPopular
 }));
+
+export const STATIC_GAFARGAON_PLACE_IDS: ReadonlySet<string> = new Set(
+  GAFARGAON_PLACES.map(p => p.id)
+);
 
 /**
  * Resolves GPS Coordinates for any Gafargaon or Pagla location query
@@ -69,6 +99,26 @@ export function resolveLocationCoordinates(
     if (standMatch && typeof standMatch.lat === 'number' && typeof standMatch.lng === 'number') {
       return { lat: standMatch.lat, lng: standMatch.lng, matchedPlace: standMatch };
     }
+  }
+
+  // 0.5 Check saved/admin-managed popular places before static seed list
+  if (typeof window !== 'undefined') {
+    try {
+      const savedPlacesRaw = localStorage.getItem('safar_popular_places_v1');
+      if (savedPlacesRaw) {
+        const savedPlaces = JSON.parse(savedPlacesRaw);
+        if (Array.isArray(savedPlaces)) {
+          const dynamicPlaceMatch = savedPlaces.find((p: any) => {
+            const bn = (p?.bengaliName || '').toLowerCase().trim();
+            const en = (p?.name || '').toLowerCase().trim();
+            return (bn && bn === clean) || (en && en === clean);
+          });
+          if (dynamicPlaceMatch && typeof dynamicPlaceMatch.lat === 'number' && typeof dynamicPlaceMatch.lng === 'number') {
+            return { lat: dynamicPlaceMatch.lat, lng: dynamicPlaceMatch.lng, matchedPlace: dynamicPlaceMatch };
+          }
+        }
+      }
+    } catch {}
   }
 
   // 1. Exact match in comprehensive + OSM places dataset

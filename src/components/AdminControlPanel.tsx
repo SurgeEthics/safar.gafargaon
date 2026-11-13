@@ -49,8 +49,9 @@ import {
 import { Stand, Driver, VehicleCategoryItem } from '../App';
 import { EmergencyContact } from '../types';
 import { INITIAL_EMERGENCY_CONTACTS } from '../data/initialData';
-import { GafargaonPlace } from '../data/gafargaonPlaces';
+import { GafargaonPlace, PLACE_CATEGORY_OPTIONS, PlaceCategory } from '../data/gafargaonPlaces';
 import { GAFARGAON_UNIONS, COMPREHENSIVE_UNION_PLACES, ComprehensivePlace, UnionInfo } from '../data/gafargaonUnionData';
+import { parseGoogleMapsCoordinates } from '../utils/adminPersistence';
 import { AutoMarqueeText } from './AutoMarqueeText';
 import { PauseMarqueeText } from './PauseMarqueeText';
 
@@ -90,6 +91,7 @@ export interface AdminControlPanelProps {
   onApproveAllDriver?: (driverId: string) => void;
   onRevokeDriver?: (driverId: string) => void;
   onToggleDriverOnline: (driverId: string) => void;
+  onSaveDriver?: (driver: Driver, isEdit: boolean) => void;
   onDeleteDriver: (driverId: string, name: string) => void;
   customSettings: AppCustomSettings;
   onSaveCustomSettings: (settings: AppCustomSettings) => void;
@@ -131,6 +133,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   onApproveAllDriver,
   onRevokeDriver,
   onToggleDriverOnline,
+  onSaveDriver,
   onDeleteDriver,
   customSettings,
   onSaveCustomSettings,
@@ -238,6 +241,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   });
   const [editingPlace, setEditingPlace] = useState<GafargaonPlace | null>(null);
   const [isPlaceModalOpen, setIsPlaceModalOpen] = useState(false);
+  const [placeCoordPaste, setPlaceCoordPaste] = useState('');
   const [placeFilterQuery, setPlaceFilterQuery] = useState('');
   const [placeForm, setPlaceForm] = useState<GafargaonPlace>({
     id: '',
@@ -247,7 +251,40 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     area: GAFARGAON_UNIONS[0].nameBengali,
     lat: 24.4536,
     lng: 90.5479,
-    isPopular: true
+    isPopular: true,
+    showOnMap: true
+  });
+
+  // Driver Add / Edit Modal State (Admin Direct Driver Management)
+  const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
+  const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
+  const [driverCoordPaste, setDriverCoordPaste] = useState('');
+  const [driverForm, setDriverForm] = useState<{
+    name: string;
+    phone: string;
+    category: string;
+    standName: string;
+    vehicleModel: string;
+    plateNumber: string;
+    licenseNumber: string;
+    nidNumber: string;
+    lat: number;
+    lng: number;
+    isOnline: boolean;
+    allVerified: boolean;
+  }>({
+    name: '',
+    phone: '',
+    category: 'cng',
+    standName: '',
+    vehicleModel: '',
+    plateNumber: '',
+    licenseNumber: '',
+    nidNumber: '',
+    lat: 24.4536,
+    lng: 90.5479,
+    isOnline: true,
+    allVerified: true
   });
 
   // Keep all drafts synchronized with live Firestore-backed props whenever updated or panel opens
@@ -450,7 +487,8 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       area: placeForm.area.trim() || 'গফরগাঁও',
       lat: Number(placeForm.lat) || 24.4536,
       lng: Number(placeForm.lng) || 90.5479,
-      isPopular: true
+      isPopular: true,
+      showOnMap: true
     };
     let updated: GafargaonPlace[];
     if (editingPlace) {
@@ -475,6 +513,68 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       onDeletePopularPlace(placeId, name);
     }
     showToast(`'${name}' স্থানটি তালিকা থেকে মুছে ফেলা হয়েছে`);
+  };
+
+  // Submit / Save Driver (Admin Add or Edit -> Direct Live Map & Firestore Sync)
+  const handleSubmitDriver = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!driverForm.name.trim() || !driverForm.phone.trim()) {
+      showToast('চালকের নাম ও মোবাইল নম্বর আবশ্যক!');
+      return;
+    }
+
+    const activeCats = categories.filter((c) => c.id !== 'all');
+    const selectedCat = activeCats.find((c) => c.id === driverForm.category) || activeCats[0];
+    const selectedStand =
+      stands.find((s) => s.bengaliName === driverForm.standName) ||
+      stands[0];
+
+    const resolvedLat =
+      Number.isFinite(Number(driverForm.lat)) && Number(driverForm.lat) > 20
+        ? Number(Number(driverForm.lat).toFixed(6))
+        : (selectedStand?.lat ?? 24.4536);
+    const resolvedLng =
+      Number.isFinite(Number(driverForm.lng)) && Number(driverForm.lng) > 85
+        ? Number(Number(driverForm.lng).toFixed(6))
+        : (selectedStand?.lng ?? 90.5479);
+
+    const driverId = editingDriver ? editingDriver.id : `drv-${Date.now()}`;
+    const plate = driverForm.plateNumber.trim() || 'নিবন্ধিত';
+    const isVerified = driverForm.allVerified;
+
+    const finalDriver: Driver = {
+      ...(editingDriver || {}),
+      id: driverId,
+      name: driverForm.name.trim(),
+      phone: driverForm.phone.trim(),
+      category: (selectedCat?.id || driverForm.category || 'cng') as any,
+      categoryBengali: selectedCat?.nameBengali || 'যানবাহন',
+      vehicleModel: driverForm.vehicleModel.trim() || selectedCat?.nameBengali || 'নিবন্ধিত গাড়ি',
+      plateNumber: plate,
+      licenseNumber: driverForm.licenseNumber.trim() || 'BRTA-GAF-2026',
+      licenseType: editingDriver?.licenseType || 'পেশাদার (Professional)',
+      nidNumber: driverForm.nidNumber.trim() || '1990611280001',
+      nidVerified: isVerified,
+      licenseVerified: isVerified,
+      phoneVerified: isVerified,
+      verificationStatus: isVerified ? 'verified' : 'pending',
+      regAppId: editingDriver?.regAppId || `SAFAR-REG-${driverId.slice(-4)}`,
+      registeredAt: editingDriver?.registeredAt || new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+      standName: selectedStand?.bengaliName || driverForm.standName || 'গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড',
+      lat: resolvedLat,
+      lng: resolvedLng,
+      rating: editingDriver?.rating ?? 5.0,
+      totalTrips: editingDriver?.totalTrips ?? 0,
+      avatarBg: editingDriver?.avatarBg || 'bg-emerald-700',
+      isOnline: driverForm.isOnline,
+      approxSpeedKmh: editingDriver?.approxSpeedKmh ?? 28
+    };
+
+    if (onSaveDriver) {
+      onSaveDriver(finalDriver, !!editingDriver);
+    }
+    setIsDriverModalOpen(false);
+    setEditingDriver(null);
   };
 
   // 1-Click Load & Sync all 15 unions' stands from COMPREHENSIVE_UNION_PLACES
@@ -1436,6 +1536,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     type="button"
                     onClick={() => {
                       setEditingPlace(null);
+                      setPlaceCoordPaste('');
                       setPlaceForm({
                         id: `place-${Date.now()}`,
                         name: '',
@@ -1444,7 +1545,8 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                         area: 'গফরগাঁও পৌরসভা',
                         lat: 24.4536,
                         lng: 90.5479,
-                        isPopular: true
+                        isPopular: true,
+                        showOnMap: true
                       });
                       setIsPlaceModalOpen(true);
                     }}
@@ -1525,7 +1627,8 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                               type="button"
                               onClick={() => {
                                 setEditingPlace(place);
-                                setPlaceForm({ ...place });
+                                setPlaceCoordPaste('');
+                                setPlaceForm({ ...place, showOnMap: true });
                                 setIsPlaceModalOpen(true);
                               }}
                               className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer"
@@ -2111,6 +2214,36 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                       <option key={c.id} value={c.id}>{c.nameBengali}</option>
                     ))}
                   </select>
+                  {onSaveDriver && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const defaultCat = categories.find(c => c.id !== 'all') || categories[0];
+                        const defaultStand = stands[0];
+                        setEditingDriver(null);
+                        setDriverCoordPaste('');
+                        setDriverForm({
+                          name: '',
+                          phone: '',
+                          category: defaultCat?.id || 'cng',
+                          standName: defaultStand?.bengaliName || '',
+                          vehicleModel: '',
+                          plateNumber: '',
+                          licenseNumber: '',
+                          nidNumber: '',
+                          lat: defaultStand?.lat ?? 24.4536,
+                          lng: defaultStand?.lng ?? 90.5479,
+                          isOnline: true,
+                          allVerified: true
+                        });
+                        setIsDriverModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-3.5 py-1.5 rounded-xl text-xs shadow-xs cursor-pointer transition shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ নতুন চালক যোগ করুন</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2157,14 +2290,44 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => onDeleteDriver(driver.id, driver.name)}
-                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
-                          title="মুছে ফেলুন"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {onSaveDriver && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingDriver(driver);
+                                setDriverCoordPaste('');
+                                setDriverForm({
+                                  name: driver.name || '',
+                                  phone: driver.phone || '',
+                                  category: driver.category || 'cng',
+                                  standName: driver.standName || stands[0]?.bengaliName || '',
+                                  vehicleModel: driver.vehicleModel || '',
+                                  plateNumber: driver.plateNumber || '',
+                                  licenseNumber: driver.licenseNumber || '',
+                                  nidNumber: driver.nidNumber || '',
+                                  lat: driver.lat ?? 24.4536,
+                                  lng: driver.lng ?? 90.5479,
+                                  isOnline: driver.isOnline !== false,
+                                  allVerified: Boolean(driver.licenseVerified && driver.phoneVerified && driver.nidVerified)
+                                });
+                                setIsDriverModalOpen(true);
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg cursor-pointer"
+                              title="চালকের তথ্য ও স্ট্যান্ড এডিট করুন"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onDeleteDriver(driver.id, driver.name)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                            title="মুছে ফেলুন"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="text-xs text-slate-600 space-y-1.5 my-2">
@@ -2973,14 +3136,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   type="text"
                   placeholder="যেমন: 24.4536, 90.5479 (Google Maps থেকে কপি করা)"
                   onChange={(e) => {
-                    const val = e.target.value.trim();
-                    if (!val) return;
-                    const parts = val.split(/[,\s]+/).map(Number).filter(n => !isNaN(n));
-                    if (parts.length >= 2) {
+                    const parsed = parseGoogleMapsCoordinates(e.target.value);
+                    if (parsed) {
                       setStandForm(prev => ({
                         ...prev,
-                        lat: parts[0],
-                        lng: parts[1]
+                        lat: parsed.lat,
+                        lng: parsed.lng
                       }));
                     }
                   }}
@@ -3367,16 +3528,14 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   <label className="font-bold text-slate-700 block mb-1">ক্যাটাগরি / ধরন:</label>
                   <select
                     value={placeForm.category}
-                    onChange={(e) => setPlaceForm({ ...placeForm, category: e.target.value as any })}
+                    onChange={(e) => setPlaceForm({ ...placeForm, category: e.target.value as PlaceCategory })}
                     className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
-                    <option value="স্ট্যান্ড">স্ট্যান্ড পয়েন্ট</option>
-                    <option value="মোড়">চৌরাস্তা / মোড়</option>
-                    <option value="বাজার">বাজার / হাট</option>
-                    <option value="হাসপাতাল">হাসপাতাল / স্বাস্থ্যকেন্দ্র</option>
-                    <option value="শিক্ষা প্রতিষ্ঠান">স্কুল / কলেজ</option>
-                    <option value="প্রশাসন">থানা / সরকারি অফিস</option>
-                    <option value="ইউনিয়ন">ইউনিয়ন পরিষদ</option>
+                    {PLACE_CATEGORY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -3406,28 +3565,17 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                 </label>
                 <input
                   type="text"
+                  value={placeCoordPaste}
                   placeholder="যেমন: 24.4536, 90.5479 (Google Maps থেকে কপি করা)"
                   onChange={(e) => {
-                    const val = e.target.value.trim();
-                    if (!val) return;
-                    let lat = 0;
-                    let lng = 0;
-                    const urlMatch = val.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-                    if (urlMatch) {
-                      lat = parseFloat(urlMatch[1]);
-                      lng = parseFloat(urlMatch[2]);
-                    } else {
-                      const parts = val.split(/[,\s]+/).map(Number).filter(n => !isNaN(n));
-                      if (parts.length >= 2) {
-                        lat = parts[0];
-                        lng = parts[1];
-                      }
-                    }
-                    if (lat && lng) {
+                    const raw = e.target.value;
+                    setPlaceCoordPaste(raw);
+                    const parsed = parseGoogleMapsCoordinates(raw);
+                    if (parsed) {
                       setPlaceForm(prev => ({
                         ...prev,
-                        lat,
-                        lng
+                        lat: parsed.lat,
+                        lng: parsed.lng
                       }));
                     }
                   }}
@@ -3479,6 +3627,231 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-xs cursor-pointer"
                 >
                   {editingPlace ? 'আপডেট করুন' : 'সংরক্ষণ করুন'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* SUB-MODAL: DRIVER ADD / EDIT (DIRECT LIVE MAP SYNC)            */}
+      {/* ============================================================== */}
+      {isDriverModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3.5">
+              <h3 className="font-extrabold text-slate-900 text-sm sm:text-base flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-emerald-600" />
+                <span>{editingDriver ? 'নিবন্ধিত চালকের তথ্য সম্পাদনা' : 'নতুন নিবন্ধিত চালক যোগ করুন'}</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsDriverModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+                aria-label="বন্ধ করুন"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitDriver} className="space-y-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">চালকের পূর্ণ নাম: *</label>
+                  <input
+                    type="text"
+                    value={driverForm.name}
+                    onChange={(e) => setDriverForm({ ...driverForm, name: e.target.value })}
+                    placeholder="যেমন: মো. করিম মিয়া"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">মোবাইল / WhatsApp নম্বর: *</label>
+                  <input
+                    type="tel"
+                    value={driverForm.phone}
+                    onChange={(e) => setDriverForm({ ...driverForm, phone: e.target.value })}
+                    placeholder="01XXXXXXXXX"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">যানবাহনের ধরন (ক্যাটাগরি): *</label>
+                  <select
+                    value={driverForm.category}
+                    onChange={(e) => setDriverForm({ ...driverForm, category: e.target.value })}
+                    className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    required
+                  >
+                    {categories.filter((c) => c.id !== 'all').map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.nameBengali}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">নির্ধারিত স্ট্যান্ড (ম্যাপ অবস্থান): *</label>
+                  <select
+                    value={driverForm.standName}
+                    onChange={(e) => {
+                      const chosenName = e.target.value;
+                      const matched = stands.find((s) => s.bengaliName === chosenName);
+                      setDriverForm((prev) => ({
+                        ...prev,
+                        standName: chosenName,
+                        lat: matched?.lat ?? prev.lat,
+                        lng: matched?.lng ?? prev.lng
+                      }));
+                    }}
+                    className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    required
+                  >
+                    {stands.map((s) => (
+                      <option key={s.id} value={s.bengaliName}>
+                        {s.bengaliName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">গাড়ির মডেল / নাম:</label>
+                  <input
+                    type="text"
+                    value={driverForm.vehicleModel}
+                    onChange={(e) => setDriverForm({ ...driverForm, vehicleModel: e.target.value })}
+                    placeholder="যেমন: বাজাজ আরই সিএনজি"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">নম্বরপ্লেট:</label>
+                  <input
+                    type="text"
+                    value={driverForm.plateNumber}
+                    onChange={(e) => setDriverForm({ ...driverForm, plateNumber: e.target.value })}
+                    placeholder="যেমন: ময়মনসিংহ-থ-১২-৩৪৫৬"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">BRTA লাইসেন্স নম্বর:</label>
+                  <input
+                    type="text"
+                    value={driverForm.licenseNumber}
+                    onChange={(e) => setDriverForm({ ...driverForm, licenseNumber: e.target.value })}
+                    placeholder="যেমন: MMS26010NP178"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">NID নম্বর:</label>
+                  <input
+                    type="text"
+                    value={driverForm.nidNumber}
+                    onChange={(e) => setDriverForm({ ...driverForm, nidNumber: e.target.value })}
+                    placeholder="১০ বা ১৭ ডিজিট NID"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* Google Maps Coordinates Quick Paste Helper */}
+              <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+                <label className="font-bold text-xs text-emerald-900 block mb-1">
+                  🌐 গুগল ম্যাপস কোঅর্ডিনেট পেস্ট করুন (অটো ডিটেক্ট):
+                </label>
+                <input
+                  type="text"
+                  value={driverCoordPaste}
+                  placeholder="যেমন: 24.4536, 90.5479 (ঐচ্ছিক - স্ট্যান্ড থেকে অটো বসে)"
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setDriverCoordPaste(raw);
+                    const parsed = parseGoogleMapsCoordinates(raw);
+                    if (parsed) {
+                      setDriverForm((prev) => ({
+                        ...prev,
+                        lat: parsed.lat,
+                        lng: parsed.lng
+                      }));
+                    }
+                  }}
+                  className="w-full px-3 py-1.5 bg-white border border-emerald-300 rounded-lg text-xs font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">অক্ষাংশ (Latitude):</label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={driverForm.lat}
+                    onChange={(e) => setDriverForm({ ...driverForm, lat: parseFloat(e.target.value) || 24.4536 })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">দ্রাঘিমাংশ (Longitude):</label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={driverForm.lng}
+                    onChange={(e) => setDriverForm({ ...driverForm, lng: parseFloat(e.target.value) || 90.5479 })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4 pt-1 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={driverForm.isOnline}
+                    onChange={(e) => setDriverForm({ ...driverForm, isOnline: e.target.checked })}
+                    className="w-4 h-4 text-emerald-600 rounded"
+                  />
+                  <span className="text-xs font-bold text-slate-800">সরাসরি অনলাইন (ম্যাপে প্রদর্শন করুন)</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={driverForm.allVerified}
+                    onChange={(e) => setDriverForm({ ...driverForm, allVerified: e.target.checked })}
+                    className="w-4 h-4 text-emerald-600 rounded"
+                  />
+                  <span className="text-xs font-bold text-slate-800">৩-ধাপের নিরাপত্তা অনুমোদিত (৩/৩ ✅)</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDriverModalOpen(false)}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-xs cursor-pointer"
+                >
+                  {editingDriver ? 'আপডেট করুন' : 'চালক যোগ ও ম্যাপে সিঙ্ক করুন'}
                 </button>
               </div>
             </form>

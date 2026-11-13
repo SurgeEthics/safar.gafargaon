@@ -94,7 +94,7 @@ import { AutoMarqueeText } from './components/AutoMarqueeText';
 import { PauseMarqueeText } from './components/PauseMarqueeText';
 import { collection, doc, setDoc, getDoc, getDocs, getDocFromServer, getDocsFromServer, onSnapshot, updateDoc, deleteDoc, query, where, orderBy, limit, runTransaction } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
-import { stripUndefinedFields, mergeRemoteSettingsWithDefaults, shouldSeedDefaultCollection } from './utils/adminPersistence';
+import { stripUndefinedFields, mergeRemoteSettingsWithDefaults, shouldSeedDefaultCollection, computeStandVehicleTypesSummary, resolveVehicleCategoryMeta } from './utils/adminPersistence';
 
 import { LocationAutocomplete } from './components/LocationAutocomplete';
 import { GAFARGAON_PLACES, resolveLocationCoordinates, GafargaonPlace } from './data/gafargaonPlaces';
@@ -1085,8 +1085,8 @@ function recordDriverTripLog(driverPhone: string | undefined, driverId: string |
   }
 }
 
-// Category Badge Logo Component (Ensuring Red Medical Cross '+' for Ambulance)
-function CategoryBadgeLogo({ category, size = 'md' }: { category: VehicleCategory; size?: 'compact' | 'sm' | 'md' | 'lg' }) {
+// Category Badge Logo Component (Ensuring Red Medical Cross '+' for Ambulance & dynamic custom categories)
+function CategoryBadgeLogo({ category, size = 'md', categoryItem }: { category: VehicleCategory; size?: 'compact' | 'sm' | 'md' | 'lg'; categoryItem?: VehicleCategoryItem }) {
   const sizeClasses = {
     compact: 'w-5 h-5 sm:w-6 sm:h-6 text-[10px]',
     sm: 'w-7 h-7 sm:w-8 sm:h-8 text-xs',
@@ -1101,7 +1101,11 @@ function CategoryBadgeLogo({ category, size = 'md' }: { category: VehicleCategor
     lg: 'w-5 h-5 sm:w-6 sm:h-6'
   }[size];
 
-  switch (category) {
+  const resolvedKey = categoryItem?.iconType && ['ambulance', 'cng', 'auto', 'car', 'microbus', 'bike', 'fire'].includes(category)
+    ? category
+    : category;
+
+  switch (resolvedKey) {
     case 'all':
       return (
         <div 
@@ -1169,12 +1173,18 @@ function CategoryBadgeLogo({ category, size = 'md' }: { category: VehicleCategor
           <Flame className={`${iconSizes} text-orange-600`} />
         </div>
       );
-    default:
+    default: {
+      const meta = resolveVehicleCategoryMeta(category, categoryItem ? [categoryItem] : undefined);
       return (
-        <div className={`${sizeClasses} rounded-md sm:rounded-lg bg-slate-100 text-slate-700 border border-slate-300 flex items-center justify-center font-bold shadow-xs shrink-0`}>
-          <Navigation className={`${iconSizes}`} />
+        <div
+          className={`${sizeClasses} rounded-md sm:rounded-lg text-white flex items-center justify-center font-bold shadow-xs shrink-0`}
+          style={{ backgroundColor: categoryItem?.accentColor || meta.color || '#059669' }}
+          title={categoryItem?.nameBengali || meta.name}
+        >
+          <span>{meta.symbol}</span>
         </div>
       );
+    }
   }
 }
 
@@ -1287,7 +1297,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const hasOutdatedGps = parsed.some((d: any) => d.lat > 24.52 || d.lat < 24.2);
+          const hasOutdatedGps = parsed.some((d: any) => d.lat > 24.65 || d.lat < 24.15);
           if (!hasOutdatedGps) {
             return parsed
               .filter((d: any) => d.id !== 'drv-1793153816766' && !(d.name === 'TASNIMUL KABEER' && d.standName?.includes('ঈমামবাড়ি')) && !deletedIds.includes(d.id))
@@ -3312,7 +3322,8 @@ export default function App() {
             area: area,
             lat: typeof data.lat === 'number' ? data.lat : 24.4536,
             lng: typeof data.lng === 'number' ? data.lng : 90.5479,
-            isPopular: data.isPopular ?? true
+            isPopular: data.isPopular ?? true,
+            ...(data.showOnMap !== undefined ? { showOnMap: Boolean(data.showOnMap) } : {})
           });
         });
         setPopularPlaces(firestorePlaces);
@@ -5255,11 +5266,11 @@ export default function App() {
       });
 
       const marker = L.marker([stand.lat, stand.lng], { icon: standIcon });
-      const currentStandCount = getStandDriverCount(stand.bengaliName);
+      const standSummary = computeStandVehicleTypesSummary(stand.bengaliName, categories, drivers);
       marker.bindPopup(`
         <div style="font-family: 'Hind Siliguri', sans-serif; padding: 4px; min-width: 175px;">
           <h4 style="font-weight: 700; color: #065f46; margin: 0 0 4px 0; font-size: 14px;">${stand.bengaliName}</h4>
-          <p style="font-size: 12px; color: #334155; margin: 0 0 6px 0;">সক্রিয় যানবাহন ও চালক: <b>${currentStandCount} জন</b></p>
+          <p style="font-size: 12px; color: #334155; margin: 0 0 6px 0;">সক্রিয় যানবাহন: <b>${toBengaliNumber(standSummary.typeCount)} প্রকার</b></p>
           <span style="display: inline-block; background-color: #ecfdf5; color: #047857; font-size: 11px; padding: 2px 7px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: 700;">সফর ভেরিফাইড স্ট্যান্ড</span>
         </div>
       `);
@@ -5659,7 +5670,7 @@ export default function App() {
       return;
     }
 
-    const catObj = VEHICLE_CATEGORIES.find(c => c.id === registerForm.category);
+    const catObj = categories.find(c => c.id === registerForm.category) || VEHICLE_CATEGORIES.find(c => c.id === registerForm.category);
     const targetStand = stands.find(s => s.bengaliName === registerForm.standName) || stands[0];
     const newRegAppId = `SAFAR-REG-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -8201,6 +8212,7 @@ export default function App() {
                                 lng: s.lng,
                                 driverCount: s.activeDrivers
                               }))}
+                              categories={categories}
                               liveDrivers={serverState.drivers}
                               livePassengers={serverState.passengers}
                               connectionStatus={serverState.status}
@@ -8212,6 +8224,7 @@ export default function App() {
                               onStartGpsTracking={startGpsTracking}
                               userRole="driver"
                               allPlaces={allAutocompletePlaces}
+                              popularPlaces={popularPlaces}
                               onSaveCustomPlace={handleSavePopularPlace}
                               onSaveCustomStand={handleSaveStandFromMap}
                               onSelectDriver={() => {}}
@@ -8468,7 +8481,7 @@ export default function App() {
                             >
                               <div className="flex items-center gap-1 sm:gap-1.5 md:gap-2 min-w-0">
                                 {/* Compact Category Logo */}
-                                <CategoryBadgeLogo category={cat.id} size="compact" />
+                                <CategoryBadgeLogo category={cat.id} size="compact" categoryItem={cat} />
                                 <div className="min-w-0">
                                   <span className={`text-[10px] sm:text-xs md:text-sm font-bold truncate block ${
                                     isSelected ? 'text-emerald-950 font-extrabold' : 'text-slate-800'
@@ -8584,7 +8597,7 @@ export default function App() {
                                       className="w-7 h-7 rounded-lg object-cover border border-emerald-400 shrink-0 shadow-2xs"
                                     />
                                   ) : null}
-                                  <CategoryBadgeLogo category={driver.category} size="compact" />
+                                  <CategoryBadgeLogo category={driver.category} size="compact" categoryItem={categories.find(c => c.id === driver.category)} />
                                 </div>
                                 <div className="flex items-center gap-0.5 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded text-amber-800 text-[9px] sm:text-[9.5px] font-bold">
                                   <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
@@ -8731,6 +8744,7 @@ export default function App() {
                       lng: s.lng,
                       driverCount: s.activeDrivers
                     }))}
+                    categories={categories}
                     liveDrivers={serverState.drivers}
                     livePassengers={serverState.passengers}
                     connectionStatus={serverState.status}
@@ -8771,6 +8785,7 @@ export default function App() {
                       status: activeBooking.status
                     } : null}
                     allPlaces={allAutocompletePlaces}
+                    popularPlaces={popularPlaces}
                     externalPinRequest={mapPinRequest}
                     onSaveCustomPlace={handleSavePopularPlace}
                     onSaveCustomStand={handleSaveStandFromMap}
@@ -10967,8 +10982,48 @@ export default function App() {
           }));
           showAdminToastMessage('চালকের সক্রিয়তা স্ট্যাটাস পরিবর্তন হয়েছে');
         }}
+        onSaveDriver={(driverData, isEdit) => {
+          const cleanDriver = stripUndefinedFields(driverData);
+          setDrivers(prev => {
+            const next = isEdit
+              ? prev.map(d => d.id === cleanDriver.id ? cleanDriver : d)
+              : [cleanDriver, ...prev];
+            try {
+              localStorage.setItem('safar_drivers_v5', JSON.stringify(next));
+            } catch {}
+            return next;
+          });
+          setDoc(
+            doc(db, 'drivers', cleanDriver.id),
+            stripUndefinedFields({
+              ...cleanDriver,
+              nameBn: cleanDriver.name,
+              licensePlate: cleanDriver.plateNumber,
+              photoUrl: cleanDriver.driverPhoto || '',
+              isVerified: Boolean(cleanDriver.licenseVerified && cleanDriver.nidVerified && cleanDriver.phoneVerified),
+              updatedAt: new Date().toISOString()
+            }),
+            { merge: true }
+          ).catch(err => console.warn('Firestore driver save error:', err));
+          showAdminToastMessage(
+            isEdit
+              ? `চালক '${cleanDriver.name}' আপডেট ও ম্যাপে সিঙ্ক হয়েছে!`
+              : `নতুন চালক '${cleanDriver.name}' যুক্ত ও ম্যাপে প্রদর্শিত হয়েছে!`
+          );
+        }}
         onDeleteDriver={(driverId, name) => {
-          setDrivers(prev => prev.filter(d => d.id !== driverId));
+          setDrivers(prev => {
+            const next = prev.filter(d => d.id !== driverId);
+            try {
+              localStorage.setItem('safar_drivers_v5', JSON.stringify(next));
+              const deletedIds: string[] = JSON.parse(localStorage.getItem('safar_deleted_driver_ids_v1') || '[]');
+              if (!deletedIds.includes(driverId)) {
+                deletedIds.push(driverId);
+                localStorage.setItem('safar_deleted_driver_ids_v1', JSON.stringify(deletedIds));
+              }
+            } catch {}
+            return next;
+          });
           deleteDoc(doc(db, 'drivers', driverId)).catch(err => console.warn('Firestore driver delete error:', err));
           showAdminToastMessage(`চালক '${name}' রিমুভ করা হয়েছে`);
         }}

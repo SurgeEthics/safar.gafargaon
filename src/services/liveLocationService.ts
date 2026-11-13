@@ -84,25 +84,7 @@ class LiveLocationService {
   }
 
   public syncDriversFromCatalog(catalogDrivers: any[]): void {
-    if (!catalogDrivers || catalogDrivers.length === 0) return;
-    
-    const current = this.state.drivers;
-    if (current.length === catalogDrivers.length) {
-      const hasMeaningfulChange = catalogDrivers.some((d: any, idx: number) => {
-        const cur = current[idx];
-        if (!cur) return true;
-        const dLat = d.lat || 24.4340;
-        const dLng = d.lng || 90.5510;
-        const dOnline = d.isOnline !== false;
-        return (
-          cur.id !== d.id ||
-          cur.isOnline !== dOnline ||
-          Math.abs(cur.lat - dLat) > 0.0001 ||
-          Math.abs(cur.lng - dLng) > 0.0001
-        );
-      });
-      if (!hasMeaningfulChange) return;
-    }
+    if (!catalogDrivers) return;
 
     const liveDrivers: LiveDriverLocation[] = catalogDrivers
       .filter((d: any) => d.isOnline !== false)
@@ -114,14 +96,33 @@ class LiveLocationService {
         vehicleModel: d.vehicleModel || d.vehicleName || '',
         plateNumber: d.plateNumber || d.licensePlate || '',
         standName: d.standName || '',
-        lat: d.lat || 24.4340,
-        lng: d.lng || 90.5510,
+        lat: d.lat || 24.4536,
+        lng: d.lng || 90.5479,
         speed: d.approxSpeedKmh || 25,
         rating: d.rating || 4.9,
         isOnline: d.isOnline !== false,
         isLiveEdge: true,
         updatedAt: new Date().toISOString()
       }));
+
+    const current = this.state.drivers;
+    if (current.length === liveDrivers.length) {
+      const hasMeaningfulChange = liveDrivers.some((d, idx) => {
+        const cur = current[idx];
+        if (!cur) return true;
+        return (
+          cur.id !== d.id ||
+          cur.name !== d.name ||
+          cur.category !== d.category ||
+          cur.vehicleModel !== d.vehicleModel ||
+          cur.standName !== d.standName ||
+          cur.isOnline !== d.isOnline ||
+          Math.abs(cur.lat - d.lat) > 0.0001 ||
+          Math.abs(cur.lng - d.lng) > 0.0001
+        );
+      });
+      if (!hasMeaningfulChange) return;
+    }
 
     this.state.drivers = liveDrivers;
     this.state.status = 'connected';

@@ -19,13 +19,32 @@ import {
   Unlock,
   ChevronDown,
   ChevronUp,
-  X
+  X,
+  Crosshair,
+  Globe,
+  Satellite,
+  Map as MapIcon,
+  PlusCircle,
+  Loader2
 } from 'lucide-react';
 import { Stand, Driver, VehicleCategory } from '../types';
 import { LiveDriverLocation, LivePassengerLocation } from '../services/liveLocationService';
 import { toBengaliNumber, calculateDistanceKm } from '../utils/calculator';
+import {
+  GAFARGAON_CORE_BOUNDS,
+  GAFARGAON_SERVICE_BOUNDS,
+  GAFARGAON_CENTER,
+  PlaceReferenceCandidate,
+  clampToGafargaonServiceArea,
+  isValidCoordinatePair
+} from '../utils/gafargaonGeo';
+import { reverseGeocodeFree } from '../services/freeMapSearchService';
+import { GAFARGAON_UNIONS } from '../data/gafargaonUnionData';
+import { buildAdminPlaceAndStandPayloads } from '../utils/adminPersistence';
 import { AutoMarqueeText } from './AutoMarqueeText';
 import { PauseMarqueeText } from './PauseMarqueeText';
+
+export type MapLayerMode = 'standard' | 'satellite';
 
 interface GafargaonMapProps {
   // Static/Fallback drivers & stands
@@ -87,9 +106,34 @@ interface GafargaonMapProps {
   isTripActive?: boolean;
   activeDriverId?: string;
 
-  onSelectPickupPlace?: (placeName: string) => void;
-  onSelectDestPlace?: (placeName: string) => void;
+  onSelectPickupPlace?: (placeName: string, coords?: { lat: number; lng: number }) => void;
+  onSelectDestPlace?: (placeName: string, coords?: { lat: number; lng: number }) => void;
   onClearRoute?: () => void;
+
+  // Expanded area places & interactive pin-to-save support
+  allPlaces?: PlaceReferenceCandidate[];
+  externalPinRequest?: { mode: 'none' | 'pickup' | 'dest'; triggerId: number };
+  onSaveCustomPlace?: (place: {
+    id: string;
+    name: string;
+    bengaliName: string;
+    category: 'স্ট্যান্ড' | 'মোড়' | 'বাজার' | 'হাসপাতাল' | 'শিক্ষা প্রতিষ্ঠান' | 'প্রশাসন' | 'ইউনিয়ন';
+    area: string;
+    lat: number;
+    lng: number;
+    isPopular?: boolean;
+  }) => void;
+  onSaveCustomStand?: (stand: {
+    id: string;
+    name: string;
+    bengaliName: string;
+    area: string;
+    location: string;
+    lat: number;
+    lng: number;
+    activeDrivers: number;
+    isPopular?: boolean;
+  }) => void;
 }
 
 export const GafargaonMap: React.FC<GafargaonMapProps> = ({
@@ -118,18 +162,55 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   onSelectDestPlace,
   onClearRoute,
   isTripActive = false,
-  activeDriverId
+  activeDriverId,
+  allPlaces = [],
+  externalPinRequest,
+  onSaveCustomPlace,
+  onSaveCustomStand
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
+  const baseTileLayerRef = useRef<L.TileLayer | null>(null);
+  const overlayTileLayerRef = useRef<L.TileLayer | null>(null);
+  const overlayTransportLayerRef = useRef<L.TileLayer | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const pinMarkerRef = useRef<L.Marker | null>(null);
   const userAccuracyCircleRef = useRef<L.Circle | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const routePolylineRef = useRef<L.Polyline | null>(null);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [filterMode, setFilterMode] = useState<'all' | 'drivers' | 'passengers'>('all');
+  const [mapLayer, setMapLayer] = useState<MapLayerMode>('standard');
   const [isLandscapeMode, setIsLandscapeMode] = useState<boolean>(false);
+
+  // Interactive Tap-to-Pin state
+  const [pinMode, setPinMode] = useState<'none' | 'pickup' | 'dest'>('none');
+  const [droppedPin, setDroppedPin] = useState<{
+    lat: number;
+    lng: number;
+    title: string;
+    subtitle: string;
+    unionName: string;
+    isResolving: boolean;
+  } | null>(null);
+  const [isAdminPinSaveModalOpen, setIsAdminPinSaveModalOpen] = useState<boolean>(false);
+  const [adminPinSaveTarget, setAdminPinSaveTarget] = useState<'both' | 'place' | 'stand'>('both');
+  const [adminPinForm, setAdminPinForm] = useState<{
+    bengaliName: string;
+    name: string;
+    category: 'স্ট্যান্ড' | 'মোড়' | 'বাজার' | 'হাসপাতাল' | 'শিক্ষা প্রতিষ্ঠান' | 'প্রশাসন' | 'ইউনিয়ন';
+    area: string;
+    lat: number;
+    lng: number;
+  }>({
+    bengaliName: '',
+    name: '',
+    category: 'স্ট্যান্ড',
+    area: GAFARGAON_UNIONS[0].nameBengali,
+    lat: 24.4536,
+    lng: 90.5479
+  });
   
   // Track user manual zoom/pan interaction (fixes the 5-6s snap-back/auto-zoom glitch)
   const [userHasInteracted, setUserHasInteracted] = useState<boolean>(false);
@@ -155,19 +236,41 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   const lastFittedRouteKeyRef = useRef<string>('');
   const lastFittedBookingIdRef = useRef<string>('');
 
+  // Refs so Leaflet click handler always accesses fresh callbacks/state without re-creating map
+  const pinModeRef = useRef(pinMode);
+  pinModeRef.current = pinMode;
+  const isScrollLockedRef = useRef(isScrollLocked);
+  isScrollLockedRef.current = isScrollLocked;
+  const isTripActiveRef = useRef(isTripCurrentlyActive);
+  isTripActiveRef.current = isTripCurrentlyActive;
+  const allPlacesRef = useRef(allPlaces);
+  allPlacesRef.current = allPlaces;
+  const onSelectPickupPlaceRef = useRef(onSelectPickupPlace);
+  onSelectPickupPlaceRef.current = onSelectPickupPlace;
+  const onSelectDestPlaceRef = useRef(onSelectDestPlace);
+  onSelectDestPlaceRef.current = onSelectDestPlace;
+
   // Gafargaon Center Coordinates (Exact Google Maps Location)
-  const DEFAULT_CENTER: [number, number] = [24.4536, 90.5479];
+  const DEFAULT_CENTER: [number, number] = [GAFARGAON_CENTER.lat, GAFARGAON_CENTER.lng];
   const DEFAULT_ZOOM = 14;
 
   const isValidLatLng = (lat: unknown, lng: unknown): lat is number =>
-    typeof lat === 'number' &&
-    typeof lng === 'number' &&
-    Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    Math.abs(lat) <= 90 &&
-    Math.abs(lng) <= 180;
+    isValidCoordinatePair(lat, lng);
 
-  // 1. Initialize Leaflet Map
+  // Sync external Tap-to-Pin triggers (e.g. from Pickup/Destination Autocomplete)
+  useEffect(() => {
+    if (externalPinRequest && externalPinRequest.triggerId > 0) {
+      if (externalPinRequest.mode === 'pickup' || externalPinRequest.mode === 'dest') {
+        setPinMode(externalPinRequest.mode);
+        setIsScrollLocked(false);
+        setDroppedPin(null);
+      } else {
+        setPinMode('none');
+      }
+    }
+  }, [externalPinRequest]);
+
+  // 1. Initialize Leaflet Map with strict Gafargaon-Pagla + 3-4km border bounds
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -176,21 +279,50 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
         (mapContainerRef.current as any)._leaflet_id = null;
       }
 
+      const serviceBounds = L.latLngBounds(
+        [GAFARGAON_SERVICE_BOUNDS.south, GAFARGAON_SERVICE_BOUNDS.west],
+        [GAFARGAON_SERVICE_BOUNDS.north, GAFARGAON_SERVICE_BOUNDS.east]
+      );
+
       const map = L.map(mapContainerRef.current, {
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
+        minZoom: 12,
+        maxZoom: 19,
+        maxBounds: serviceBounds,
+        maxBoundsViscosity: 1.0,
+        attributionControl: false,
         zoomControl: true,
         scrollWheelZoom: !isScrollLocked,
         touchZoom: !isScrollLocked,
         dragging: !isScrollLocked
       });
 
-      // Clear OpenStreetMap Standard Tiles
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap | সফর গফরগাঁও লাইভ',
-        maxZoom: 19,
-        minZoom: 11
+      // Service Zone Boundary Visual Guide (Gafargaon + Pagla + 3-4km border buffer)
+      L.rectangle(serviceBounds, {
+        color: '#0d9488',
+        weight: 2,
+        dashArray: '8, 6',
+        fillColor: '#0d9488',
+        fillOpacity: 0.02,
+        interactive: false
       }).addTo(map);
+
+      // Core Upazila Reference Outline
+      L.rectangle(
+        [
+          [GAFARGAON_CORE_BOUNDS.south, GAFARGAON_CORE_BOUNDS.west],
+          [GAFARGAON_CORE_BOUNDS.north, GAFARGAON_CORE_BOUNDS.east]
+        ],
+        {
+          color: '#059669',
+          weight: 1.2,
+          opacity: 0.35,
+          dashArray: '4, 6',
+          fill: false,
+          interactive: false
+        }
+      ).addTo(map);
 
       const markersGroup = L.layerGroup().addTo(map);
       markersLayerRef.current = markersGroup;
@@ -208,6 +340,58 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       map.on('zoomstart', handleUserInteraction);
       map.on('dragstart', handleUserInteraction);
 
+      // Interactive Tap-to-Pin on Map Click
+      map.on('click', async (ev: L.LeafletMouseEvent) => {
+        const currentPinMode = pinModeRef.current;
+        if (isScrollLockedRef.current && currentPinMode === 'none') {
+          return;
+        }
+        if (isTripActiveRef.current && currentPinMode === 'none') {
+          return;
+        }
+
+        const clamped = clampToGafargaonServiceArea(ev.latlng.lat, ev.latlng.lng);
+        setDroppedPin({
+          lat: clamped.lat,
+          lng: clamped.lng,
+          title: 'লোকেশন শনাক্ত করা হচ্ছে...',
+          subtitle: `${clamped.lat.toFixed(6)}, ${clamped.lng.toFixed(6)}`,
+          unionName: '',
+          isResolving: true
+        });
+
+        const geo = await reverseGeocodeFree(clamped.lat, clamped.lng, allPlacesRef.current);
+        setDroppedPin({
+          lat: geo.lat,
+          lng: geo.lng,
+          title: geo.title,
+          subtitle: geo.subtitle,
+          unionName: geo.unionName,
+          isResolving: false
+        });
+        const matchedUnion = GAFARGAON_UNIONS.find(
+          (u) =>
+            geo.unionName?.includes(u.nameBengali) ||
+            geo.unionName?.includes(u.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', ''))
+        );
+        setAdminPinForm({
+          bengaliName: geo.title,
+          name: '',
+          category: 'স্ট্যান্ড',
+          area: matchedUnion ? matchedUnion.nameBengali : GAFARGAON_UNIONS[0].nameBengali,
+          lat: Number(geo.lat.toFixed(6)),
+          lng: Number(geo.lng.toFixed(6))
+        });
+
+        if (currentPinMode === 'pickup' && onSelectPickupPlaceRef.current) {
+          onSelectPickupPlaceRef.current(geo.title, { lat: geo.lat, lng: geo.lng });
+          setPinMode('none');
+        } else if (currentPinMode === 'dest' && onSelectDestPlaceRef.current) {
+          onSelectDestPlaceRef.current(geo.title, { lat: geo.lat, lng: geo.lng });
+          setPinMode('none');
+        }
+      });
+
       // Invalidate map size after short delay to prevent any gray-tile artifacts
       setTimeout(() => {
         map.invalidateSize();
@@ -221,6 +405,59 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       }
     };
   }, []);
+
+  // Switch Base & Hybrid Overlay Tile Layers Dynamically (100% Free Multi-Layer, Zero Watermark)
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (baseTileLayerRef.current) {
+      map.removeLayer(baseTileLayerRef.current);
+      baseTileLayerRef.current = null;
+    }
+    if (overlayTileLayerRef.current) {
+      map.removeLayer(overlayTileLayerRef.current);
+      overlayTileLayerRef.current = null;
+    }
+    if (overlayTransportLayerRef.current) {
+      map.removeLayer(overlayTransportLayerRef.current);
+      overlayTransportLayerRef.current = null;
+    }
+
+    if (mapLayer === 'satellite') {
+      baseTileLayerRef.current = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 19,
+          minZoom: 12
+        }
+      ).addTo(map);
+      overlayTransportLayerRef.current = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 19,
+          minZoom: 12,
+          pane: 'overlayPane'
+        }
+      ).addTo(map);
+      overlayTileLayerRef.current = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 19,
+          minZoom: 12,
+          pane: 'overlayPane'
+        }
+      ).addTo(map);
+    } else {
+      baseTileLayerRef.current = L.tileLayer(
+        'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        {
+          maxZoom: 19,
+          minZoom: 12
+        }
+      ).addTo(map);
+    }
+  }, [mapLayer]);
 
   // Dynamically Toggle Leaflet Touch & Scroll Dragging
   useEffect(() => {
@@ -243,6 +480,33 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       if ((map as any).tapHold) (map as any).tapHold.enable();
     }
   }, [isScrollLocked]);
+
+  // Render Dropped Interactive Pin Marker
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    if (pinMarkerRef.current) {
+      pinMarkerRef.current.remove();
+      pinMarkerRef.current = null;
+    }
+    if (!droppedPin) return;
+
+    const pinIcon = L.divIcon({
+      className: 'custom-tap-pin-marker',
+      html: `
+        <div style="position: relative; pointer-events: none;">
+          <div style="position: absolute; width: 46px; height: 46px; border-radius: 50%; background: rgba(13, 148, 136, 0.35); animation: ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite; top: -7px; left: -7px;"></div>
+          <div style="background-color: #0f766e; color: white; width: 32px; height: 32px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); display: flex; align-items: center; justify-content: center; box-shadow: 0 5px 14px rgba(0,0,0,0.45); border: 2.5px solid #ffffff;">
+            <span style="transform: rotate(45deg); font-size: 14px; line-height: 1;">📍</span>
+          </div>
+        </div>
+      `,
+      iconSize: [32, 32],
+      iconAnchor: [16, 32]
+    });
+
+    pinMarkerRef.current = L.marker([droppedPin.lat, droppedPin.lng], { icon: pinIcon }).addTo(map);
+  }, [droppedPin]);
 
   // Handle Resize on fullscreen toggle
   useEffect(() => {
@@ -999,7 +1263,33 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5 text-emerald-900 font-extrabold text-xs sm:text-sm">
             <Navigation className="w-4 h-4 text-emerald-600" />
-            <span>গফরগাঁও লাইভ ম্যাপ</span>
+            <span>সফর লাইভ ম্যাপ</span>
+          </div>
+
+          {/* 2-Layer Free Map Switcher: Standard / Satellite Hybrid */}
+          <div className="flex items-center bg-slate-200/90 p-0.5 rounded-lg text-[10.5px] font-bold" role="group" aria-label="ম্যাপ লেয়ার পরিবর্তন">
+            <button
+              type="button"
+              onClick={() => setMapLayer('standard')}
+              className={`px-2 py-1 rounded-md flex items-center gap-1 transition-all cursor-pointer ${
+                mapLayer === 'standard' ? 'bg-white text-emerald-900 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="সাধারণ রাস্তার ম্যাপ (OpenStreetMap)"
+            >
+              <MapIcon className="w-3 h-3" />
+              <span>সাধারণ</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMapLayer('satellite')}
+              className={`px-2 py-1 rounded-md flex items-center gap-1 transition-all cursor-pointer ${
+                mapLayer === 'satellite' ? 'bg-slate-900 text-amber-300 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="স্যাটেলাইট হাইব্রিড ভিউ (বাড়ি, গলি ও গ্রামীণ পথ স্পষ্ট)"
+            >
+              <Satellite className="w-3 h-3" />
+              <span>স্যাটেলাইট</span>
+            </button>
           </div>
 
           {/* Active Trip Mode Badge or Filter Pills */}
@@ -1071,8 +1361,48 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
           )}
         </div>
 
-        {/* Action Buttons: Scroll Lock, Locate Me, Reset, Fullscreen */}
+        {/* Action Buttons: Tap-to-Pin, Scroll Lock, Locate Me, Reset, Fullscreen */}
         <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {/* Direct Tap-to-Pin Controls (when not in active trip) */}
+          {!isTripCurrentlyActive && onSelectPickupPlace && (
+            <button
+              type="button"
+              onClick={() => {
+                const next = pinMode === 'pickup' ? 'none' : 'pickup';
+                setPinMode(next);
+                if (next !== 'none') setIsScrollLocked(false);
+              }}
+              className={`px-2 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
+                pinMode === 'pickup'
+                  ? 'bg-teal-700 text-white border-teal-800 shadow-xs'
+                  : 'bg-teal-50 hover:bg-teal-100 text-teal-900 border-teal-300'
+              }`}
+              title="ম্যাপের যেকোনো জায়গায় ট্যাপ করে পিকআপ পয়েন্ট সেট করুন"
+            >
+              <Crosshair className="w-3.5 h-3.5" />
+              <span>পিকআপ পিন</span>
+            </button>
+          )}
+          {!isTripCurrentlyActive && onSelectDestPlace && (
+            <button
+              type="button"
+              onClick={() => {
+                const next = pinMode === 'dest' ? 'none' : 'dest';
+                setPinMode(next);
+                if (next !== 'none') setIsScrollLocked(false);
+              }}
+              className={`px-2 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 transition-all cursor-pointer ${
+                pinMode === 'dest'
+                  ? 'bg-red-600 text-white border-red-700 shadow-xs'
+                  : 'bg-red-50 hover:bg-red-100 text-red-800 border-red-200'
+              }`}
+              title="ম্যাপের যেকোনো জায়গায় ট্যাপ করে গন্তব্য সেট করুন"
+            >
+              <MapPin className="w-3.5 h-3.5" />
+              <span>গন্তব্য পিন</span>
+            </button>
+          )}
+
           {/* Scroll Lock Toggle Button */}
           <button
             type="button"
@@ -1135,9 +1465,9 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
       <div 
         className={`relative w-full bg-slate-100 overflow-hidden ${
           isFullscreen ? 'flex-1 h-full' : 'h-[390px] sm:h-[450px] lg:h-[500px]'
-        }`}
+        } ${pinMode !== 'none' ? 'cursor-crosshair' : ''}`}
         onClick={() => {
-          if (isScrollLocked) {
+          if (isScrollLocked && pinMode === 'none') {
             setShowLockNotification(true);
             if (lockNotificationTimerRef.current) clearTimeout(lockNotificationTimerRef.current);
             lockNotificationTimerRef.current = setTimeout(() => setShowLockNotification(false), 3000);
@@ -1145,6 +1475,294 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
         }}
       >
         <div ref={mapContainerRef} className="w-full h-full z-0" />
+
+        {/* Tap-to-Pin Active Guidance Banner */}
+        {pinMode !== 'none' && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`absolute top-2.5 left-1/2 -translate-x-1/2 z-[460] w-[92%] max-w-md px-3 py-2 rounded-2xl shadow-2xl border flex items-center justify-between gap-2 text-white animate-in fade-in ${
+              pinMode === 'pickup' ? 'bg-teal-900/95 border-teal-400' : 'bg-red-900/95 border-red-400'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Crosshair className="w-4 h-4 shrink-0 animate-pulse text-amber-300" />
+              <span className="text-[11.5px] sm:text-xs font-bold leading-snug">
+                {pinMode === 'pickup'
+                  ? 'ম্যাপ বা স্যাটেলাইটে আপনার ঠিক পিকআপ জায়গায় (বাড়ি/মোড়) ট্যাপ করুন'
+                  : 'ম্যাপ বা স্যাটেলাইটে আপনার ঠিক গন্তব্য জায়গায় ট্যাপ করুন'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPinMode('none')}
+              className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-xs font-extrabold shrink-0 cursor-pointer"
+            >
+              বাতিল
+            </button>
+          </div>
+        )}
+
+        {/* Dropped Pin Interactive Action Card */}
+        {droppedPin && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-3 left-2.5 right-16 sm:left-3 sm:right-auto sm:w-[350px] z-[450] bg-white/95 backdrop-blur-md border border-teal-300 rounded-2xl shadow-2xl p-3 animate-in fade-in"
+          >
+            <div className="flex items-start justify-between gap-2 mb-1.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-[10px] font-extrabold text-teal-700 mb-0.5">
+                  <Globe className="w-3 h-3 shrink-0" />
+                  <span className="break-words">{droppedPin.unionName || 'গফরগাঁও–পাগলা এলাকা (+৪ কিমি)'}</span>
+                </div>
+                <h4 className="font-black text-slate-900 text-xs sm:text-sm leading-snug break-words flex items-start gap-1.5">
+                  {droppedPin.isResolving && <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-600 shrink-0 mt-0.5" />}
+                  <span>{droppedPin.title}</span>
+                </h4>
+                <p className="text-[10.5px] text-slate-500 leading-snug break-words mt-0.5">
+                  {droppedPin.subtitle} • ({droppedPin.lat.toFixed(5)}, {droppedPin.lng.toFixed(5)})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDroppedPin(null)}
+                aria-label="পিন কার্ড বন্ধ করুন"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5 mt-2">
+              {onSelectPickupPlace && (
+                <button
+                  type="button"
+                  disabled={droppedPin.isResolving}
+                  onClick={() => {
+                    onSelectPickupPlace(droppedPin.title, { lat: droppedPin.lat, lng: droppedPin.lng });
+                    setDroppedPin(null);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-extrabold flex items-center justify-center gap-1 cursor-pointer transition"
+                >
+                  <MapPin className="w-3.5 h-3.5 shrink-0" />
+                  <span>পিকআপ সেট</span>
+                </button>
+              )}
+              {onSelectDestPlace && (
+                <button
+                  type="button"
+                  disabled={droppedPin.isResolving}
+                  onClick={() => {
+                    onSelectDestPlace(droppedPin.title, { lat: droppedPin.lat, lng: droppedPin.lng });
+                    setDroppedPin(null);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-[11px] font-extrabold flex items-center justify-center gap-1 cursor-pointer transition"
+                >
+                  <Navigation className="w-3.5 h-3.5 shrink-0" />
+                  <span>গন্তব্য সেট</span>
+                </button>
+              )}
+            </div>
+
+            {/* Admin-Only Full Place & Stand Save Trigger directly from Map Pin */}
+            {isAdmin && (onSaveCustomPlace || onSaveCustomStand) && !droppedPin.isResolving && (
+              <div className="mt-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const matchedUnion = GAFARGAON_UNIONS.find(
+                      (u) =>
+                        droppedPin.unionName?.includes(u.nameBengali) ||
+                        droppedPin.unionName?.includes(u.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', ''))
+                    );
+                    setAdminPinForm({
+                      bengaliName: droppedPin.title,
+                      name: '',
+                      category: 'স্ট্যান্ড',
+                      area: matchedUnion ? matchedUnion.nameBengali : GAFARGAON_UNIONS[0].nameBengali,
+                      lat: Number(droppedPin.lat.toFixed(6)),
+                      lng: Number(droppedPin.lng.toFixed(6))
+                    });
+                    setAdminPinSaveTarget('both');
+                    setIsAdminPinSaveModalOpen(true);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 text-[11px] font-black flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition active:scale-98"
+                >
+                  <PlusCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>অ্যাডমিন: নতুন স্থান / স্ট্যান্ড যুক্ত করুন (লাইভ ফায়ারস্টোর)</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Admin-Only Full Place & Stand Creation Modal (Matching Admin Control Panel) */}
+        {isAdmin && isAdminPinSaveModalOpen && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[10050] flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs animate-in fade-in"
+          >
+            <div className="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3.5">
+                <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
+                  <MapPin className="w-4 h-4 text-emerald-600" />
+                  <span>ম্যাপ পিন থেকে নতুন স্থান ও স্ট্যান্ড যোগ (Admin)</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsAdminPinSaveModalOpen(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+                  aria-label="বন্ধ করুন"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!adminPinForm.bengaliName.trim()) return;
+                  const { place, stand } = buildAdminPlaceAndStandPayloads(adminPinForm);
+                  if ((adminPinSaveTarget === 'both' || adminPinSaveTarget === 'place') && onSaveCustomPlace) {
+                    onSaveCustomPlace(place);
+                  }
+                  if ((adminPinSaveTarget === 'both' || adminPinSaveTarget === 'stand') && onSaveCustomStand) {
+                    onSaveCustomStand(stand);
+                  }
+                  setIsAdminPinSaveModalOpen(false);
+                  setDroppedPin(null);
+                }}
+                className="space-y-3 text-xs"
+              >
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">কোথায় যুক্ত হবে (ফায়ারস্টোর লাইভ সিঙ্ক):</label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { id: 'both' as const, label: 'নতুন স্ট্যান্ড + জনপ্রিয় স্থান' },
+                      { id: 'place' as const, label: 'শুধু জনপ্রিয় স্থান' },
+                      { id: 'stand' as const, label: 'শুধু নতুন স্ট্যান্ড' }
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setAdminPinSaveTarget(opt.id)}
+                        className={`px-2 py-2 rounded-xl border text-[10.5px] font-extrabold text-center transition cursor-pointer ${
+                          adminPinSaveTarget === opt.id
+                            ? 'bg-emerald-700 text-white border-emerald-800 shadow-xs'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    বাংলা নাম (ম্যাপ ও ড্রপডাউনে যা দেখাবে): <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={adminPinForm.bengaliName}
+                    onChange={(e) => setAdminPinForm({ ...adminPinForm, bengaliName: e.target.value })}
+                    placeholder="যেমন: পাগলা কলেজ মোড় স্ট্যান্ড"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">ইংরেজি নাম / কোড (ঐচ্ছিক):</label>
+                  <input
+                    type="text"
+                    value={adminPinForm.name}
+                    onChange={(e) => setAdminPinForm({ ...adminPinForm, name: e.target.value })}
+                    placeholder="যেমন: Pagla College Mor Stand"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">ক্যাটাগরি / ধরন:</label>
+                    <select
+                      value={adminPinForm.category}
+                      onChange={(e) => setAdminPinForm({ ...adminPinForm, category: e.target.value as any })}
+                      className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="স্ট্যান্ড">স্ট্যান্ড পয়েন্ট</option>
+                      <option value="মোড়">চৌরাস্তা / মোড়</option>
+                      <option value="বাজার">বাজার / হাট</option>
+                      <option value="হাসপাতাল">হাসপাতাল / স্বাস্থ্যকেন্দ্র</option>
+                      <option value="শিক্ষা প্রতিষ্ঠান">স্কুল / কলেজ</option>
+                      <option value="প্রশাসন">থানা / সরকারি অফিস</option>
+                      <option value="ইউনিয়ন">ইউনিয়ন পরিষদ</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      এলাকা / ইউনিয়ন: <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={adminPinForm.area}
+                      onChange={(e) => setAdminPinForm({ ...adminPinForm, area: e.target.value })}
+                      className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                      required
+                    >
+                      {GAFARGAON_UNIONS.map((u) => (
+                        <option key={u.id} value={u.nameBengali}>
+                          {u.nameBengali} ({u.thana === 'পাগলা থানা' ? 'পাগলা' : 'সদর'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-200">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">অক্ষাংশ (Latitude): *</label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={adminPinForm.lat}
+                      onChange={(e) => setAdminPinForm({ ...adminPinForm, lat: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">দ্রাঘিমাংশ (Longitude): *</label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={adminPinForm.lng}
+                      onChange={(e) => setAdminPinForm({ ...adminPinForm, lng: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAdminPinSaveModalOpen(false)}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+                  >
+                    বাতিল
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-xs cursor-pointer"
+                  >
+                    ফায়ারস্টোরে লাইভ সেভ করুন
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Floating Recenter / Auto-focus Button when user manually zoomed/panned */}
         {userHasInteracted && (
@@ -1437,69 +2055,24 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
         </div>
       </div>
 
-      {/* Bottom Quick Hub Presets */}
+      {/* Bottom Quick Hub Presets: Pouroshova & All 15 Unions */}
       <div className="bg-white/95 border-t border-slate-200 px-3 py-1.5 flex items-center justify-between text-xs flex-wrap gap-1.5 z-10">
-        <div className="flex items-center gap-1 overflow-x-auto text-[11px] w-full sm:w-auto">
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin text-[11px] w-full md:flex-1 pb-0.5">
           <span className="text-slate-500 font-bold text-[10px] shrink-0">দ্রুত ভিউ:</span>
-          <button
-            type="button"
-            onClick={() => handleFlyTo(24.4536, 90.5479, 16)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
-          >
-            রেলওয়ে স্টেশন
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlyTo(24.4515, 90.5535, 16)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
-          >
-            পৌরসভা চত্বর
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlyTo(24.4627, 90.5429, 16)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
-          >
-            হাসপাতাল
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlyTo(24.4625, 90.5630, 16)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
-          >
-            শিবগঞ্জ
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlyTo(24.3325, 90.5825, 15)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
-          >
-            পাগলা থানা
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlyTo(24.3387, 90.5883, 15)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
-          >
-            দত্তেরবাজার
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlyTo(24.3738, 90.5918, 15)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
-          >
-            কান্দিপাড়া
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlyTo(24.3854, 90.5362, 15)}
-            className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
-          >
-            মশাখালী
-          </button>
+          {GAFARGAON_UNIONS.map((union) => (
+            <button
+              key={union.id}
+              type="button"
+              onClick={() => handleFlyTo(union.centerLat, union.centerLng, union.id === 'pourashava' ? 15 : 14)}
+              className="px-2 py-0.5 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 border border-slate-200/80 hover:border-emerald-300 rounded text-slate-700 font-semibold transition-colors cursor-pointer shrink-0"
+              title={`${union.nameBengali} (${union.thana})`}
+            >
+              {union.nameBengali}
+            </button>
+          ))}
         </div>
 
-        <div className="text-[10px] text-slate-500 font-medium hidden md:block">
+        <div className="text-[10px] text-slate-500 font-medium hidden md:block shrink-0">
           ম্যাপের যেকোনো যানবাহনে ট্যাপ করে সরাসরি কল করুন
         </div>
       </div>

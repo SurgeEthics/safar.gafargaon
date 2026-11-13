@@ -1,4 +1,10 @@
 import { COMPREHENSIVE_UNION_PLACES, ComprehensivePlace } from './gafargaonUnionData';
+import { GAFARGAON_OSM_PLACES } from './gafargaonOsmPlaces';
+
+const ALL_STATIC_PLACES: ComprehensivePlace[] = [
+  ...COMPREHENSIVE_UNION_PLACES,
+  ...GAFARGAON_OSM_PLACES,
+];
 
 export interface GafargaonPlace {
   id: string;
@@ -11,8 +17,8 @@ export interface GafargaonPlace {
   isPopular?: boolean;
 }
 
-// Unified Gafargaon & Pagla Places (Derived from Comprehensive 15-Union Real Database)
-export const GAFARGAON_PLACES: GafargaonPlace[] = COMPREHENSIVE_UNION_PLACES.map(p => ({
+// Unified Gafargaon & Pagla Places (Derived from Comprehensive 15-Union + OSM Bounded Database)
+export const GAFARGAON_PLACES: GafargaonPlace[] = ALL_STATIC_PLACES.map(p => ({
   id: p.id,
   name: p.name,
   bengaliName: p.bengaliName,
@@ -65,24 +71,39 @@ export function resolveLocationCoordinates(
     }
   }
 
-  // 1. Direct match in comprehensive places dataset
-  const exact = COMPREHENSIVE_UNION_PLACES.find(
+  // 1. Exact match in comprehensive + OSM places dataset
+  const exact = ALL_STATIC_PLACES.find(
     p => p.bengaliName.toLowerCase() === clean || p.name.toLowerCase() === clean
   );
   if (exact) return { lat: exact.lat, lng: exact.lng, matchedPlace: exact };
 
-  // 2. Keyword match in searchKeywords
-  const keywordMatch = COMPREHENSIVE_UNION_PLACES.find(p =>
-    p.searchKeywords && p.searchKeywords.some(kw => kw.toLowerCase() === clean || clean.includes(kw.toLowerCase()))
+  // 2. Direct name substring match (handles bilingual OSM names like "Dhopaghat Bazar ধোপাঘাট বাজার")
+  const nameContains = ALL_STATIC_PLACES.find(
+    p => p.bengaliName.toLowerCase().includes(clean) || p.name.toLowerCase().includes(clean)
   );
-  if (keywordMatch) return { lat: keywordMatch.lat, lng: keywordMatch.lng, matchedPlace: keywordMatch };
+  if (nameContains) return { lat: nameContains.lat, lng: nameContains.lng, matchedPlace: nameContains };
 
-  // 3. Partial / Substring match
-  const partial = COMPREHENSIVE_UNION_PLACES.find(p => {
-    const simpleBn = p.bengaliName.replace(' স্ট্যান্ড', '').replace(' মোড়', '').replace(' বাজার', '').toLowerCase();
-    return clean.includes(simpleBn) || simpleBn.includes(clean);
+  // 3. Exact keyword match in searchKeywords
+  const exactKeywordMatch = ALL_STATIC_PLACES.find(p =>
+    p.searchKeywords && p.searchKeywords.some(kw => kw.toLowerCase() === clean)
+  );
+  if (exactKeywordMatch) return { lat: exactKeywordMatch.lat, lng: exactKeywordMatch.lng, matchedPlace: exactKeywordMatch };
+
+  // 4. Partial / stripped suffix match
+  const partial = ALL_STATIC_PLACES.find(p => {
+    const simpleBn = p.bengaliName.replace(' স্ট্যান্ড', '').replace(' মোড়', '').replace(' বাজার', '').trim().toLowerCase();
+    return simpleBn.length >= 3 && (clean.includes(simpleBn) || simpleBn.includes(clean));
   });
   if (partial) return { lat: partial.lat, lng: partial.lng, matchedPlace: partial };
+
+  // 5. Longer keyword substring match (skipping short generic tags like "বাজার"/"stand")
+  const keywordMatch = ALL_STATIC_PLACES.find(p =>
+    p.searchKeywords && p.searchKeywords.some(kw => {
+      const k = kw.toLowerCase().trim();
+      return k.length >= 4 && !['বাজার', 'মোড়', 'স্ট্যান্ড', 'bazar', 'stand', 'more', 'pagla', 'gafargaon'].includes(k) && clean.includes(k);
+    })
+  );
+  if (keywordMatch) return { lat: keywordMatch.lat, lng: keywordMatch.lng, matchedPlace: keywordMatch };
 
   // 4. Keyword matching for common Gafargaon & Pagla locations with exact Google Maps coordinates
   if (clean.includes('gps') || clean.includes('লাইভ') || clean.includes('আমার অবস্থান') || clean.includes('বর্তমান অবস্থান')) {

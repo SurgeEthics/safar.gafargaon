@@ -92,13 +92,15 @@ import {
 } from './utils/adminAuth';
 import { AutoMarqueeText } from './components/AutoMarqueeText';
 import { PauseMarqueeText } from './components/PauseMarqueeText';
-import { collection, doc, setDoc, getDoc, getDocs, onSnapshot, updateDoc, deleteDoc, query, where, orderBy, limit, runTransaction } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocs, getDocFromServer, getDocsFromServer, onSnapshot, updateDoc, deleteDoc, query, where, orderBy, limit, runTransaction } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
+import { stripUndefinedFields, mergeRemoteSettingsWithDefaults, shouldSeedDefaultCollection } from './utils/adminPersistence';
 
 import { LocationAutocomplete } from './components/LocationAutocomplete';
 import { GAFARGAON_PLACES, resolveLocationCoordinates, GafargaonPlace } from './data/gafargaonPlaces';
 import { UnionQuickDestinations } from './components/UnionQuickDestinations';
 import { COMPREHENSIVE_UNION_PLACES, GAFARGAON_UNIONS } from './data/gafargaonUnionData';
+import { GAFARGAON_OSM_PLACES } from './data/gafargaonOsmPlaces';
 import { GafargaonMap } from './components/GafargaonMap';
 import { CloudflareSettingsModal } from './components/CloudflareSettingsModal';
 import { useLiveTracking } from './hooks/useLiveTracking';
@@ -1267,10 +1269,14 @@ export default function App() {
     try {
       localStorage.setItem('safar_emergency_contacts_v2', JSON.stringify(newContacts));
     } catch {}
-    setDoc(doc(db, 'hotlines', 'contacts_list'), {
-      contacts: newContacts,
-      updatedAt: new Date().toISOString()
-    }, { merge: true }).catch(() => {});
+    setDoc(
+      doc(db, 'hotlines', 'contacts_list'),
+      stripUndefinedFields({
+        contacts: newContacts,
+        updatedAt: new Date().toISOString()
+      }),
+      { merge: true }
+    ).catch((err) => console.warn('Firestore emergency contacts save error:', err));
   };
 
   // 4. Drivers State with LocalStorage Sync (Auto-migrated to exact Google Maps coordinates)
@@ -1336,6 +1342,9 @@ export default function App() {
     }
   }, [drivers]);
 
+  // Track server-verified initial seeding so transient empty/cached snapshots NEVER overwrite Firestore data
+  const seededCollectionsRef = useRef<Record<string, boolean>>({});
+
   // Real-time Firestore Sync for Drivers
   useEffect(() => {
     // Permanently purge fake drv-1793153816766 from Firestore if it ever exists
@@ -1392,7 +1401,7 @@ export default function App() {
           });
         });
 
-        setDrivers(prev => {
+        setDrivers(() => {
           const merged = [...firestoreDrivers];
           for (const initD of INITIAL_DRIVERS) {
             if (initD.id === 'drv-1793153816766' || deletedIds.includes(initD.id)) continue;
@@ -1402,14 +1411,23 @@ export default function App() {
           }
           return merged;
         });
-      } else {
-        // First-time seed initial drivers to Firestore
-        INITIAL_DRIVERS.filter(d => d.id !== 'drv-1793153816766').forEach(d => {
-          setDoc(doc(db, 'drivers', d.id), {
-            ...d,
-            updatedAt: new Date().toISOString()
-          }).catch(err => console.warn('Firestore initial driver seed fallback:', err));
-        });
+      } else if (!snapshot.metadata.fromCache && !seededCollectionsRef.current.drivers) {
+        seededCollectionsRef.current.drivers = true;
+        getDocsFromServer(collection(db, 'drivers'))
+          .then((serverSnap) => {
+            if (shouldSeedDefaultCollection(snapshot.empty, snapshot.metadata.fromCache, serverSnap.size)) {
+              INITIAL_DRIVERS.filter(d => d.id !== 'drv-1793153816766').forEach(d => {
+                setDoc(
+                  doc(db, 'drivers', d.id),
+                  stripUndefinedFields({
+                    ...d,
+                    updatedAt: new Date().toISOString()
+                  })
+                ).catch(err => console.warn('Firestore initial driver seed fallback:', err));
+              });
+            }
+          })
+          .catch(() => {});
       }
     }, (error) => {
       console.warn('Firestore drivers sync fallback:', error);
@@ -1429,6 +1447,7 @@ export default function App() {
             id: docSnap.id,
             name: data.name || docSnap.id,
             bengaliName: data.bengaliName || data.name || 'স্ট্যান্ড',
+            area: data.area || data.location || '',
             location: data.location || data.bengaliName || '',
             lat: typeof data.lat === 'number' ? data.lat : 24.4536,
             lng: typeof data.lng === 'number' ? data.lng : 90.5479,
@@ -1439,14 +1458,26 @@ export default function App() {
           });
         });
         setStands(firestoreStands);
-      } else {
-        // Seed initial stands to Firestore
-        GAFARGAON_STANDS.forEach((s) => {
-          setDoc(doc(db, 'stands', s.id), {
-            ...s,
-            updatedAt: new Date().toISOString()
-          }).catch(() => {});
-        });
+        try {
+          localStorage.setItem('safar_stands_v6', JSON.stringify(firestoreStands));
+        } catch {}
+      } else if (!snapshot.metadata.fromCache && !seededCollectionsRef.current.stands) {
+        seededCollectionsRef.current.stands = true;
+        getDocsFromServer(collection(db, 'stands'))
+          .then((serverSnap) => {
+            if (shouldSeedDefaultCollection(snapshot.empty, snapshot.metadata.fromCache, serverSnap.size)) {
+              GAFARGAON_STANDS.forEach((s) => {
+                setDoc(
+                  doc(db, 'stands', s.id),
+                  stripUndefinedFields({
+                    ...s,
+                    updatedAt: new Date().toISOString()
+                  })
+                ).catch(() => {});
+              });
+            }
+          })
+          .catch(() => {});
       }
     }, (error) => {
       console.warn('Firestore stands sync fallback:', error);
@@ -1457,6 +1488,8 @@ export default function App() {
 
   // Real-time Firestore Sync for Vehicle Categories
   useEffect(() => {
+    const defaultOrderMap = new Map(VEHICLE_CATEGORIES.map((c, idx) => [c.id, idx]));
+
     const unsubscribe = onSnapshot(collection(db, 'categories'), (snapshot) => {
       if (!snapshot.empty) {
         const firestoreCats: VehicleCategoryItem[] = [];
@@ -1481,15 +1514,33 @@ export default function App() {
         if (!firestoreCats.some(c => c.id === 'all')) {
           firestoreCats.unshift(VEHICLE_CATEGORIES[0]);
         }
-        setCategories(firestoreCats);
-      } else {
-        // Seed initial categories to Firestore
-        VEHICLE_CATEGORIES.forEach((c) => {
-          setDoc(doc(db, 'categories', c.id), {
-            ...c,
-            updatedAt: new Date().toISOString()
-          }).catch(() => {});
+        firestoreCats.sort((a, b) => {
+          const idxA = defaultOrderMap.has(a.id) ? (defaultOrderMap.get(a.id) as number) : 999;
+          const idxB = defaultOrderMap.has(b.id) ? (defaultOrderMap.get(b.id) as number) : 999;
+          if (idxA !== idxB) return idxA - idxB;
+          return a.id.localeCompare(b.id);
         });
+        setCategories(firestoreCats);
+        try {
+          localStorage.setItem('safar_categories_v4', JSON.stringify(firestoreCats));
+        } catch {}
+      } else if (!snapshot.metadata.fromCache && !seededCollectionsRef.current.categories) {
+        seededCollectionsRef.current.categories = true;
+        getDocsFromServer(collection(db, 'categories'))
+          .then((serverSnap) => {
+            if (shouldSeedDefaultCollection(snapshot.empty, snapshot.metadata.fromCache, serverSnap.size)) {
+              VEHICLE_CATEGORIES.forEach((c) => {
+                setDoc(
+                  doc(db, 'categories', c.id),
+                  stripUndefinedFields({
+                    ...c,
+                    updatedAt: new Date().toISOString()
+                  })
+                ).catch(() => {});
+              });
+            }
+          })
+          .catch(() => {});
       }
     }, (error) => {
       console.warn('Firestore categories sync fallback:', error);
@@ -1502,16 +1553,30 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onSnapshot(doc(db, 'settings', 'app_config'), (docSnap) => {
       if (docSnap.exists()) {
-        const data = docSnap.data() as AppCustomSettings;
-        setAppCustomSettings(prev => ({
-          ...prev,
-          ...data
-        }));
-      } else {
-        setDoc(doc(db, 'settings', 'app_config'), {
-          ...appCustomSettings,
-          updatedAt: new Date().toISOString()
-        }).catch(() => {});
+        const data = docSnap.data() as Partial<AppCustomSettings>;
+        setAppCustomSettings(prev => {
+          const merged = mergeRemoteSettingsWithDefaults(prev, data);
+          try {
+            localStorage.setItem('safar_custom_settings_v3', JSON.stringify(merged));
+          } catch {}
+          return merged;
+        });
+      } else if (!docSnap.metadata.fromCache && !seededCollectionsRef.current.settings) {
+        seededCollectionsRef.current.settings = true;
+        getDocFromServer(doc(db, 'settings', 'app_config'))
+          .then((serverSnap) => {
+            if (!serverSnap.exists()) {
+              setDoc(
+                doc(db, 'settings', 'app_config'),
+                stripUndefinedFields({
+                  ...appCustomSettings,
+                  updatedAt: new Date().toISOString()
+                }),
+                { merge: true }
+              ).catch(() => {});
+            }
+          })
+          .catch(() => {});
       }
     }, (error) => {
       console.warn('Firestore settings sync fallback:', error);
@@ -1525,20 +1590,72 @@ export default function App() {
     const unsubscribe = onSnapshot(doc(db, 'hotlines', 'emergency'), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data() as any;
-        setHotlines(prev => ({
-          hospital: data.hospital || prev.hospital,
-          fire: data.fire || prev.fire,
-          police: data.police || prev.police,
-          national: data.national || prev.national
-        }));
-      } else {
-        setDoc(doc(db, 'hotlines', 'emergency'), {
-          ...hotlines,
-          updatedAt: new Date().toISOString()
-        }).catch(() => {});
+        setHotlines(prev => {
+          const next = {
+            hospital: data.hospital || prev.hospital,
+            fire: data.fire || prev.fire,
+            police: data.police || prev.police,
+            national: data.national || prev.national
+          };
+          try {
+            localStorage.setItem('safar_hotlines_v4', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      } else if (!docSnap.metadata.fromCache && !seededCollectionsRef.current.hotlines) {
+        seededCollectionsRef.current.hotlines = true;
+        getDocFromServer(doc(db, 'hotlines', 'emergency'))
+          .then((serverSnap) => {
+            if (!serverSnap.exists()) {
+              setDoc(
+                doc(db, 'hotlines', 'emergency'),
+                stripUndefinedFields({
+                  ...hotlines,
+                  updatedAt: new Date().toISOString()
+                }),
+                { merge: true }
+              ).catch(() => {});
+            }
+          })
+          .catch(() => {});
       }
     }, (error) => {
       console.warn('Firestore hotlines sync fallback:', error);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time Firestore Sync for Dynamic Emergency Contacts Directory
+  useEffect(() => {
+    const unsubscribe = onSnapshot(doc(db, 'hotlines', 'contacts_list'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as { contacts?: EmergencyContact[] };
+        if (Array.isArray(data?.contacts)) {
+          setEmergencyContacts(data.contacts);
+          try {
+            localStorage.setItem('safar_emergency_contacts_v2', JSON.stringify(data.contacts));
+          } catch {}
+        }
+      } else if (!docSnap.metadata.fromCache && !seededCollectionsRef.current.contacts) {
+        seededCollectionsRef.current.contacts = true;
+        getDocFromServer(doc(db, 'hotlines', 'contacts_list'))
+          .then((serverSnap) => {
+            if (!serverSnap.exists()) {
+              setDoc(
+                doc(db, 'hotlines', 'contacts_list'),
+                stripUndefinedFields({
+                  contacts: INITIAL_EMERGENCY_CONTACTS,
+                  updatedAt: new Date().toISOString()
+                }),
+                { merge: true }
+              ).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }
+    }, (error) => {
+      console.warn('Firestore emergency contacts sync fallback:', error);
     });
 
     return () => unsubscribe();
@@ -1822,19 +1939,25 @@ export default function App() {
   });
 
   const saveCustomSettings = async (newSettings: AppCustomSettings) => {
-    setAppCustomSettings(newSettings);
+    const cleanSettings = stripUndefinedFields(newSettings);
+    setAppCustomSettings(cleanSettings);
     try {
-      localStorage.setItem('safar_custom_settings_v3', JSON.stringify(newSettings));
+      localStorage.setItem('safar_custom_settings_v3', JSON.stringify(cleanSettings));
     } catch {}
     try {
-      await setDoc(doc(db, 'settings', 'app_config'), {
-        ...newSettings,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
+      await setDoc(
+        doc(db, 'settings', 'app_config'),
+        stripUndefinedFields({
+          ...cleanSettings,
+          updatedAt: new Date().toISOString()
+        }),
+        { merge: true }
+      );
+      showAdminToastMessage('অ্যাপ কাস্টমাইজেশন ও উইজেট সেটিংস ফায়ারস্টোরে স্থায়ীভাবে সেভ হয়েছে!');
     } catch (err) {
       console.warn('Failed to save settings to Firestore:', err);
+      showAdminToastMessage('লোকাল সেটিংস আপডেট হয়েছে, তবে ক্লাউড সিঙ্কে সমস্যা হয়েছে — নেটওয়ার্ক চেক করুন');
     }
-    showAdminToastMessage('অ্যাপ কাস্টমাইজেশন ও উইজেট সেটিংস সংরক্ষিত ও ফায়ারবেসে লাইভ সিঙ্ক হয়েছে!');
   };
 
   // Sync CSS properties to root html element
@@ -3137,6 +3260,12 @@ export default function App() {
   const [passengerDestination, setPassengerDestination] = useState<string>('');
   const [pickupCoords, setPickupCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [destCoords, setDestCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const pinnedPickupOverrideRef = useRef<{ name: string; lat: number; lng: number } | null>(null);
+  const pinnedDestOverrideRef = useRef<{ name: string; lat: number; lng: number } | null>(null);
+  const [mapPinRequest, setMapPinRequest] = useState<{ mode: 'none' | 'pickup' | 'dest'; triggerId: number }>({
+    mode: 'none',
+    triggerId: 0
+  });
   const [passengerSelectedVehicle, setPassengerSelectedVehicle] = useState<VehicleCategory>('cng');
   const [isRidePlannerCollapsed, setIsRidePlannerCollapsed] = useState<boolean>(false);
   const [isQuickDestOpen, setIsQuickDestOpen] = useState<boolean>(false);
@@ -3182,21 +3311,31 @@ export default function App() {
             category: data.category || 'অন্যান্য',
             area: area,
             lat: typeof data.lat === 'number' ? data.lat : 24.4536,
-            lng: typeof data.lng === 'number' ? data.lng : 90.5479
+            lng: typeof data.lng === 'number' ? data.lng : 90.5479,
+            isPopular: data.isPopular ?? true
           });
         });
         setPopularPlaces(firestorePlaces);
         try {
           localStorage.setItem('safar_popular_places_v1', JSON.stringify(firestorePlaces));
         } catch {}
-      } else {
-        // First-time seed initial 42 places to Firestore
-        GAFARGAON_PLACES.forEach(p => {
-          setDoc(doc(db, 'places', p.id), {
-            ...p,
-            updatedAt: new Date().toISOString()
-          }).catch(() => {});
-        });
+      } else if (!snapshot.metadata.fromCache && !seededCollectionsRef.current.places) {
+        seededCollectionsRef.current.places = true;
+        getDocsFromServer(collection(db, 'places'))
+          .then((serverSnap) => {
+            if (shouldSeedDefaultCollection(snapshot.empty, snapshot.metadata.fromCache, serverSnap.size)) {
+              GAFARGAON_PLACES.forEach(p => {
+                setDoc(
+                  doc(db, 'places', p.id),
+                  stripUndefinedFields({
+                    ...p,
+                    updatedAt: new Date().toISOString()
+                  })
+                ).catch(() => {});
+              });
+            }
+          })
+          .catch(() => {});
       }
     }, (error) => {
       console.warn('Firestore places sync fallback:', error);
@@ -3206,25 +3345,53 @@ export default function App() {
   }, []);
 
   const handleSavePopularPlace = (place: GafargaonPlace) => {
+    const cleanPlace = stripUndefinedFields(place);
     setPopularPlaces(prev => {
-      const idx = prev.findIndex(p => p.id === place.id);
+      const idx = prev.findIndex(p => p.id === cleanPlace.id);
       let updated: GafargaonPlace[];
       if (idx >= 0) {
         updated = [...prev];
-        updated[idx] = place;
+        updated[idx] = cleanPlace;
       } else {
-        updated = [...prev, place];
+        updated = [...prev, cleanPlace];
       }
       try {
         localStorage.setItem('safar_popular_places_v1', JSON.stringify(updated));
       } catch {}
       return updated;
     });
-    setDoc(doc(db, 'places', place.id), {
-      ...place,
-      updatedAt: new Date().toISOString()
-    }, { merge: true }).catch(() => {});
-    showAdminToastMessage(`'${place.bengaliName}' স্থানটি ক্লাউড ফায়ারবেসে সেভ ও লাইভ সিঙ্ক হয়েছে!`);
+    setDoc(
+      doc(db, 'places', cleanPlace.id),
+      stripUndefinedFields({
+        ...cleanPlace,
+        updatedAt: new Date().toISOString()
+      }),
+      { merge: true }
+    ).catch((err) => console.warn('Firestore place save error:', err));
+    showAdminToastMessage(`'${cleanPlace.bengaliName}' স্থানটি ক্লাউড ফায়ারবেসে সেভ ও লাইভ সিঙ্ক হয়েছে!`);
+  };
+
+  const handleSaveStandFromMap = (stand: Stand) => {
+    const cleanStand = stripUndefinedFields(stand);
+    setStands(prev => {
+      const idx = prev.findIndex(s => s.id === cleanStand.id);
+      const updated = idx >= 0
+        ? prev.map((s, i) => (i === idx ? cleanStand : s))
+        : [...prev, cleanStand];
+      try {
+        localStorage.setItem('safar_stands_v6', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    setDoc(
+      doc(db, 'stands', cleanStand.id),
+      stripUndefinedFields({
+        ...cleanStand,
+        updatedAt: new Date().toISOString()
+      }),
+      { merge: true }
+    ).catch((err) => console.warn('Firestore map stand save error:', err));
+    showAdminToastMessage(`নতুন স্ট্যান্ড '${cleanStand.bengaliName}' ফায়ারস্টোরে লাইভ যুক্ত ও সবার জন্য উন্মুক্ত হয়েছে!`);
   };
 
   const handleDeletePopularPlace = (placeId: string, name: string) => {
@@ -3245,10 +3412,13 @@ export default function App() {
       localStorage.setItem('safar_popular_places_v1', JSON.stringify(GAFARGAON_PLACES));
     } catch {}
     GAFARGAON_PLACES.forEach(p => {
-      setDoc(doc(db, 'places', p.id), {
-        ...p,
-        updatedAt: new Date().toISOString()
-      }).catch(() => {});
+      setDoc(
+        doc(db, 'places', p.id),
+        stripUndefinedFields({
+          ...p,
+          updatedAt: new Date().toISOString()
+        })
+      ).catch(() => {});
     });
     showAdminToastMessage('জনপ্রিয় স্থানসমূহ ডিফল্ট তালিকায় রিস্টোর ও ক্লাউডে সিঙ্ক হয়েছে');
   };
@@ -3331,6 +3501,27 @@ export default function App() {
           isStand: true,
           lat: s.lat,
           lng: s.lng
+        });
+      }
+    });
+
+    // 4. Add verified OSM places (Gafargaon, Pagla & +3-4km border area)
+    GAFARGAON_OSM_PLACES.forEach(p => {
+      const key = p.bengaliName.trim().toLowerCase();
+      if (!addedNames.has(key)) {
+        addedNames.add(key);
+        list.push({
+          id: p.id,
+          name: p.name || p.bengaliName,
+          bengaliName: p.bengaliName,
+          category: p.category,
+          categoryLabel: p.category,
+          area: p.area,
+          unionNameBengali: p.unionNameBengali,
+          searchKeywords: p.searchKeywords || [],
+          isStand: p.isStand,
+          lat: p.lat,
+          lng: p.lng
         });
       }
     });
@@ -4106,10 +4297,21 @@ export default function App() {
     return resolveLocationCoordinates(locName, isDest);
   };
 
-  // Sync coordinates when locations or GPS change
+  // Sync coordinates when locations or GPS change (preserving exact Tap-to-Pin / live OSM coordinates)
   useEffect(() => {
     if (!passengerPickup || !passengerPickup.trim()) {
+      pinnedPickupOverrideRef.current = null;
       setPickupCoords(null);
+      return;
+    }
+    if (
+      pinnedPickupOverrideRef.current &&
+      pinnedPickupOverrideRef.current.name === passengerPickup.trim()
+    ) {
+      setPickupCoords({
+        lat: pinnedPickupOverrideRef.current.lat,
+        lng: pinnedPickupOverrideRef.current.lng
+      });
       return;
     }
     if (isLiveLocationQuery(passengerPickup)) {
@@ -4127,7 +4329,18 @@ export default function App() {
 
   useEffect(() => {
     if (!passengerDestination || !passengerDestination.trim()) {
+      pinnedDestOverrideRef.current = null;
       setDestCoords(null);
+      return;
+    }
+    if (
+      pinnedDestOverrideRef.current &&
+      pinnedDestOverrideRef.current.name === passengerDestination.trim()
+    ) {
+      setDestCoords({
+        lat: pinnedDestOverrideRef.current.lat,
+        lng: pinnedDestOverrideRef.current.lng
+      });
       return;
     }
     setDestCoords(getCoordinatesForLocation(passengerDestination, true));
@@ -4204,6 +4417,11 @@ export default function App() {
     const prevPickupCoords = pickupCoords;
     const prevDest = passengerDestination;
     const prevDestCoords = destCoords;
+    const prevPickupPin = pinnedPickupOverrideRef.current;
+    const prevDestPin = pinnedDestOverrideRef.current;
+
+    pinnedPickupOverrideRef.current = prevDestPin || (prevDest && prevDestCoords ? { name: prevDest.trim(), lat: prevDestCoords.lat, lng: prevDestCoords.lng } : null);
+    pinnedDestOverrideRef.current = prevPickupPin || (prevPickup && prevPickupCoords ? { name: prevPickup.trim(), lat: prevPickupCoords.lat, lng: prevPickupCoords.lng } : null);
 
     setPassengerPickup(prevDest);
     setPickupCoords(prevDestCoords);
@@ -4392,6 +4610,8 @@ export default function App() {
 
   // Explicitly Clear Route and Location Pins from Map
   const handleClearRoute = () => {
+    pinnedPickupOverrideRef.current = null;
+    pinnedDestOverrideRef.current = null;
     setPickupCoords(null);
     setDestCoords(null);
     setPassengerPickup('');
@@ -4968,13 +5188,13 @@ export default function App() {
         center: [24.4536, 90.5479],
         zoom: 14,
         zoomControl: true,
+        attributionControl: false,
         dragging: !L.Browser.mobile || isMapTouchUnlocked,
         touchZoom: true,
         scrollWheelZoom: false,
       });
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors | সফর গফরগাঁও',
         maxZoom: 19,
       }).addTo(map);
 
@@ -6008,22 +6228,22 @@ export default function App() {
     }
 
     if (editingStandId) {
-      const updatedStand = {
+      const updatedStand = stripUndefinedFields({
         bengaliName: standForm.bengaliName.trim(),
         name: standForm.name.trim() || standForm.bengaliName.trim(),
         lat: Number(standForm.lat) || 24.4536,
         lng: Number(standForm.lng) || 90.5479
-      };
+      });
       setStands(prev => prev.map(s => 
         s.id === editingStandId 
           ? { ...s, ...updatedStand }
           : s
       ));
-      setDoc(doc(db, 'stands', editingStandId), {
+      setDoc(doc(db, 'stands', editingStandId), stripUndefinedFields({
         id: editingStandId,
         ...updatedStand,
         updatedAt: new Date().toISOString()
-      }, { merge: true }).catch(err => console.warn('Firestore stand update error:', err));
+      }), { merge: true }).catch(err => console.warn('Firestore stand update error:', err));
       showAdminToastMessage(`স্ট্যান্ড '${standForm.bengaliName}' আপডেট ও লাইভ সেভ হয়েছে!`);
     } else {
       const newStand: Stand = {
@@ -6035,10 +6255,10 @@ export default function App() {
         activeDrivers: 0
       };
       setStands(prev => [...prev, newStand]);
-      setDoc(doc(db, 'stands', newStand.id), {
+      setDoc(doc(db, 'stands', newStand.id), stripUndefinedFields({
         ...newStand,
         updatedAt: new Date().toISOString()
-      }, { merge: true }).catch(err => console.warn('Firestore stand save error:', err));
+      }), { merge: true }).catch(err => console.warn('Firestore stand save error:', err));
       showAdminToastMessage(`নতুন স্ট্যান্ড '${newStand.bengaliName}' সফলভাবে তৈরি ও লাইভ সেভ হয়েছে!`);
     }
 
@@ -6067,21 +6287,21 @@ export default function App() {
     }
 
     if (editingCategoryId) {
-      const updatedCat = {
+      const updatedCat = stripUndefinedFields({
         nameBengali: categoryForm.nameBengali.trim(),
         subtitle: categoryForm.subtitle.trim() || 'নিবন্ধিত বাহন সার্ভিস',
         accentColor: categoryForm.accentColor || '#059669'
-      };
+      });
       setCategories(prev => prev.map(c => 
         c.id === editingCategoryId
           ? { ...c, ...updatedCat }
           : c
       ));
-      setDoc(doc(db, 'categories', editingCategoryId), {
+      setDoc(doc(db, 'categories', editingCategoryId), stripUndefinedFields({
         id: editingCategoryId,
         ...updatedCat,
         updatedAt: new Date().toISOString()
-      }, { merge: true }).catch(err => console.warn('Firestore category update error:', err));
+      }), { merge: true }).catch(err => console.warn('Firestore category update error:', err));
       showAdminToastMessage(`ক্যাটাগরি '${categoryForm.nameBengali}' আপডেট ও লাইভ সেভ হয়েছে!`);
     } else {
       const rawId = categoryForm.id.trim().toLowerCase().replace(/[^a-z0-9]/g, '') || `cat-${Date.now()}`;
@@ -6101,10 +6321,10 @@ export default function App() {
         isFree: false
       };
       setCategories(prev => [...prev, newCat]);
-      setDoc(doc(db, 'categories', newCat.id), {
+      setDoc(doc(db, 'categories', newCat.id), stripUndefinedFields({
         ...newCat,
         updatedAt: new Date().toISOString()
-      }, { merge: true }).catch(err => console.warn('Firestore category save error:', err));
+      }), { merge: true }).catch(err => console.warn('Firestore category save error:', err));
       showAdminToastMessage(`নতুন ক্যাটাগরি '${newCat.nameBengali}' সফলভাবে তৈরি ও লাইভ সেভ হয়েছে!`);
     }
 
@@ -6436,10 +6656,14 @@ export default function App() {
   // Save Hotlines
   const handleSaveHotlines = (e: React.FormEvent) => {
     e.preventDefault();
-    setDoc(doc(db, 'hotlines', 'emergency'), {
-      ...hotlines,
-      updatedAt: new Date().toISOString()
-    }, { merge: true }).catch(err => console.warn('Firestore hotlines error:', err));
+    setDoc(
+      doc(db, 'hotlines', 'emergency'),
+      stripUndefinedFields({
+        ...hotlines,
+        updatedAt: new Date().toISOString()
+      }),
+      { merge: true }
+    ).catch(err => console.warn('Firestore hotlines error:', err));
     showAdminToastMessage('জরুরি হটলাইন নম্বর ফায়ারবেসে সেভ ও লাইভ আপডেট হয়েছে!');
   };
 
@@ -6449,20 +6673,20 @@ export default function App() {
     setCategories(VEHICLE_CATEGORIES);
     setDrivers(INITIAL_DRIVERS);
     try {
-      localStorage.removeItem('safar_stands_v5');
+      localStorage.removeItem('safar_stands_v6');
       localStorage.removeItem('safar_categories_v4');
       localStorage.removeItem('safar_drivers_v5');
     } catch {}
 
     // Synchronize default templates to Firestore
     GAFARGAON_STANDS.forEach(s => {
-      setDoc(doc(db, 'stands', s.id), { ...s, updatedAt: new Date().toISOString() }).catch(() => {});
+      setDoc(doc(db, 'stands', s.id), stripUndefinedFields({ ...s, updatedAt: new Date().toISOString() })).catch(() => {});
     });
     VEHICLE_CATEGORIES.forEach(c => {
-      setDoc(doc(db, 'categories', c.id), { ...c, updatedAt: new Date().toISOString() }).catch(() => {});
+      setDoc(doc(db, 'categories', c.id), stripUndefinedFields({ ...c, updatedAt: new Date().toISOString() })).catch(() => {});
     });
     INITIAL_DRIVERS.forEach(d => {
-      setDoc(doc(db, 'drivers', d.id), { ...d, updatedAt: new Date().toISOString() }).catch(() => {});
+      setDoc(doc(db, 'drivers', d.id), stripUndefinedFields({ ...d, updatedAt: new Date().toISOString() })).catch(() => {});
     });
 
     showAdminToastMessage('সকল স্ট্যান্ড, ক্যাটাগরি ও চালকের ডেটা ডিফল্টে রিস্টোর ও অনলাইনে সিঙ্ক হয়েছে!');
@@ -7119,7 +7343,14 @@ export default function App() {
                         places={allAutocompletePlaces}
                         isGpsActive={liveGps.isTracking || isLiveLocationQuery(passengerPickup)}
                         userGps={liveGps}
+                        onPinOnMap={() => {
+                          setMapPinRequest((prev) => ({ mode: 'pickup', triggerId: prev.triggerId + 1 }));
+                          const mapEl = document.getElementById('safar-live-map-section');
+                          if (mapEl) mapEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          showAdminToastMessage('📍 ম্যাপ বা স্যাটেলাইটে ট্যাপ করে ঠিক পিকআপ পয়েন্ট দিন');
+                        }}
                         onLocateGps={() => {
+                          pinnedPickupOverrideRef.current = null;
                           startGpsTracking();
                           showAdminToastMessage('🛰️ লাইভ GPS অবস্থান অনুসন্ধান চলছে...');
 
@@ -7133,6 +7364,7 @@ export default function App() {
                             if (!cleanName || cleanName === 'আমার' || cleanName.length < 2) {
                               cleanName = 'গফরগাঁও পৌরসভা চত্বর';
                             }
+                            pinnedPickupOverrideRef.current = { name: cleanName, lat, lng };
                             setPassengerPickup(cleanName);
                             if (nearest.distanceMeters > 30) {
                               setPassengerPickupLandmark(`${cleanName} থেকে ~${toBengaliNumber(nearest.distanceMeters)} মি.`);
@@ -7188,13 +7420,16 @@ export default function App() {
                           }
                         }}
                         onChangeLocation={(name, coords) => {
-                          setPassengerPickup(name);
                           if (!name || !name.trim()) {
+                            pinnedPickupOverrideRef.current = null;
+                            setPassengerPickup('');
                             setPickupCoords(null);
                             setPassengerPickupLandmark('');
                             return;
                           }
                           if (coords) {
+                            pinnedPickupOverrideRef.current = { name: name.trim(), lat: coords.lat, lng: coords.lng };
+                            setPassengerPickup(name);
                             setPickupCoords(coords);
                             const nearest = findNearestLandmark(coords.lat, coords.lng);
                             if (nearest.distanceMeters > 50 && !name.includes(nearest.name)) {
@@ -7203,6 +7438,8 @@ export default function App() {
                               setPassengerPickupLandmark('');
                             }
                           } else {
+                            pinnedPickupOverrideRef.current = null;
+                            setPassengerPickup(name);
                             setPassengerPickupLandmark('');
                           }
                           if (isLiveLocationQuery(name)) {
@@ -7242,10 +7479,26 @@ export default function App() {
                       value={passengerDestination}
                       places={allAutocompletePlaces}
                       userGps={liveGps}
+                      onPinOnMap={() => {
+                        setMapPinRequest((prev) => ({ mode: 'dest', triggerId: prev.triggerId + 1 }));
+                        const mapEl = document.getElementById('safar-live-map-section');
+                        if (mapEl) mapEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        showAdminToastMessage('🏁 ম্যাপ বা স্যাটেলাইটে ট্যাপ করে ঠিক গন্তব্য পয়েন্ট দিন');
+                      }}
                       onChangeLocation={(name, coords) => {
-                        setPassengerDestination(name);
+                        if (!name || !name.trim()) {
+                          pinnedDestOverrideRef.current = null;
+                          setPassengerDestination('');
+                          setDestCoords(null);
+                          return;
+                        }
                         if (coords) {
+                          pinnedDestOverrideRef.current = { name: name.trim(), lat: coords.lat, lng: coords.lng };
+                          setPassengerDestination(name);
                           setDestCoords(coords);
+                        } else {
+                          pinnedDestOverrideRef.current = null;
+                          setPassengerDestination(name);
                         }
                       }}
                       placeholder="গন্তব্য স্থান, মোড় বা বাজার খুঁজুন..."
@@ -7958,6 +8211,9 @@ export default function App() {
                               userGps={liveGps}
                               onStartGpsTracking={startGpsTracking}
                               userRole="driver"
+                              allPlaces={allAutocompletePlaces}
+                              onSaveCustomPlace={handleSavePopularPlace}
+                              onSaveCustomStand={handleSaveStandFromMap}
                               onSelectDriver={() => {}}
                               activeBooking={{
                                 driverName: driverProfile.name || 'আমি (চালক)',
@@ -8514,16 +8770,36 @@ export default function App() {
                       etaMinutes: activeBooking.etaMinutes,
                       status: activeBooking.status
                     } : null}
-                    onSelectPickupPlace={(standName: string) => {
+                    allPlaces={allAutocompletePlaces}
+                    externalPinRequest={mapPinRequest}
+                    onSaveCustomPlace={handleSavePopularPlace}
+                    onSaveCustomStand={handleSaveStandFromMap}
+                    onSelectPickupPlace={(standName: string, coords?: { lat: number; lng: number }) => {
+                      const resolvedCoords = coords || resolveLocationCoordinates(standName, false);
+                      pinnedPickupOverrideRef.current = {
+                        name: standName.trim(),
+                        lat: resolvedCoords.lat,
+                        lng: resolvedCoords.lng
+                      };
                       setPassengerPickup(standName);
-                      const coords = resolveLocationCoordinates(standName, false);
-                      setPickupCoords(coords);
+                      setPickupCoords(resolvedCoords);
+                      const nearest = findNearestLandmark(resolvedCoords.lat, resolvedCoords.lng);
+                      if (nearest.distanceMeters > 50 && !standName.includes(nearest.name)) {
+                        setPassengerPickupLandmark(`${nearest.name} (থেকে ~${toBengaliNumber(nearest.distanceMeters)} মিটার দূরে)`);
+                      } else {
+                        setPassengerPickupLandmark('');
+                      }
                       showAdminToastMessage(`পিকআপ স্থান সেট করা হয়েছে: ${standName}`);
                     }}
-                    onSelectDestPlace={(standName: string) => {
+                    onSelectDestPlace={(standName: string, coords?: { lat: number; lng: number }) => {
+                      const resolvedCoords = coords || resolveLocationCoordinates(standName, true);
+                      pinnedDestOverrideRef.current = {
+                        name: standName.trim(),
+                        lat: resolvedCoords.lat,
+                        lng: resolvedCoords.lng
+                      };
                       setPassengerDestination(standName);
-                      const coords = resolveLocationCoordinates(standName, true);
-                      setDestCoords(coords);
+                      setDestCoords(resolvedCoords);
                       showAdminToastMessage(`গন্তব্য স্থান সেট করা হয়েছে: ${standName}`);
                     }}
                     onClearRoute={handleClearRoute}
@@ -10459,12 +10735,9 @@ export default function App() {
               className="cursor-default select-none"
               title=""
             >
-              ©
+              @
             </span>{' '}
-            {new Date().getFullYear()} সফর (Safar) - গফরগাঁও স্মার্ট ট্রান্সপোর্ট ও ইমার্জেন্সি নেটওয়ার্ক
-          </p>
-          <p className="text-emerald-400 text-[10px] sm:text-[11px] mt-0.5">
-            গফরগাঁও পৌরসভা, পাগলা থানা ও সংলগ্ন সকল স্ট্যান্ডের নাগরিকদের জন্য দ্রুত ও নিরাপদ যাতায়াত সেবা
+            সফর - স্মার্ট ট্রান্সপোর্ট ও ইমার্জেন্সি সার্ভিস
           </p>
           
           {/* Admin Control Bar: STRICTLY visible only when admin is already authenticated */}
@@ -10601,17 +10874,29 @@ export default function App() {
         onResetAdminPinToDefault={handleResetAdminPinToDefault}
         stands={stands}
         onSaveStand={(stand, isEdit) => {
-          if (isEdit) {
-            setStands(prev => prev.map(s => s.id === stand.id ? stand : s));
-            showAdminToastMessage(`স্ট্যান্ড '${stand.bengaliName}' আপডেট ও লাইভ সেভ হয়েছে!`);
-          } else {
-            setStands(prev => [...prev, stand]);
-            showAdminToastMessage(`নতুন স্ট্যান্ড '${stand.bengaliName}' তৈরি ও লাইভ সেভ হয়েছে!`);
-          }
-          setDoc(doc(db, 'stands', stand.id), {
-            ...stand,
-            updatedAt: new Date().toISOString()
-          }, { merge: true }).catch(err => console.warn('Firestore stand save error:', err));
+          const cleanStand = stripUndefinedFields(stand);
+          setStands(prev => {
+            const next = isEdit
+              ? prev.map(s => s.id === cleanStand.id ? cleanStand : s)
+              : [...prev, cleanStand];
+            try {
+              localStorage.setItem('safar_stands_v6', JSON.stringify(next));
+            } catch {}
+            return next;
+          });
+          showAdminToastMessage(
+            isEdit
+              ? `স্ট্যান্ড '${cleanStand.bengaliName}' আপডেট ও লাইভ সেভ হয়েছে!`
+              : `নতুন স্ট্যান্ড '${cleanStand.bengaliName}' তৈরি ও লাইভ সেভ হয়েছে!`
+          );
+          setDoc(
+            doc(db, 'stands', cleanStand.id),
+            stripUndefinedFields({
+              ...cleanStand,
+              updatedAt: new Date().toISOString()
+            }),
+            { merge: true }
+          ).catch(err => console.warn('Firestore stand save error:', err));
         }}
         onDeleteStand={(standId, name) => {
           if (stands.length <= 1) {
@@ -10624,17 +10909,29 @@ export default function App() {
         }}
         categories={categories}
         onSaveCategory={(category, isEdit) => {
-          if (isEdit) {
-            setCategories(prev => prev.map(c => c.id === category.id ? category : c));
-            showAdminToastMessage(`ক্যাটাগরি '${category.nameBengali}' আপডেট ও লাইভ সেভ হয়েছে!`);
-          } else {
-            setCategories(prev => [...prev, category]);
-            showAdminToastMessage(`নতুন ক্যাটাগরি '${category.nameBengali}' তৈরি ও লাইভ সেভ হয়েছে!`);
-          }
-          setDoc(doc(db, 'categories', category.id), {
-            ...category,
-            updatedAt: new Date().toISOString()
-          }, { merge: true }).catch(err => console.warn('Firestore category save error:', err));
+          const cleanCat = stripUndefinedFields(category);
+          setCategories(prev => {
+            const next = isEdit
+              ? prev.map(c => c.id === cleanCat.id ? cleanCat : c)
+              : [...prev, cleanCat];
+            try {
+              localStorage.setItem('safar_categories_v4', JSON.stringify(next));
+            } catch {}
+            return next;
+          });
+          showAdminToastMessage(
+            isEdit
+              ? `ক্যাটাগরি '${cleanCat.nameBengali}' আপডেট ও লাইভ সেভ হয়েছে!`
+              : `নতুন ক্যাটাগরি '${cleanCat.nameBengali}' তৈরি ও লাইভ সেভ হয়েছে!`
+          );
+          setDoc(
+            doc(db, 'categories', cleanCat.id),
+            stripUndefinedFields({
+              ...cleanCat,
+              updatedAt: new Date().toISOString()
+            }),
+            { merge: true }
+          ).catch(err => console.warn('Firestore category save error:', err));
         }}
         onDeleteCategory={(categoryId, name) => {
           if (categories.length <= 1) {
@@ -10680,14 +10977,19 @@ export default function App() {
         onResetToDefaults={handleResetToDefaults}
         hotlines={hotlines}
         onSaveHotlines={(newHotlines) => {
-          setHotlines(newHotlines);
+          const cleanHotlines = stripUndefinedFields(newHotlines);
+          setHotlines(cleanHotlines);
           try {
-            localStorage.setItem('safar_hotlines_v4', JSON.stringify(newHotlines));
+            localStorage.setItem('safar_hotlines_v4', JSON.stringify(cleanHotlines));
           } catch {}
-          setDoc(doc(db, 'hotlines', 'emergency'), {
-            ...newHotlines,
-            updatedAt: new Date().toISOString()
-          }, { merge: true }).catch(err => console.warn('Firestore hotlines error:', err));
+          setDoc(
+            doc(db, 'hotlines', 'emergency'),
+            stripUndefinedFields({
+              ...cleanHotlines,
+              updatedAt: new Date().toISOString()
+            }),
+            { merge: true }
+          ).catch(err => console.warn('Firestore hotlines error:', err));
           showAdminToastMessage('জরুরি হটলাইন নম্বর ফায়ারবেসে সেভ ও লাইভ আপডেট হয়েছে!');
         }}
         emergencyContacts={emergencyContacts}

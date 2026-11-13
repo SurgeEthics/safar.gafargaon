@@ -250,12 +250,26 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     isPopular: true
   });
 
-  // Sync places when prop updates
-  React.useEffect(() => {
-    if (popularPlaces && popularPlaces.length > 0) {
+  // Keep all drafts synchronized with live Firestore-backed props whenever updated or panel opens
+  useEffect(() => {
+    setSettingsDraft(customSettings);
+  }, [customSettings, isOpen]);
+
+  useEffect(() => {
+    setHotlinesDraft(hotlines);
+  }, [hotlines, isOpen]);
+
+  useEffect(() => {
+    if (emergencyContacts && emergencyContacts.length > 0) {
+      setContactsDraft(emergencyContacts);
+    }
+  }, [emergencyContacts, isOpen]);
+
+  useEffect(() => {
+    if (popularPlaces) {
       setPlacesDraft(popularPlaces);
     }
-  }, [popularPlaces]);
+  }, [popularPlaces, isOpen]);
 
   // New Quick Chip input & Management States
   const [newQuickChipText, setNewQuickChipText] = useState('');
@@ -744,18 +758,17 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
         setSettingsDraft(data.customSettings);
       }
       if (Array.isArray(data.stands) && data.stands.length > 0) {
-        localStorage.setItem('safar_stands_v4', JSON.stringify(data.stands));
+        localStorage.setItem('safar_stands_v6', JSON.stringify(data.stands));
+        data.stands.forEach((s: Stand) => onSaveStand(s, false));
       }
       if (Array.isArray(data.categories) && data.categories.length > 0) {
         localStorage.setItem('safar_categories_v4', JSON.stringify(data.categories));
+        data.categories.forEach((c: VehicleCategoryItem) => onSaveCategory(c, false));
       }
       if (data.hotlines) {
         onSaveHotlines(data.hotlines);
       }
-      showToast('🎉 সফলভাবে ব্যাকআপ থেকে সকল কনফিগারেশন রিস্টোর করা হয়েছে!');
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      showToast('🎉 সফলভাবে ব্যাকআপ থেকে সকল কনফিগারেশন রিস্টোর ও ফায়ারস্টোরে সিঙ্ক হয়েছে!');
     } catch {
       showToast('ভুল JSON ফরম্যাট! সঠিক ব্যাকআপ ফাইল প্রদান করুন');
     }

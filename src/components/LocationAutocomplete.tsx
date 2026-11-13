@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { MapPin, Navigation, X, Search, Check, Truck, Building2 } from 'lucide-react';
+import { MapPin, Navigation, X, Search, Check, Truck, Crosshair, Loader2, Globe } from 'lucide-react';
 import { PauseMarqueeText } from './PauseMarqueeText';
 import { GAFARGAON_UNIONS } from '../data/gafargaonUnionData';
+import { searchBoundedFreePlaces, FreeGeocodedPlace } from '../services/freeMapSearchService';
+import { haversineMeters } from '../utils/gafargaonGeo';
 
 export interface LocationAutocompleteProps {
   label: string;
@@ -15,6 +17,7 @@ export interface LocationAutocompleteProps {
     isTracking?: boolean;
   };
   onLocateGps?: () => void;
+  onPinOnMap?: () => void;
   onChangeLocation: (name: string, coords?: { lat: number; lng: number }) => void;
   placeholder?: string;
   places?: Array<{
@@ -41,6 +44,7 @@ export interface UnifiedPlaceItem {
   unionName?: string;
   area?: string;
   isStand?: boolean;
+  isLiveOsm?: boolean;
   searchKeywords?: string[];
   lat: number;
   lng: number;
@@ -53,6 +57,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
   isGpsActive = false,
   userGps,
   onLocateGps,
+  onPinOnMap,
   onChangeLocation,
   placeholder = 'স্থান বা স্ট্যান্ড খুঁজুন...',
   places = []
@@ -60,6 +65,8 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [inputValue, setInputValue] = useState(value || '');
   const [selectedUnionFilter, setSelectedUnionFilter] = useState<string>('all');
+  const [liveOsmPlaces, setLiveOsmPlaces] = useState<FreeGeocodedPlace[]>([]);
+  const [isSearchingLive, setIsSearchingLive] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,7 +87,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
   }, []);
 
   // Map incoming items to unified structure
-  const unifiedPlaces: UnifiedPlaceItem[] = places
+  const unifiedPlaces: UnifiedPlaceItem[] = useMemo(() => places
     .filter(p => {
       const name = (p.bengaliName || p.name || '').trim();
       // Permanently remove any fictitious Goyeshpur UP bhaban
@@ -119,19 +126,52 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         lat: p.lat,
         lng: p.lng
       };
-    });
+    }), [places]);
+
+  // Live bounded geocoding search (Photon + Nominatim across Gafargaon + Pagla + 3-4km border)
+  useEffect(() => {
+    const q = inputValue.trim();
+    if (!isOpen || q.length < 2 || q.includes('আমার বর্তমান অবস্থান') || q.includes('পিন:')) {
+      setLiveOsmPlaces([]);
+      setIsSearchingLive(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setIsSearchingLive(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await searchBoundedFreePlaces(q, unifiedPlaces, controller.signal);
+        if (!controller.signal.aborted) {
+          setLiveOsmPlaces(res);
+        }
+      } catch {
+        // Ignore aborts
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsSearchingLive(false);
+        }
+      }
+    }, 280);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [inputValue, isOpen, unifiedPlaces]);
 
   // Canonical list of all 15 unions + Pourashava (including all Pagla thana unions)
-  // Exactly 16 legitimate administrative entities (Gafargaon Pourashava + 15 Unions)
-  // NEVER add arbitrary/redundant chips like bare 'গফরগাঁও' or non-existent 'গয়েশপুর (পাগলা)'
   const availableUnions = useMemo(() => {
     return GAFARGAON_UNIONS.map(u => u.nameBengali);
   }, []);
 
-  // Filter based on search query and union filter
-  const filteredPlaces = unifiedPlaces.filter((p) => {
+  // Filter local places based on search query and union filter
+  const filteredPlaces = useMemo(() => unifiedPlaces.filter((p) => {
     const q = inputValue.toLowerCase().trim();
     const matchesUnion = selectedUnionFilter === 'all' || (() => {
+      if (selectedUnionFilter === '__border__') {
+        return (p.unionName || '').includes('সীমান্ত') || (p.area || '').includes('সীমান্ত');
+      }
       const target = selectedUnionFilter.replace(' ইউনিয়ন', '').replace(' (পাগলা)', '').trim().toLowerCase();
       const placeUni = (p.unionName || '').replace(' ইউনিয়ন', '').replace(' (পাগলা)', '').trim().toLowerCase();
       const placeArea = (p.area || '').toLowerCase();
@@ -139,7 +179,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
     })();
     if (!matchesUnion) return false;
 
-    if (!q || q.includes('আমার বর্তমান অবস্থান') || q.includes('gps') || q.includes('লাইভ')) {
+    if (!q || q.includes('আমার বর্তমান অবস্থান') || q.includes('gps') || q.includes('লাইভ') || q.includes('পিন:')) {
       return true;
     }
 
@@ -151,7 +191,36 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
     const kwMatch = p.searchKeywords?.some(kw => kw.toLowerCase().includes(q) || q.includes(kw.toLowerCase()));
 
     return nameMatch || engMatch || unionMatch || areaMatch || catMatch || kwMatch;
-  });
+  }), [unifiedPlaces, inputValue, selectedUnionFilter]);
+
+  // Deduplicated live OSM results not already shown in local filteredPlaces
+  const uniqueLiveResults: UnifiedPlaceItem[] = useMemo(() => {
+    if ((selectedUnionFilter !== 'all' && selectedUnionFilter !== '__border__') || liveOsmPlaces.length === 0) return [];
+    return liveOsmPlaces
+      .filter((lp) => {
+        if (selectedUnionFilter === '__border__' && !lp.unionNameBengali.includes('সীমান্ত')) {
+          return false;
+        }
+        const lpName = lp.bengaliName.toLowerCase().trim();
+        return !filteredPlaces.some((fp) => {
+          if (fp.name.toLowerCase().trim() === lpName) return true;
+          return haversineMeters(fp.lat, fp.lng, lp.lat, lp.lng) < 55 && fp.name.toLowerCase().includes(lpName.slice(0, 4));
+        });
+      })
+      .map((lp) => ({
+        id: lp.id,
+        name: lp.bengaliName,
+        englishName: lp.name,
+        category: lp.category,
+        categoryLabel: lp.categoryLabel,
+        unionName: lp.unionNameBengali,
+        area: lp.area,
+        isStand: false,
+        isLiveOsm: true,
+        lat: lp.lat,
+        lng: lp.lng,
+      }));
+  }, [liveOsmPlaces, filteredPlaces, selectedUnionFilter]);
 
   const handleSelectPlace = (place: UnifiedPlaceItem) => {
     setInputValue(place.name);
@@ -168,32 +237,48 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
 
   return (
     <div ref={containerRef} className="relative w-full">
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between gap-1 mb-1 flex-wrap">
         <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
           <MapPin className={`w-3.5 h-3.5 ${isPickup ? 'text-emerald-600' : 'text-red-500'}`} />
           <span>{label}</span>
         </label>
-        {isPickup && onLocateGps && (
-          <button
-            type="button"
-            onClick={() => {
-              onLocateGps();
-              if (!inputValue && unifiedPlaces.length > 0) {
-                const fallbackName = unifiedPlaces[0].name;
-                setInputValue(fallbackName);
-              }
-            }}
-            className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors cursor-pointer ${
-              isGpsActive
-                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
-            }`}
-            title="লাইভ GPS লোকেশন চিহ্নিত করুন"
-          >
-            <Navigation className={`w-3 h-3 ${isGpsActive ? 'text-emerald-600 animate-pulse' : ''}`} />
-            <span>{isGpsActive ? 'GPS সক্রিয়' : 'আমার লোকেশন নিন'}</span>
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {onPinOnMap && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+                onPinOnMap();
+              }}
+              className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 hover:bg-teal-100 transition-colors cursor-pointer"
+              title="ম্যাপের যেকোনো জায়গায় ট্যাপ করে নিখুঁত পিন বসান"
+            >
+              <Crosshair className="w-3 h-3 text-teal-700" />
+              <span>ম্যাপে পিন</span>
+            </button>
+          )}
+          {isPickup && onLocateGps && (
+            <button
+              type="button"
+              onClick={() => {
+                onLocateGps();
+                if (!inputValue && unifiedPlaces.length > 0) {
+                  const fallbackName = unifiedPlaces[0].name;
+                  setInputValue(fallbackName);
+                }
+              }}
+              className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors cursor-pointer ${
+                isGpsActive
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+              }`}
+              title="লাইভ GPS লোকেশন চিহ্নিত করুন"
+            >
+              <Navigation className={`w-3 h-3 ${isGpsActive ? 'text-emerald-600 animate-pulse' : ''}`} />
+              <span>{isGpsActive ? 'GPS সক্রিয়' : 'আমার লোকেশন নিন'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="relative flex items-center bg-white border border-slate-300 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 rounded-xl px-2.5 py-1.5 transition-all shadow-xs">
@@ -206,6 +291,9 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
           placeholder={placeholder}
           className="w-full text-xs font-semibold text-slate-800 placeholder-slate-400 bg-transparent outline-none truncate"
         />
+        {isSearchingLive && (
+          <Loader2 className="w-3.5 h-3.5 text-emerald-600 animate-spin shrink-0 ml-1" />
+        )}
         {inputValue && (
           <button
             type="button"
@@ -222,13 +310,13 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
       </div>
 
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-xl max-h-72 overflow-y-auto z-50 p-2 animate-in fade-in zoom-in-95">
+        <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-xl max-h-80 overflow-y-auto z-50 p-2 animate-in fade-in zoom-in-95">
           {/* Header & Quick Union Filter */}
           <div className="pb-1.5 mb-1.5 border-b border-slate-100">
             <div className="flex items-center justify-between px-1 mb-1 text-[10.5px]">
-              <span className="font-bold text-slate-700">১৫টি ইউনিয়ন ও পৌরসভার স্থানসমূহ</span>
+              <span className="font-bold text-slate-700">১৫ ইউনিয়ন, পৌরসভা ও +৪ কিমি সীমান্ত</span>
               <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                {filteredPlaces.length}টি স্থান
+                {filteredPlaces.length + uniqueLiveResults.length}টি স্থান
               </span>
             </div>
 
@@ -244,6 +332,17 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
                 }`}
               >
                 <span>সকল ইউনিয়ন</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedUnionFilter('__border__')}
+                className={`text-[10px] font-bold px-2.5 py-1 rounded-lg whitespace-nowrap transition cursor-pointer flex items-center gap-1 shrink-0 ${
+                  selectedUnionFilter === '__border__'
+                    ? 'bg-teal-700 text-white shadow-xs font-black'
+                    : 'bg-teal-50 text-teal-800 border border-teal-200 hover:bg-teal-100'
+                }`}
+              >
+                <span>সীমান্ত (+৪ কিমি)</span>
               </button>
               {availableUnions.map((u) => {
                 const isSelected = selectedUnionFilter === u;
@@ -281,56 +380,135 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
 
           {/* List of Places & Stands */}
           <div className="divide-y divide-slate-50 space-y-1">
-            {filteredPlaces.length === 0 ? (
-              <div className="p-3 text-center text-xs text-slate-500">
-                কোনো তালিকাভুক্ত স্থান পাওয়া যায়নি। আপনি নিজের মতো টাইপ করতে পারেন।
+            {filteredPlaces.length === 0 && uniqueLiveResults.length === 0 && !isSearchingLive ? (
+              <div className="p-3 text-center text-xs text-slate-500 space-y-2">
+                <p>কোনো তালিকাভুক্ত স্থান পাওয়া যায়নি। আপনি নিজের মতো টাইপ করতে পারেন অথবা ম্যাপে পিন বসাতে পারেন।</p>
+                {onPinOnMap && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(false);
+                      onPinOnMap();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-[11px] font-bold shadow-xs cursor-pointer transition"
+                  >
+                    <Crosshair className="w-3.5 h-3.5" />
+                    <span>ম্যাপে ট্যাপ করে লোকেশন নিন</span>
+                  </button>
+                )}
               </div>
             ) : (
-              filteredPlaces.map((place) => {
-                const isSelected = inputValue.trim() === place.name.trim();
-                return (
-                  <button
-                    key={`${place.name}-${place.lat}-${place.lng}`}
-                    type="button"
-                    onClick={() => handleSelectPlace(place)}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                      isSelected ? 'bg-emerald-100/80 text-emerald-950 font-bold' : 'hover:bg-slate-50 text-slate-800'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      {place.isStand ? (
-                        <Truck className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-emerald-700' : 'text-emerald-600'}`} />
-                      ) : (
-                        <MapPin className={`w-3.5 h-3.5 shrink-0 ${isPickup ? 'text-emerald-600' : 'text-red-500'}`} />
-                      )}
+              <>
+                {filteredPlaces.map((place) => {
+                  const isSelected = inputValue.trim() === place.name.trim();
+                  return (
+                    <button
+                      key={`${place.name}-${place.lat}-${place.lng}`}
+                      type="button"
+                      onClick={() => handleSelectPlace(place)}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                        isSelected ? 'bg-emerald-100/80 text-emerald-950 font-bold' : 'hover:bg-slate-50 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        {place.isStand ? (
+                          <Truck className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-emerald-700' : 'text-emerald-600'}`} />
+                        ) : (
+                          <MapPin className={`w-3.5 h-3.5 shrink-0 ${isPickup ? 'text-emerald-600' : 'text-red-500'}`} />
+                        )}
 
-                      <div className="min-w-0 flex-1 overflow-hidden space-y-0.5">
-                        <PauseMarqueeText
-                          text={place.name}
-                          className={`text-xs ${isSelected ? 'font-black text-emerald-950' : 'font-semibold text-slate-900'}`}
-                          pauseSec={1.5}
-                        />
-                        <PauseMarqueeText
-                          text={`${place.unionName ? place.unionName + ' • ' : ''}${place.area || place.categoryLabel || ''}`}
-                          className={`text-[9.5px] block ${isSelected ? 'text-emerald-900 font-semibold' : 'text-slate-500'}`}
-                          pauseSec={1.5}
-                        />
+                        <div className="min-w-0 flex-1 overflow-hidden space-y-0.5">
+                          <PauseMarqueeText
+                            text={place.name}
+                            className={`text-xs ${isSelected ? 'font-black text-emerald-950' : 'font-semibold text-slate-900'}`}
+                            pauseSec={1.5}
+                          />
+                          <PauseMarqueeText
+                            text={`${place.unionName ? place.unionName + ' • ' : ''}${place.area || place.categoryLabel || ''}`}
+                            className={`text-[9.5px] block ${isSelected ? 'text-emerald-900 font-semibold' : 'text-slate-500'}`}
+                            pauseSec={1.5}
+                          />
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
-                        place.isStand ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-600'
-                      }`}>
-                        {place.categoryLabel}
-                      </span>
-                      {isSelected && <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                          place.isStand ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {place.categoryLabel}
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />}
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {isSearchingLive && (
+                  <div className="px-2.5 py-2 flex items-center gap-2 text-[11px] font-semibold text-teal-700 bg-teal-50/50 rounded-xl">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    <span>গফরগাঁও–পাগলা ও +৪ কিমি সীমান্তে লাইভ স্থান খোঁজা হচ্ছে...</span>
+                  </div>
+                )}
+
+                {uniqueLiveResults.length > 0 && (
+                  <div className="pt-1.5 mt-1 border-t border-slate-200/80 space-y-1">
+                    <div className="px-2 py-0.5 flex items-center gap-1.5 text-[10px] font-extrabold text-teal-800">
+                      <Globe className="w-3 h-3 text-teal-600" />
+                      <span>লাইভ ম্যাপ ফলাফল (গফরগাঁও–পাগলা ও +৪ কিমি সীমান্ত)</span>
                     </div>
-                  </button>
-                );
-              })
+                    {uniqueLiveResults.map((place) => {
+                      const isSelected = inputValue.trim() === place.name.trim();
+                      return (
+                        <button
+                          key={`live-${place.id}-${place.lat}-${place.lng}`}
+                          type="button"
+                          onClick={() => handleSelectPlace(place)}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                            isSelected ? 'bg-teal-100/80 text-teal-950 font-bold' : 'hover:bg-teal-50/60 text-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <Globe className="w-3.5 h-3.5 shrink-0 text-teal-600" />
+                            <div className="min-w-0 flex-1 overflow-hidden space-y-0.5">
+                              <PauseMarqueeText
+                                text={place.name}
+                                className="text-xs font-semibold text-slate-900"
+                                pauseSec={1.5}
+                              />
+                              <PauseMarqueeText
+                                text={`${place.unionName ? place.unionName + ' • ' : ''}${place.area || ''}`}
+                                className="text-[9.5px] block text-slate-500"
+                                pauseSec={1.5}
+                              />
+                            </div>
+                          </div>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-teal-50 text-teal-800 border border-teal-200 shrink-0">
+                            {place.categoryLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
+
+          {onPinOnMap && (filteredPlaces.length > 0 || uniqueLiveResults.length > 0) && (
+            <div className="pt-1.5 mt-1.5 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  onPinOnMap();
+                }}
+                className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 text-[11px] font-bold cursor-pointer transition-colors"
+              >
+                <Crosshair className="w-3.5 h-3.5 text-teal-700" />
+                <span>তালিকায় না পেলে ম্যাপ/স্যাটেলাইটে পিন বসান</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -32,13 +32,13 @@ test('isWithinGafargaonServiceArea accepts Gafargaon, Pagla, and 3-4km border zo
   assert.equal(isWithinGafargaonServiceArea(24.7471, 90.4203), false);
 });
 
-test('clampToGafargaonServiceArea keeps precision to 6 decimals within service bounds', () => {
+test('clampToGafargaonServiceArea keeps precision up to 14 decimals within service bounds', () => {
   const clamped = clampToGafargaonServiceArea(25.0, 91.0);
   assert.equal(clamped.lat, GAFARGAON_SERVICE_BOUNDS.north);
   assert.equal(clamped.lng, GAFARGAON_SERVICE_BOUNDS.east);
-  const inside = clampToGafargaonServiceArea(24.4536123, 90.5479123);
-  assert.equal(inside.lat, 24.453612);
-  assert.equal(inside.lng, 90.547912);
+  const inside = clampToGafargaonServiceArea(24.45361234567891, 90.54791234567878);
+  assert.equal(inside.lat, 24.45361234567891);
+  assert.equal(inside.lng, 90.54791234567878);
 });
 
 test('haversineMeters and inferNearestAreaInfo accurately compute nearest landmark and border flag', () => {

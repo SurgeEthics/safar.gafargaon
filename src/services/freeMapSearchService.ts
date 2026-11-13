@@ -89,8 +89,8 @@ export async function searchBoundedFreePlaces(
         const rawLat = c?.location?.y;
         const rawLng = c?.location?.x;
         if (typeof rawLat !== 'number' || typeof rawLng !== 'number') continue;
-        const lat = Number(rawLat.toFixed(6));
-        const lng = Number(rawLng.toFixed(6));
+        const lat = Number(rawLat.toFixed(14));
+        const lng = Number(rawLng.toFixed(14));
         if (!isWithinGafargaonServiceArea(lat, lng)) continue;
 
         const attrs = c.attributes || {};
@@ -129,7 +129,7 @@ export async function searchBoundedFreePlaces(
 
 /**
  * Reverse geocodes a tapped map point (Tap-to-Pin) into a human-friendly Bengali location name
- * with 6-decimal high-accuracy latitude & longitude using CORS-safe locality lookup + local precision matching.
+ * with 14-decimal high-accuracy latitude & longitude using CORS-safe locality lookup + local precision matching.
  */
 export async function reverseGeocodeFree(
   rawLat: number,

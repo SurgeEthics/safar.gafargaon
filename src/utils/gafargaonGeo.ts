@@ -80,8 +80,8 @@ export function clampToGafargaonServiceArea(
     return { ...GAFARGAON_CENTER };
   }
   return {
-    lat: Number(Math.min(bounds.north, Math.max(bounds.south, lat)).toFixed(6)),
-    lng: Number(Math.min(bounds.east, Math.max(bounds.west, lng)).toFixed(6)),
+    lat: Number(Math.min(bounds.north, Math.max(bounds.south, lat)).toFixed(14)),
+    lng: Number(Math.min(bounds.east, Math.max(bounds.west, lng)).toFixed(14)),
   };
 }
 

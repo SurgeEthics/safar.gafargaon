@@ -90,8 +90,8 @@ export function parseGoogleMapsCoordinates(raw: string): { lat: number; lng: num
   }
 
   return {
-    lat: Number(lat.toFixed(6)),
-    lng: Number(lng.toFixed(6)),
+    lat: Number(lat.toFixed(14)),
+    lng: Number(lng.toFixed(14)),
   };
 }
 
@@ -178,8 +178,8 @@ export function buildAdminPlaceAndStandPayloads(input: MapAdminPinInput) {
   const bn = input.bengaliName.trim();
   const en = (input.name || '').trim() || bn;
   const area = (input.area || '').trim() || 'গফরগাঁও পৌরসভা';
-  const lat = Number(Number(input.lat).toFixed(6));
-  const lng = Number(Number(input.lng).toFixed(6));
+  const lat = Number(Number(input.lat).toFixed(14));
+  const lng = Number(Number(input.lng).toFixed(14));
 
   return {
     place: {
@@ -372,8 +372,8 @@ export function resolveDriverMapPosition(
 
   if (hasValidDriverCoords && !(isDefaultFallbackCoord && standDiffersFromFallback)) {
     return {
-      lat: Number((driver.lat as number).toFixed(6)),
-      lng: Number((driver.lng as number).toFixed(6)),
+      lat: Number((driver.lat as number).toFixed(14)),
+      lng: Number((driver.lng as number).toFixed(14)),
       matchedStandName: matchedStand?.bengaliName || matchedStand?.nameBn,
     };
   }
@@ -382,8 +382,8 @@ export function resolveDriverMapPosition(
     const angle = (sameStandIndex * 137.5 * Math.PI) / 180;
     const radius = sameStandIndex === 0 ? 0.00028 : 0.00035 + Math.min(sameStandIndex, 8) * 0.00009;
     return {
-      lat: Number((matchedStand!.lat + Math.sin(angle) * radius).toFixed(6)),
-      lng: Number((matchedStand!.lng + Math.cos(angle) * radius).toFixed(6)),
+      lat: Number((matchedStand!.lat + Math.sin(angle) * radius).toFixed(14)),
+      lng: Number((matchedStand!.lng + Math.cos(angle) * radius).toFixed(14)),
       matchedStandName: matchedStand!.bengaliName || matchedStand!.nameBn,
     };
   }

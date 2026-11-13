@@ -70,31 +70,35 @@ test('buildAdminPlaceAndStandPayloads builds synchronized place and stand object
     name: 'Rahim House',
     category: 'বাসা / বাড়ি',
     area: 'গফরগাঁও পৌরসভা',
-    lat: 24.45361234,
-    lng: 90.54798765,
+    lat: 24.45361234567891,
+    lng: 90.54798765432112,
     idSeed: 12345,
   });
 
   assert.equal(place.id, 'place-map-12345');
   assert.equal(place.bengaliName, 'রহিম সাহেবের বাড়ি');
   assert.equal(place.category, 'বাসা / বাড়ি');
-  assert.equal(place.lat, 24.453612);
-  assert.equal(place.lng, 90.547988);
+  assert.equal(place.lat, 24.45361234567891);
+  assert.equal(place.lng, 90.54798765432112);
   assert.equal(place.isPopular, true);
   assert.equal(place.showOnMap, true);
 
   assert.equal(stand.id, 'stand-map-12345');
   assert.equal(stand.bengaliName, 'রহিম সাহেবের বাড়ি');
   assert.equal(stand.location, 'গফরগাঁও পৌরসভা • রহিম সাহেবের বাড়ি');
-  assert.equal(stand.lat, 24.453612);
-  assert.equal(stand.lng, 90.547988);
+  assert.equal(stand.lat, 24.45361234567891);
+  assert.equal(stand.lng, 90.54798765432112);
 });
 
-test('parseGoogleMapsCoordinates extracts valid coordinates from plain text and Google Maps URLs', () => {
+test('parseGoogleMapsCoordinates extracts valid coordinates up to 14 decimals from plain text and Google Maps URLs', () => {
   assert.deepEqual(parseGoogleMapsCoordinates('24.4536, 90.5479'), { lat: 24.4536, lng: 90.5479 });
   assert.deepEqual(
-    parseGoogleMapsCoordinates('https://www.google.com/maps/place/Gafargaon/@24.4512345,90.5567891,17z'),
-    { lat: 24.451235, lng: 90.556789 }
+    parseGoogleMapsCoordinates('24.44661234567891, 90.56061812345678'),
+    { lat: 24.44661234567891, lng: 90.56061812345678 }
+  );
+  assert.deepEqual(
+    parseGoogleMapsCoordinates('https://www.google.com/maps/place/Gafargaon/@24.45123456789012,90.55678912345678,17z'),
+    { lat: 24.45123456789012, lng: 90.55678912345678 }
   );
   assert.deepEqual(
     parseGoogleMapsCoordinates('https://maps.google.com/?q=24.448811,90.549922'),

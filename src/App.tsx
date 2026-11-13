@@ -11267,7 +11267,7 @@ export default function App() {
                                 {stand.bengaliName}
                               </h4>
                               <p className="text-[11px] text-slate-500 font-mono mt-0.5">
-                                GPS: {Number(stand.lat || 0).toFixed(4)}, {Number(stand.lng || 0).toFixed(4)}
+                                GPS: {Number(Number(stand.lat || 0).toFixed(14))}, {Number(Number(stand.lng || 0).toFixed(14))}
                               </p>
                               <div className="mt-2 flex items-center gap-1.5">
                                 <span className="bg-emerald-50 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-200">
@@ -11886,7 +11886,7 @@ export default function App() {
                   </label>
                   <input
                     type="number"
-                    step="0.0001"
+                    step="any"
                     value={standForm.lat}
                     onChange={(e) => setStandForm({ ...standForm, lat: parseFloat(e.target.value) || 24.5535 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -11899,7 +11899,7 @@ export default function App() {
                   </label>
                   <input
                     type="number"
-                    step="0.0001"
+                    step="any"
                     value={standForm.lng}
                     onChange={(e) => setStandForm({ ...standForm, lng: parseFloat(e.target.value) || 90.5518 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"

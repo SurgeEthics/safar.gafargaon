@@ -376,7 +376,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
           lat: clamped.lat,
           lng: clamped.lng,
           title: 'লোকেশন শনাক্ত করা হচ্ছে...',
-          subtitle: `${clamped.lat.toFixed(6)}, ${clamped.lng.toFixed(6)}`,
+          subtitle: `${clamped.lat.toFixed(14)}, ${clamped.lng.toFixed(14)}`,
           unionName: '',
           isResolving: true
         });
@@ -400,8 +400,8 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
           name: '',
           category: 'স্ট্যান্ড',
           area: matchedUnion ? matchedUnion.nameBengali : GAFARGAON_UNIONS[0].nameBengali,
-          lat: Number(geo.lat.toFixed(6)),
-          lng: Number(geo.lng.toFixed(6))
+          lat: Number(geo.lat.toFixed(14)),
+          lng: Number(geo.lng.toFixed(14))
         });
 
         if (currentPinMode === 'pickup' && onSelectPickupPlaceRef.current) {
@@ -1640,7 +1640,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                   <span>{droppedPin.title}</span>
                 </h4>
                 <p className="text-[10.5px] text-slate-500 leading-snug break-words mt-0.5">
-                  {droppedPin.subtitle} • ({droppedPin.lat.toFixed(5)}, {droppedPin.lng.toFixed(5)})
+                  {droppedPin.subtitle} • ({droppedPin.lat.toFixed(14)}, {droppedPin.lng.toFixed(14)})
                 </p>
               </div>
               <button
@@ -1700,8 +1700,8 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                       name: '',
                       category: 'স্ট্যান্ড',
                       area: matchedUnion ? matchedUnion.nameBengali : GAFARGAON_UNIONS[0].nameBengali,
-                      lat: Number(droppedPin.lat.toFixed(6)),
-                      lng: Number(droppedPin.lng.toFixed(6))
+                      lat: Number(droppedPin.lat.toFixed(14)),
+                      lng: Number(droppedPin.lng.toFixed(14))
                     });
                     setAdminPinCoordInput('');
                     setAdminPinSaveTarget('both');
@@ -1844,7 +1844,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                     <label className="font-bold text-slate-700 block mb-1">অক্ষাংশ (Latitude): *</label>
                     <input
                       type="number"
-                      step="0.000001"
+                      step="any"
                       value={adminPinForm.lat}
                       onChange={(e) => setAdminPinForm({ ...adminPinForm, lat: parseFloat(e.target.value) || 0 })}
                       className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -1855,7 +1855,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                     <label className="font-bold text-slate-700 block mb-1">দ্রাঘিমাংশ (Longitude): *</label>
                     <input
                       type="number"
-                      step="0.000001"
+                      step="any"
                       value={adminPinForm.lng}
                       onChange={(e) => setAdminPinForm({ ...adminPinForm, lng: parseFloat(e.target.value) || 0 })}
                       className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"

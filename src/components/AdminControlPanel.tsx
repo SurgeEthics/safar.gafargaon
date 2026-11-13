@@ -531,11 +531,11 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
 
     const resolvedLat =
       Number.isFinite(Number(driverForm.lat)) && Number(driverForm.lat) > 20
-        ? Number(Number(driverForm.lat).toFixed(6))
+        ? Number(Number(driverForm.lat).toFixed(14))
         : (selectedStand?.lat ?? 24.4536);
     const resolvedLng =
       Number.isFinite(Number(driverForm.lng)) && Number(driverForm.lng) > 85
-        ? Number(Number(driverForm.lng).toFixed(6))
+        ? Number(Number(driverForm.lng).toFixed(14))
         : (selectedStand?.lng ?? 90.5479);
 
     const driverId = editingDriver ? editingDriver.id : `drv-${Date.now()}`;
@@ -1440,7 +1440,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                             {stand.bengaliName}
                           </h4>
                           <span className="text-[11px] text-slate-400 font-mono block mt-0.5">
-                            {stand.name} • GPS: {stand.lat.toFixed(4)}, {stand.lng.toFixed(4)}
+                            {stand.name} • GPS: {Number(Number(stand.lat || 0).toFixed(14))}, {Number(Number(stand.lng || 0).toFixed(14))}
                           </span>
                           <span className="inline-block bg-emerald-50 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-200 mt-2">
                             সক্রিয় চালক: {driverCount} জন
@@ -1608,7 +1608,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                               {place.area || 'গফরগাঁও'}
                             </p>
                             <span className="text-[10.5px] text-slate-400 font-mono block mt-0.5">
-                              GPS: {place.lat?.toFixed(4)}, {place.lng?.toFixed(4)}
+                              GPS: {Number(Number(place.lat || 0).toFixed(14))}, {Number(Number(place.lng || 0).toFixed(14))}
                             </span>
                             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                               <span className="inline-block bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded border border-slate-200">
@@ -3157,7 +3157,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   <label className="font-bold text-slate-700 block mb-1">অক্ষাংশ (Latitude):</label>
                   <input
                     type="number"
-                    step="0.000001"
+                    step="any"
                     value={standForm.lat}
                     onChange={(e) => setStandForm({ ...standForm, lat: parseFloat(e.target.value) || 24.4536 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-xs sm:text-sm"
@@ -3168,7 +3168,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   <label className="font-bold text-slate-700 block mb-1">দ্রাঘিমাংশ (Longitude):</label>
                   <input
                     type="number"
-                    step="0.000001"
+                    step="any"
                     value={standForm.lng}
                     onChange={(e) => setStandForm({ ...standForm, lng: parseFloat(e.target.value) || 90.5479 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-xs sm:text-sm"
@@ -3800,7 +3800,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   <label className="font-bold text-slate-700 block mb-1">অক্ষাংশ (Latitude):</label>
                   <input
                     type="number"
-                    step="0.000001"
+                    step="any"
                     value={driverForm.lat}
                     onChange={(e) => setDriverForm({ ...driverForm, lat: parseFloat(e.target.value) || 24.4536 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -3810,7 +3810,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   <label className="font-bold text-slate-700 block mb-1">দ্রাঘিমাংশ (Longitude):</label>
                   <input
                     type="number"
-                    step="0.000001"
+                    step="any"
                     value={driverForm.lng}
                     onChange={(e) => setDriverForm({ ...driverForm, lng: parseFloat(e.target.value) || 90.5479 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"

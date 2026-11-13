@@ -16,9 +16,15 @@ export type PlaceCategory =
   | 'ইউনিয়ন'
   | 'বাসা / বাড়ি'
   | 'মসজিদ / মাদ্রাসা'
-  | 'দোকান / ব্যাবসা প্রতিষ্ঠান';
+  | 'দোকান / ব্যাবসা প্রতিষ্ঠান'
+  | (string & {});
 
-export const PLACE_CATEGORY_OPTIONS: Array<{ value: PlaceCategory; label: string }> = [
+export interface PlaceCategoryOption {
+  value: string;
+  label: string;
+}
+
+export const PLACE_CATEGORY_OPTIONS: PlaceCategoryOption[] = [
   { value: 'স্ট্যান্ড', label: 'স্ট্যান্ড পয়েন্ট' },
   { value: 'মোড়', label: 'চৌরাস্তা / মোড়' },
   { value: 'বাজার', label: 'বাজার / হাট' },

@@ -10,6 +10,8 @@ import {
   resolveVehicleCategoryMeta,
   computeStandVehicleTypesSummary,
   resolveDriverMapPosition,
+  upsertPlaceCategory,
+  removePlaceCategory,
 } from './adminPersistence';
 
 test('stripUndefinedFields removes undefined keys recursively without mutating defined falsy values', () => {
@@ -200,5 +202,37 @@ test('resolveDriverMapPosition anchors drivers with missing or fallback coords t
     0
   );
   assert.deepEqual({ lat: explicitDriverPos.lat, lng: explicitDriverPos.lng }, { lat: 24.3401, lng: 90.5902 });
+});
+
+test('upsertPlaceCategory and removePlaceCategory support adding, editing, duplicate prevention, and removing place categories', () => {
+  const initial = [
+    { value: 'স্ট্যান্ড', label: 'স্ট্যান্ড পয়েন্ট' },
+    { value: 'বাজার', label: 'বাজার / হাট' },
+  ];
+
+  // Add new custom category
+  const added = upsertPlaceCategory(initial, 'ব্যাংক / এটিএম');
+  assert.equal(added.ok, true);
+  assert.equal(added.list.length, 3);
+  assert.deepEqual(added.updatedItem, { value: 'ব্যাংক / এটিএম', label: 'ব্যাংক / এটিএম' });
+
+  // Prevent duplicate
+  const dup = upsertPlaceCategory(added.list, 'ব্যাংক / এটিএম');
+  assert.equal(dup.ok, false);
+
+  // Edit existing category
+  const edited = upsertPlaceCategory(added.list, 'ব্যাংক ও বীমা', 'ব্যাংক / এটিএম');
+  assert.equal(edited.ok, true);
+  assert.equal(edited.list[2].label, 'ব্যাংক ও বীমা');
+
+  // Remove category
+  const removed = removePlaceCategory(edited.list, 'ব্যাংক ও বীমা');
+  assert.equal(removed.ok, true);
+  assert.equal(removed.list.length, 2);
+
+  // Guard against deleting the very last category
+  const onlyOne = removePlaceCategory([{ value: 'স্ট্যান্ড', label: 'স্ট্যান্ড পয়েন্ট' }], 'স্ট্যান্ড');
+  assert.equal(onlyOne.ok, false);
+  assert.equal(onlyOne.list.length, 1);
 });
 

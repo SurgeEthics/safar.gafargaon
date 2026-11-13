@@ -49,9 +49,9 @@ import {
 import { Stand, Driver, VehicleCategoryItem } from '../App';
 import { EmergencyContact } from '../types';
 import { INITIAL_EMERGENCY_CONTACTS } from '../data/initialData';
-import { GafargaonPlace, PLACE_CATEGORY_OPTIONS, PlaceCategory } from '../data/gafargaonPlaces';
+import { GafargaonPlace, PLACE_CATEGORY_OPTIONS, PlaceCategory, PlaceCategoryOption } from '../data/gafargaonPlaces';
 import { GAFARGAON_UNIONS, COMPREHENSIVE_UNION_PLACES, ComprehensivePlace, UnionInfo } from '../data/gafargaonUnionData';
-import { parseGoogleMapsCoordinates } from '../utils/adminPersistence';
+import { parseGoogleMapsCoordinates, upsertPlaceCategory, removePlaceCategory } from '../utils/adminPersistence';
 import { AutoMarqueeText } from './AutoMarqueeText';
 import { PauseMarqueeText } from './PauseMarqueeText';
 
@@ -72,6 +72,7 @@ export interface AppCustomSettings {
   perKmMultiplier: number;
   roundFareToNearest5: boolean;
   quickDestinations: string[];
+  placeCategories?: PlaceCategoryOption[];
   customAppUrl?: string;
 }
 
@@ -159,7 +160,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [downloadReadyUrl, setDownloadReadyUrl] = useState<string | null>(null);
   const [downloadReadySize, setDownloadReadySize] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৫০ MB');
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৫৮ MB');
 
   // Dedicated Admin Password / PIN Change Slot State
   const [currentPinInput, setCurrentPinInput] = useState('');
@@ -243,6 +244,10 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [isPlaceModalOpen, setIsPlaceModalOpen] = useState(false);
   const [placeCoordPaste, setPlaceCoordPaste] = useState('');
   const [placeFilterQuery, setPlaceFilterQuery] = useState('');
+  const [editingPlaceCategoryValue, setEditingPlaceCategoryValue] = useState<string | null>(null);
+  const [placeCategoryInput, setPlaceCategoryInput] = useState('');
+  const [isQuickAddCatInModalOpen, setIsQuickAddCatInModalOpen] = useState(false);
+  const [quickAddCatInModalText, setQuickAddCatInModalText] = useState('');
   const [placeForm, setPlaceForm] = useState<GafargaonPlace>({
     id: '',
     name: '',
@@ -307,6 +312,85 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       setPlacesDraft(popularPlaces);
     }
   }, [popularPlaces, isOpen]);
+
+  const effectivePlaceCategories: PlaceCategoryOption[] = useMemo(() => {
+    if (settingsDraft.placeCategories && settingsDraft.placeCategories.length > 0) {
+      return settingsDraft.placeCategories;
+    }
+    return PLACE_CATEGORY_OPTIONS;
+  }, [settingsDraft.placeCategories]);
+
+  const handleSavePlaceCategoryItem = (labelRaw: string, editingValue?: string | null) => {
+    const res = upsertPlaceCategory(effectivePlaceCategories, labelRaw, editingValue);
+    if (!res.ok) {
+      showToast(res.message || 'ক্যাটাগরি সংরক্ষণ করা যায়নি');
+      return false;
+    }
+    const nextSettings: AppCustomSettings = {
+      ...settingsDraft,
+      placeCategories: res.list,
+    };
+    setSettingsDraft(nextSettings);
+    onSaveCustomSettings(nextSettings);
+
+    if (editingValue && res.updatedItem) {
+      const updatedCategoryValue = res.updatedItem.value;
+      if (placeForm.category === editingValue) {
+        setPlaceForm((prev) => ({ ...prev, category: updatedCategoryValue as PlaceCategory }));
+      }
+      setPlacesDraft((prev) =>
+        prev.map((p) => {
+          if (p.category === editingValue) {
+            const renamedPlace = { ...p, category: updatedCategoryValue as PlaceCategory };
+            if (onSavePopularPlace) onSavePopularPlace(renamedPlace);
+            return renamedPlace;
+          }
+          return p;
+        })
+      );
+    }
+
+    showToast(
+      editingValue
+        ? `✅ স্থানের ক্যাটাগরি '${res.updatedItem?.label}' আপডেট হয়েছে!`
+        : `✅ নতুন স্থানের ক্যাটাগরি '${res.updatedItem?.label}' যোগ হয়েছে!`
+    );
+    return true;
+  };
+
+  const handleDeletePlaceCategoryItem = (cat: PlaceCategoryOption) => {
+    const res = removePlaceCategory(effectivePlaceCategories, cat.value);
+    if (!res.ok) {
+      showToast(res.message || 'ক্যাটাগরি মুছে ফেলা যায়নি');
+      return;
+    }
+    const nextSettings: AppCustomSettings = {
+      ...settingsDraft,
+      placeCategories: res.list,
+    };
+    setSettingsDraft(nextSettings);
+    onSaveCustomSettings(nextSettings);
+    if (editingPlaceCategoryValue === cat.value) {
+      setEditingPlaceCategoryValue(null);
+      setPlaceCategoryInput('');
+    }
+    if (placeForm.category === cat.value && res.list[0]) {
+      setPlaceForm((prev) => ({ ...prev, category: res.list[0].value as PlaceCategory }));
+    }
+    showToast(`🗑️ '${cat.label}' ক্যাটাগরি তালিকা থেকে মুছে ফেলা হয়েছে`);
+  };
+
+  const handleResetPlaceCategories = () => {
+    const nextSettings: AppCustomSettings = {
+      ...settingsDraft,
+      placeCategories: PLACE_CATEGORY_OPTIONS,
+    };
+    setSettingsDraft(nextSettings);
+    onSaveCustomSettings(nextSettings);
+    setEditingPlaceCategoryValue(null);
+    setPlaceCategoryInput('');
+    showToast('ডিফল্ট স্থানের ক্যাটাগরি তালিকা রিস্টোর করা হয়েছে');
+  };
 
   // New Quick Chip input & Management States
   const [newQuickChipText, setNewQuickChipText] = useState('');
@@ -1537,11 +1621,13 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     onClick={() => {
                       setEditingPlace(null);
                       setPlaceCoordPaste('');
+                      setIsQuickAddCatInModalOpen(false);
+                      setQuickAddCatInModalText('');
                       setPlaceForm({
                         id: `place-${Date.now()}`,
                         name: '',
                         bengaliName: '',
-                        category: 'স্ট্যান্ড',
+                        category: (effectivePlaceCategories[0]?.value || 'স্ট্যান্ড') as PlaceCategory,
                         area: 'গফরগাঁও পৌরসভা',
                         lat: 24.4536,
                         lng: 90.5479,
@@ -1555,6 +1641,115 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     <Plus className="w-4 h-4" />
                     <span>+ নতুন স্থান যোগ করুন</span>
                   </button>
+                </div>
+              </div>
+
+              {/* Place Category Add / Edit / Remove Manager */}
+              <div className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-xs space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 flex items-center gap-1.5">
+                      <span>🏷️ স্থানের ক্যাটাগরি / ধরন ম্যানেজার ({toBengaliNumber(effectivePlaceCategories.length)}টি)</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      এখান থেকে আপনার পছন্দমতো বিভিন্ন স্থানের ক্যাটাগরি যোগ, এডিট বা ডিলিট করুন — যা স্থান যোগ ফর্ম ও ম্যাপ পিনে সাথে সাথে আপডেট হবে।
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetPlaceCategories}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-lg cursor-pointer self-start sm:self-auto shrink-0"
+                    title="ডিফল্ট স্থানের ক্যাটাগরি রিস্টোর করুন"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>ডিফল্ট রিস্টোর</span>
+                  </button>
+                </div>
+
+                {/* Add / Edit Inline Bar */}
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={placeCategoryInput}
+                    onChange={(e) => setPlaceCategoryInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (handleSavePlaceCategoryItem(placeCategoryInput, editingPlaceCategoryValue)) {
+                          setPlaceCategoryInput('');
+                          setEditingPlaceCategoryValue(null);
+                        }
+                      }
+                    }}
+                    placeholder={
+                      editingPlaceCategoryValue
+                        ? 'ক্যাটাগরির নতুন নাম লিখুন...'
+                        : 'নতুন ক্যাটাগরির নাম লিখুন (যেমন: ব্যাংক / এটিএম, পার্ক, পেট্রোল পাম্প)'
+                    }
+                    className="flex-1 min-w-[200px] px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (handleSavePlaceCategoryItem(placeCategoryInput, editingPlaceCategoryValue)) {
+                        setPlaceCategoryInput('');
+                        setEditingPlaceCategoryValue(null);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl cursor-pointer transition shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{editingPlaceCategoryValue ? 'আপডেট করুন' : 'ক্যাটাগরি যোগ করুন'}</span>
+                  </button>
+                  {editingPlaceCategoryValue && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingPlaceCategoryValue(null);
+                        setPlaceCategoryInput('');
+                      }}
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer shrink-0"
+                    >
+                      বাতিল
+                    </button>
+                  )}
+                </div>
+
+                {/* Categories List with Edit & Remove */}
+                <div className="flex flex-wrap gap-2">
+                  {effectivePlaceCategories.map((cat) => (
+                    <div
+                      key={cat.value}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold transition ${
+                        editingPlaceCategoryValue === cat.value
+                          ? 'bg-amber-50 border-amber-400 text-amber-950'
+                          : 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
+                      }`}
+                    >
+                      <span>{cat.label}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingPlaceCategoryValue(cat.value);
+                          setPlaceCategoryInput(cat.label);
+                        }}
+                        aria-label={`ক্যাটাগরি এডিট করুন: ${cat.label}`}
+                        title="ক্যাটাগরি এডিট করুন"
+                        className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-white rounded-md cursor-pointer transition"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePlaceCategoryItem(cat)}
+                        aria-label={`ক্যাটাগরি মুছে ফেলুন: ${cat.label}`}
+                        title="ক্যাটাগরি মুছে ফেলুন"
+                        className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-md cursor-pointer transition"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -2942,46 +3137,88 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                 )}
 
                 {/* Direct Link Active Bar & Copy Button */}
-                <div className="bg-white/95 p-2.5 rounded-xl border border-amber-400 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 mt-2 shadow-2xs">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <span className="text-[11px] font-black text-amber-900 shrink-0">সরাসরি লিঙ্ক:</span>
-                    <a
-                      href={liveOriginZipUrl}
-                      download="safar-gafargaon-clean-source.zip"
-                      onClick={() => {
-                        showToast(`🎉 সরাসরি লিঙ্ক থেকে ফ্রেশ প্রজেক্ট জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
-                      }}
-                      className="text-[11px] font-mono text-emerald-800 hover:text-emerald-950 underline truncate font-bold cursor-pointer"
-                      title="ক্লিক করে সরাসরি জিপ ফাইল ডাউনলোড করুন"
-                    >
-                      {liveOriginZipUrl}
-                    </a>
+                <div className="bg-white/95 p-3 rounded-xl border border-amber-400 space-y-2.5 mt-2 shadow-2xs">
+                  <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="text-[11px] font-black text-amber-900 shrink-0">সর্বশেষ আপডেটেড লিঙ্ক:</span>
+                      <a
+                        href={`${liveOriginZipUrl}?v=${Date.now()}`}
+                        download="safar-gafargaon-clean-source.zip"
+                        onClick={() => {
+                          showToast(`🎉 সর্বশেষ আপডেটেড প্রজেক্ট জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
+                        }}
+                        className="text-[11px] font-mono text-emerald-800 hover:text-emerald-950 underline truncate font-bold cursor-pointer"
+                        title="ক্লিক করে সর্বশেষ আপডেটেড জিপ ফাইল ডাউনলোড করুন"
+                      >
+                        {liveOriginZipUrl}
+                      </a>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <a
+                        href={`${liveOriginZipUrl}?v=${Date.now()}`}
+                        download="safar-gafargaon-clean-source.zip"
+                        onClick={() => {
+                          showToast(`🎉 সরাসরি ফ্রেশ জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
+                        }}
+                        className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>সরাসরি ডাউনলোড</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (typeof window !== 'undefined' && navigator.clipboard) {
+                            navigator.clipboard.writeText(liveOriginZipUrl);
+                            showToast('📋 আপডেটেড জিপ লিঙ্ক কপি করা হয়েছে!');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition shrink-0"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>কপি করুন</span>
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <a
-                      href={liveOriginZipUrl}
-                      download="safar-gafargaon-clean-source.zip"
-                      onClick={() => {
-                        showToast(`🎉 সরাসরি ফ্রেশ জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
-                      }}
-                      className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>সরাসরি ডাউনলোড</span>
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (typeof window !== 'undefined' && navigator.clipboard) {
-                          navigator.clipboard.writeText(liveOriginZipUrl);
-                          showToast('📋 সরাসরি জিপ লিঙ্ক কপি করা হয়েছে!');
-                        }
-                      }}
-                      className="inline-flex items-center gap-1 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition shrink-0"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>কপি করুন</span>
-                    </button>
+
+                  {/* Quick Dev & Shared Download Mirrors */}
+                  <div className="pt-2 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10.5px]">
+                    {[
+                      {
+                        label: 'ডেভ প্রিভিউ লিঙ্ক',
+                        url: 'https://ais-dev-w6vgd7lt5ex5bc5rbquynw-243355990991.asia-northeast1.run.app/safar-gafargaon-clean-source.zip'
+                      },
+                      {
+                        label: 'শেয়ার্ড অ্যাপ লিঙ্ক',
+                        url: 'https://ais-pre-w6vgd7lt5ex5bc5rbquynw-243355990991.asia-northeast1.run.app/safar-gafargaon-clean-source.zip'
+                      }
+                    ].map((mirror) => (
+                      <div key={mirror.label} className="flex items-center justify-between gap-1.5 bg-amber-50/80 border border-amber-200 rounded-lg px-2 py-1.5 min-w-0">
+                        <div className="min-w-0 flex-1">
+                          <span className="font-black text-amber-950 block">{mirror.label}:</span>
+                          <a
+                            href={mirror.url}
+                            download="safar-gafargaon-clean-source.zip"
+                            className="font-mono text-[10px] text-emerald-800 underline truncate block font-bold"
+                          >
+                            {mirror.url}
+                          </a>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (typeof window !== 'undefined' && navigator.clipboard) {
+                              navigator.clipboard.writeText(mirror.url);
+                              showToast(`📋 ${mirror.label} কপি করা হয়েছে!`);
+                            }
+                          }}
+                          className="p-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-md cursor-pointer shrink-0"
+                          title={`${mirror.label} কপি করুন`}
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -3525,18 +3762,52 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">ক্যাটাগরি / ধরন:</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-slate-700">ক্যাটাগরি / ধরন:</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsQuickAddCatInModalOpen((v) => !v)}
+                      className="text-[10.5px] font-extrabold text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
+                    >
+                      {isQuickAddCatInModalOpen ? 'বন্ধ' : '+ নতুন ক্যাটাগরি'}
+                    </button>
+                  </div>
                   <select
                     value={placeForm.category}
                     onChange={(e) => setPlaceForm({ ...placeForm, category: e.target.value as PlaceCategory })}
                     className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
-                    {PLACE_CATEGORY_OPTIONS.map((opt) => (
+                    {effectivePlaceCategories.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
                       </option>
                     ))}
                   </select>
+                  {isQuickAddCatInModalOpen && (
+                    <div className="mt-1.5 flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={quickAddCatInModalText}
+                        onChange={(e) => setQuickAddCatInModalText(e.target.value)}
+                        placeholder="ক্যাটাগরির নাম"
+                        className="flex-1 min-w-0 px-2 py-1 bg-white border border-emerald-300 rounded-lg text-[11px] font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (handleSavePlaceCategoryItem(quickAddCatInModalText)) {
+                            const clean = quickAddCatInModalText.trim().replace(/\s+/g, ' ');
+                            setPlaceForm((prev) => ({ ...prev, category: clean as PlaceCategory }));
+                            setQuickAddCatInModalText('');
+                            setIsQuickAddCatInModalOpen(false);
+                          }
+                        }}
+                        className="px-2 py-1 bg-emerald-600 text-white rounded-lg text-[10.5px] font-extrabold cursor-pointer shrink-0"
+                      >
+                        যোগ
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div>

@@ -35,7 +35,7 @@ export function shouldSeedDefaultCollection(
   return serverCount === 0;
 }
 
-import type { PlaceCategory } from '../data/gafargaonPlaces';
+import type { PlaceCategory, PlaceCategoryOption } from '../data/gafargaonPlaces';
 
 export interface MapAdminPinInput {
   bengaliName: string;
@@ -393,4 +393,76 @@ export function resolveDriverMapPosition(
     lng: 90.5479,
   };
 }
+
+export function upsertPlaceCategory(
+  existing: readonly PlaceCategoryOption[],
+  labelInput: string,
+  editingValue?: string | null
+): { ok: boolean; list: PlaceCategoryOption[]; updatedItem?: PlaceCategoryOption; message?: string } {
+  const cleanLabel = (labelInput || '').trim().replace(/\s+/g, ' ');
+  if (!cleanLabel) {
+    return {
+      ok: false,
+      list: [...existing],
+      message: 'ক্যাটাগরির নাম খালি রাখা যাবে না!',
+    };
+  }
+
+  const normalizedTarget = cleanLabel.toLowerCase();
+
+  if (editingValue) {
+    const duplicate = existing.find(
+      (c) =>
+        c.value !== editingValue &&
+        (c.label.trim().toLowerCase() === normalizedTarget || c.value.trim().toLowerCase() === normalizedTarget)
+    );
+    if (duplicate) {
+      return {
+        ok: false,
+        list: [...existing],
+        message: 'এই নামের ক্যাটাগরি ইতিমধ্যেই রয়েছে!',
+      };
+    }
+
+    const nextItem: PlaceCategoryOption = { value: cleanLabel, label: cleanLabel };
+    const nextList = existing.map((c) => (c.value === editingValue ? nextItem : c));
+    return { ok: true, list: nextList, updatedItem: nextItem };
+  }
+
+  const duplicate = existing.find(
+    (c) =>
+      c.label.trim().toLowerCase() === normalizedTarget ||
+      c.value.trim().toLowerCase() === normalizedTarget
+  );
+  if (duplicate) {
+    return {
+      ok: false,
+      list: [...existing],
+      message: 'এই নামের ক্যাটাগরি ইতিমধ্যেই তালিকায় আছে!',
+    };
+  }
+
+  const nextItem: PlaceCategoryOption = { value: cleanLabel, label: cleanLabel };
+  return {
+    ok: true,
+    list: [...existing, nextItem],
+    updatedItem: nextItem,
+  };
+}
+
+export function removePlaceCategory(
+  existing: readonly PlaceCategoryOption[],
+  valueToRemove: string
+): { ok: boolean; list: PlaceCategoryOption[]; message?: string } {
+  if (existing.length <= 1) {
+    return {
+      ok: false,
+      list: [...existing],
+      message: 'কমপক্ষে ১টি ক্যাটাগরি তালিকায় থাকা আবশ্যক!',
+    };
+  }
+  const filtered = existing.filter((c) => c.value !== valueToRemove);
+  return { ok: true, list: filtered };
+}
+
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import L from 'leaflet';
 import { 
   Navigation, 
@@ -44,6 +45,7 @@ import {
   GafargaonPlace,
   PLACE_CATEGORY_OPTIONS,
   PlaceCategory,
+  PlaceCategoryOption,
   STATIC_GAFARGAON_PLACE_IDS
 } from '../data/gafargaonPlaces';
 import {
@@ -65,6 +67,7 @@ interface GafargaonMapProps {
   drivers: Driver[];
   stands: Stand[];
   categories?: CategoryMetaCandidate[];
+  placeCategories?: PlaceCategoryOption[];
   
   // Real-time server state
   liveDrivers: LiveDriverLocation[];
@@ -157,6 +160,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   drivers,
   stands,
   categories = [],
+  placeCategories = PLACE_CATEGORY_OPTIONS,
   liveDrivers,
   livePassengers,
   connectionStatus,
@@ -227,7 +231,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   }>({
     bengaliName: '',
     name: '',
-    category: 'স্ট্যান্ড',
+    category: (placeCategories[0]?.value || 'স্ট্যান্ড') as PlaceCategory,
     area: GAFARGAON_UNIONS[0].nameBengali,
     lat: 24.4536,
     lng: 90.5479
@@ -615,7 +619,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
 
         marker.bindTooltip(`
           <div style="font-family: 'Hind Siliguri', sans-serif; font-weight: 700; font-size: 11px; padding: 1px 4px;">
-            📍 ${standBn} • <span style="color: #059669; font-weight: 800;">সক্রিয় যানবাহন: ${toBengaliNumber(standSummary.typeCount)} প্রকার</span>
+            📍 ${standBn}
           </div>
         `, { direction: 'top', offset: [0, -32], opacity: 0.95 });
 
@@ -668,7 +672,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
 
         placeMarker.bindTooltip(`
           <div style="font-family: 'Hind Siliguri', sans-serif; font-weight: 700; font-size: 11px; padding: 1px 4px;">
-            📍 ${placeBn} <span style="color: #059669; font-weight: 800;">(${catLabel} • সক্রিয় যানবাহন: ${toBengaliNumber(placeSummary.typeCount)} প্রকার)</span>
+            📍 ${placeBn}
           </div>
         `, { direction: 'top', offset: [0, -32], opacity: 0.95 });
 
@@ -1698,7 +1702,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                     setAdminPinForm({
                       bengaliName: droppedPin.title,
                       name: '',
-                      category: 'স্ট্যান্ড',
+                      category: (placeCategories[0]?.value || 'স্ট্যান্ড') as PlaceCategory,
                       area: matchedUnion ? matchedUnion.nameBengali : GAFARGAON_UNIONS[0].nameBengali,
                       lat: Number(droppedPin.lat.toFixed(14)),
                       lng: Number(droppedPin.lng.toFixed(14))
@@ -1717,22 +1721,33 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
           </div>
         )}
 
-        {/* Admin-Only Full Place & Stand Creation Modal (Matching Admin Control Panel) */}
-        {isAdmin && isAdminPinSaveModalOpen && (
+        {/* Admin-Only Full Place & Stand Creation Modal (Portaled to body so sticky header/isolate never clips modal header) */}
+        {isAdmin && isAdminPinSaveModalOpen && typeof document !== 'undefined' && createPortal(
           <div
-            onClick={(e) => e.stopPropagation()}
-            className="fixed inset-0 z-[10050] flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs animate-in fade-in"
+            data-testid="admin-pin-save-modal-backdrop"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (e.target === e.currentTarget) setIsAdminPinSaveModalOpen(false);
+            }}
+            className="fixed inset-0 z-[999999] flex flex-col items-center justify-start sm:justify-center p-2.5 sm:p-4 bg-slate-950/75 backdrop-blur-xs overflow-y-auto"
           >
-            <div className="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl border border-slate-200 animate-in zoom-in-95 text-slate-900 max-h-[90vh] overflow-y-auto">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3.5">
-                <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
-                  <MapPin className="w-4 h-4 text-emerald-600" />
-                  <span>ম্যাপ পিন থেকে নতুন স্থান ও স্ট্যান্ড যোগ (Admin)</span>
+            <div
+              data-testid="admin-pin-save-modal"
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl sm:rounded-3xl max-w-md w-full my-auto shadow-2xl border border-slate-200 text-slate-900 flex flex-col max-h-[calc(100dvh-1.25rem)] sm:max-h-[90dvh] overflow-hidden"
+            >
+              <div
+                data-testid="admin-pin-save-modal-header"
+                className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-white shrink-0"
+              >
+                <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5 min-w-0">
+                  <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="leading-snug">ম্যাপ পিন থেকে নতুন স্থান ও স্ট্যান্ড যোগ (Admin)</span>
                 </h3>
                 <button
                   type="button"
                   onClick={() => setIsAdminPinSaveModalOpen(false)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
                   aria-label="বন্ধ করুন"
                 >
                   <X className="w-4 h-4" />
@@ -1753,7 +1768,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                   setIsAdminPinSaveModalOpen(false);
                   setDroppedPin(null);
                 }}
-                className="space-y-3 text-xs"
+                className="p-4 sm:p-5 space-y-3 text-xs overflow-y-auto flex-1"
               >
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">কোথায় যুক্ত হবে (ফায়ারস্টোর লাইভ সিঙ্ক):</label>
@@ -1812,7 +1827,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                       onChange={(e) => setAdminPinForm({ ...adminPinForm, category: e.target.value as PlaceCategory })}
                       className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {PLACE_CATEGORY_OPTIONS.map((opt) => (
+                      {(placeCategories && placeCategories.length > 0 ? placeCategories : PLACE_CATEGORY_OPTIONS).map((opt) => (
                         <option key={opt.value} value={opt.value}>
                           {opt.label}
                         </option>
@@ -1909,7 +1924,8 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                 </div>
               </form>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
 
         {/* Floating Recenter / Auto-focus Button when user manually zoomed/panned */}

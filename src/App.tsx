@@ -8213,6 +8213,7 @@ export default function App() {
                                 driverCount: s.activeDrivers
                               }))}
                               categories={categories}
+                              placeCategories={appCustomSettings.placeCategories}
                               liveDrivers={serverState.drivers}
                               livePassengers={serverState.passengers}
                               connectionStatus={serverState.status}
@@ -8745,6 +8746,7 @@ export default function App() {
                       driverCount: s.activeDrivers
                     }))}
                     categories={categories}
+                    placeCategories={appCustomSettings.placeCategories}
                     liveDrivers={serverState.drivers}
                     livePassengers={serverState.passengers}
                     connectionStatus={serverState.status}

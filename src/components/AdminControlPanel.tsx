@@ -400,23 +400,10 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [editingChipText, setEditingChipText] = useState<string>('');
   const [chipPreviewMode, setChipPreviewMode] = useState<'mobile' | 'desktop'>('mobile');
 
-  // Auto suggestion list combining Comprehensive 15 Unions, Stands and Popular Places
+  // Auto suggestion list synced strictly from live Stands and Popular Places
   const quickChipSuggestions = useMemo(() => {
     const list: { name: string; type: 'স্ট্যান্ড' | 'জনপ্রিয় স্থান'; sub?: string; unionName?: string }[] = [];
     const added = new Set<string>();
-
-    COMPREHENSIVE_UNION_PLACES.forEach(cp => {
-      const name = cp.bengaliName;
-      if (name && !added.has(name.toLowerCase())) {
-        added.add(name.toLowerCase());
-        list.push({
-          name,
-          type: cp.isStand ? 'স্ট্যান্ড' : 'জনপ্রিয় স্থান',
-          sub: `${cp.unionNameBengali} • ${cp.area}`,
-          unionName: cp.unionNameBengali
-        });
-      }
-    });
 
     (stands || []).forEach(s => {
       const name = s.bengaliName || s.name;
@@ -430,7 +417,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       const name = p.bengaliName || p.name;
       if (name && !added.has(name.toLowerCase())) {
         added.add(name.toLowerCase());
-        list.push({ name, type: 'জনপ্রিয় স্থান', sub: p.category || p.area || 'গফরগাঁও' });
+        list.push({ name, type: 'জনপ্রিয় স্থান', sub: `${p.area || 'গফরগাঁও'} • ${p.category || 'স্থান'}` });
       }
     });
 
@@ -683,18 +670,20 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     showToast(`🎉 ১৫ ইউনিয়নের ${toAdd.length}টি নতুন স্ট্যান্ড ক্লাউড ফায়ারবেসে যুক্ত ও সিঙ্ক হয়েছে!`);
   };
 
-  // 1-Click Load & Sync all 15 unions' places from COMPREHENSIVE_UNION_PLACES
+  // 1-Click Load & Sync all 15 unions' non-stand places from COMPREHENSIVE_UNION_PLACES (strict separation from stands)
   const handleLoadAllUnionPlaces = () => {
-    const allPlacesFrom15Unions: GafargaonPlace[] = COMPREHENSIVE_UNION_PLACES.map(p => ({
-      id: p.id,
-      name: p.name || p.bengaliName,
-      bengaliName: p.bengaliName,
-      category: p.category as any,
-      area: `${p.unionNameBengali}, ${p.area}`,
-      lat: p.lat,
-      lng: p.lng,
-      isPopular: true
-    }));
+    const allPlacesFrom15Unions: GafargaonPlace[] = COMPREHENSIVE_UNION_PLACES
+      .filter(p => !p.isStand)
+      .map(p => ({
+        id: p.id,
+        name: p.name || p.bengaliName,
+        bengaliName: p.bengaliName,
+        category: p.category as any,
+        area: `${p.unionNameBengali}, ${p.area}`,
+        lat: p.lat,
+        lng: p.lng,
+        isPopular: true
+      }));
 
     const existingNames = new Set(placesDraft.map(p => p.bengaliName.trim().toLowerCase()));
     const toAdd = allPlacesFrom15Unions.filter(p => !existingNames.has(p.bengaliName.trim().toLowerCase()));
@@ -704,7 +693,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     });
 
     setPlacesDraft(prev => [...prev, ...toAdd]);
-    showToast(`🎉 ১৫ ইউনিয়নের ${toAdd.length}টি নতুন আকর্ষণীয় স্থান ক্লাউড ফায়ারবেসে যুক্ত ও সিঙ্ক হয়েছে!`);
+    showToast(`🎉 ১৫ ইউনিয়নের ${toAdd.length}টি নতুন জনপ্রিয় স্থান (স্ট্যান্ড বাদে) ফায়ারবেসে যুক্ত ও সিঙ্ক হয়েছে!`);
   };
 
   // Add Quick Chip (Custom or Suggestion)
@@ -1020,59 +1009,80 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       <div className="bg-slate-50 rounded-3xl max-w-6xl w-full h-[94vh] max-h-[850px] shadow-2xl border border-slate-300 flex flex-col overflow-hidden animate-in zoom-in-95">
         
         {/* Header */}
-        <div className="bg-slate-900 text-white px-4 py-3.5 sm:px-6 flex items-center justify-between border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-amber-400 text-slate-950 flex items-center justify-center font-black shadow-md">
-              <Shield className="w-5 h-5 text-slate-950" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="font-extrabold text-sm sm:text-lg text-white">
-                  সফর সুপার কন্ট্রোল প্যানেল (Control Panel)
-                </h2>
-                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-black px-2 py-0.5 rounded-full">
-                  LIVE ADMIN
-                </span>
-                <span className="inline-flex items-center gap-1.5 bg-emerald-950/90 text-emerald-300 border border-emerald-500/60 text-[10px] sm:text-[11px] font-bold px-2.5 py-0.5 rounded-full shadow-xs">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <span>ফায়ারবেস ক্লাউড সিঙ্ক: সক্রিয় (Firestore Live)</span>
-                </span>
+        <div className="bg-slate-900 text-white px-3.5 py-3 sm:px-6 sm:py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-b border-slate-800 shrink-0">
+          {/* Top Row: Shield + Title/Subtitle + Mobile Close */}
+          <div className="flex items-center justify-between gap-2.5 min-w-0 flex-1">
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-amber-400 text-slate-950 flex items-center justify-center font-black shadow-md shrink-0">
+                <Shield className="w-4 h-4 sm:w-5 sm:h-5 text-slate-950" />
               </div>
-              <p className="text-[11px] text-slate-400">
-                গফরগাঁও পৌরসভা ও পাগলা থানা — স্ট্যান্ড, বাহন, ভাড়া, কালার, ফন্ট ও উইজেট নিয়ন্ত্রণ
-              </p>
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <h2 className="font-extrabold text-sm sm:text-lg text-white leading-tight truncate">
+                  সফর সুপার কন্ট্রোল প্যানেল <span className="hidden sm:inline text-slate-300 font-bold text-sm">(Control Panel)</span>
+                </h2>
+                <PauseMarqueeText
+                  text="গফরগাঁও পৌরসভা ও পাগলা থানা — স্ট্যান্ড, বাহন, ভাড়া, কালার, ফন্ট ও উইজেট নিয়ন্ত্রণ"
+                  className="text-[10.5px] sm:text-[11px] text-slate-400 block mt-0.5 leading-tight"
+                  pauseSec={1.5}
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('backup');
-                setTimeout(() => {
-                  const slotEl = document.getElementById('admin-password-change-slot');
-                  if (slotEl) slotEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }, 60);
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black shadow-xs cursor-pointer transition active:scale-95"
-              title="অ্যাডমিন প্যানেল পাসওয়ার্ড / পিন পরিবর্তন স্লট"
-            >
-              <Key className="w-3.5 h-3.5 text-slate-950" />
-              <span>পাসওয়ার্ড পরিবর্তন</span>
-            </button>
-
+            {/* Mobile-only Close Button pinned neatly to top-right */}
             <button
               type="button"
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 hover:bg-slate-700 cursor-pointer transition"
+              className="sm:hidden p-1.5 text-slate-300 hover:text-white rounded-xl bg-slate-800 hover:bg-slate-700 cursor-pointer transition shrink-0"
               title="বন্ধ করুন"
               aria-label="বন্ধ করুন"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
+          </div>
+
+          {/* Bottom/Right Row: Status Badges + Password Action + Desktop Close */}
+          <div className="flex items-center justify-between sm:justify-end gap-2 pt-2 border-t border-slate-800/80 sm:border-t-0 sm:pt-0 shrink-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9.5px] sm:text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap">
+                LIVE ADMIN
+              </span>
+              <span className="inline-flex items-center gap-1.5 bg-emerald-950/90 text-emerald-300 border border-emerald-500/50 text-[10px] sm:text-[11px] font-bold px-2.5 py-0.5 rounded-full shadow-xs whitespace-nowrap">
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span className="sm:hidden">ফায়ারবেস লাইভ</span>
+                <span className="hidden sm:inline">ফায়ারবেস ক্লাউড সিঙ্ক: সক্রিয় (Firestore Live)</span>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('backup');
+                  setTimeout(() => {
+                    const slotEl = document.getElementById('admin-password-change-slot');
+                    if (slotEl) slotEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 60);
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-[11px] sm:text-xs font-black shadow-xs cursor-pointer transition active:scale-95 whitespace-nowrap"
+                title="অ্যাডমিন প্যানেল পাসওয়ার্ড / পিন পরিবর্তন স্লট"
+              >
+                <Key className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-950 shrink-0" />
+                <span>পাসওয়ার্ড পরিবর্তন</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="hidden sm:inline-flex p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 hover:bg-slate-700 cursor-pointer transition"
+                title="বন্ধ করুন"
+                aria-label="বন্ধ করুন"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1518,10 +1528,14 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                       className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs hover:border-emerald-400 transition flex flex-col justify-between"
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-1.5 truncate">
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-1.5 min-w-0">
                             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
-                            {stand.bengaliName}
+                            <PauseMarqueeText
+                              text={stand.bengaliName}
+                              className="flex-1 min-w-0"
+                              pauseSec={1.5}
+                            />
                           </h4>
                           <span className="text-[11px] text-slate-400 font-mono block mt-0.5">
                             {stand.name} • GPS: {Number(Number(stand.lat || 0).toFixed(14))}, {Number(Number(stand.lng || 0).toFixed(14))}
@@ -1623,11 +1637,16 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                       setPlaceCoordPaste('');
                       setIsQuickAddCatInModalOpen(false);
                       setQuickAddCatInModalText('');
+                      const defaultPlaceCat = (
+                        effectivePlaceCategories.find(c => c.value !== 'স্ট্যান্ড')?.value ||
+                        effectivePlaceCategories[0]?.value ||
+                        'মোড়'
+                      ) as PlaceCategory;
                       setPlaceForm({
                         id: `place-${Date.now()}`,
                         name: '',
                         bengaliName: '',
-                        category: (effectivePlaceCategories[0]?.value || 'স্ট্যান্ড') as PlaceCategory,
+                        category: defaultPlaceCat,
                         area: 'গফরগাঁও পৌরসভা',
                         lat: 24.4536,
                         lng: 90.5479,
@@ -1794,14 +1813,20 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                         className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs hover:border-emerald-400 transition flex flex-col justify-between"
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-1.5 truncate">
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-1.5 min-w-0">
                               <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
-                              {place.bengaliName}
+                              <PauseMarqueeText
+                                text={place.bengaliName}
+                                className="flex-1 min-w-0"
+                                pauseSec={1.5}
+                              />
                             </h4>
-                            <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                              {place.area || 'গফরগাঁও'}
-                            </p>
+                            <PauseMarqueeText
+                              text={place.area || 'গফরগাঁও'}
+                              className="text-[11px] text-slate-500 mt-0.5 block"
+                              pauseSec={1.5}
+                            />
                             <span className="text-[10.5px] text-slate-400 font-mono block mt-0.5">
                               GPS: {Number(Number(place.lat || 0).toFixed(14))}, {Number(Number(place.lng || 0).toFixed(14))}
                             </span>
@@ -3777,11 +3802,13 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     onChange={(e) => setPlaceForm({ ...placeForm, category: e.target.value as PlaceCategory })}
                     className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
-                    {effectivePlaceCategories.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
+                    {effectivePlaceCategories
+                      .filter((opt) => opt.value !== 'স্ট্যান্ড' || editingPlace?.category === 'স্ট্যান্ড')
+                      .map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
                   </select>
                   {isQuickAddCatInModalOpen && (
                     <div className="mt-1.5 flex items-center gap-1">

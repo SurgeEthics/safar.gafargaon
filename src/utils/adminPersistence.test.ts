@@ -12,6 +12,8 @@ import {
   resolveDriverMapPosition,
   upsertPlaceCategory,
   removePlaceCategory,
+  buildDynamicAutocompletePlaces,
+  buildSeparatedMapAdminEntry,
 } from './adminPersistence';
 
 test('stripUndefinedFields removes undefined keys recursively without mutating defined falsy values', () => {
@@ -235,4 +237,77 @@ test('upsertPlaceCategory and removePlaceCategory support adding, editing, dupli
   assert.equal(onlyOne.ok, false);
   assert.equal(onlyOne.list.length, 1);
 });
+
+test('buildDynamicAutocompletePlaces strictly reflects live stands + popularPlaces without static seed pollution or stand/place mix-up', () => {
+  const unions = [
+    { id: 'pourashava', nameBengali: 'গফরগাঁও পৌরসভা' },
+    { id: 'salatia', nameBengali: 'সালটিয়া ইউনিয়ন' },
+  ];
+  const stands = [
+    { id: 's-1', bengaliName: 'রেলওয়ে স্টেশন স্ট্যান্ড', location: 'গফরগাঁও পৌরসভা • ১ নং গেট', lat: 24.4536, lng: 90.5479 },
+    { id: 's-2', bengaliName: 'সালটিয়া বাজার স্ট্যান্ড', area: 'সালটিয়া ইউনিয়ন', lat: 24.46, lng: 90.55 },
+  ];
+  const places = [
+    { id: 'p-1', bengaliName: 'বড় মসজিদ মোড়', category: 'মোড়', area: 'গফরগাঁও পৌরসভা', lat: 24.455, lng: 90.549 },
+    { id: 'p-2', bengaliName: 'সালটিয়া হাই স্কুল', category: 'শিক্ষা প্রতিষ্ঠান', area: 'সালটিয়া ইউনিয়ন', lat: 24.462, lng: 90.552 },
+    { id: 'p-3', bengaliName: 'নতুন হাসপাতাল গেট', category: 'স্ট্যান্ড', area: 'গফরগাঁও পৌরসভা', lat: 24.452, lng: 90.545 },
+  ];
+
+  const merged = buildDynamicAutocompletePlaces(places, stands, unions);
+  assert.equal(merged.length, 5);
+  assert.equal(merged.filter((item) => item.isStand).length, 2);
+  assert.equal(merged.filter((item) => !item.isStand).length, 3);
+  assert.equal(merged[0].sourceType, 'stand');
+  assert.equal(merged[2].sourceType, 'place');
+  // Legacy place with category 'স্ট্যান্ড' stays strictly in Places and is sanitized away from 'স্ট্যান্ড'
+  assert.equal(merged[4].sourceType, 'place');
+  assert.equal(merged[4].isStand, false);
+  assert.equal(merged[4].category, 'মোড়');
+
+  // Deleting an item from places or stands updates total count immediately (no static fallback)
+  const afterDelete = buildDynamicAutocompletePlaces(places.slice(0, 1), stands.slice(0, 1), unions);
+  assert.equal(afterDelete.length, 2);
+  assert.equal(afterDelete.filter((item) => item.isStand).length, 1);
+  assert.equal(afterDelete.filter((item) => !item.isStand).length, 1);
+});
+
+test('buildSeparatedMapAdminEntry enforces strict 1-to-1 separation between Stands and Places', () => {
+  const standEntry = buildSeparatedMapAdminEntry(
+    {
+      bengaliName: 'নতুন ময়মনসিংহ মোড় স্ট্যান্ড',
+      category: 'বাজার',
+      area: 'গফরগাঁও পৌরসভা',
+      lat: 24.454,
+      lng: 90.548,
+      idSeed: 555,
+    },
+    'stand'
+  );
+  assert.equal(standEntry.target, 'stand');
+  assert.equal('place' in standEntry, false);
+  if (standEntry.target === 'stand') {
+    assert.equal(standEntry.stand.id, 'stand-map-555');
+    assert.equal(standEntry.stand.bengaliName, 'নতুন ময়মনসিংহ মোড় স্ট্যান্ড');
+  }
+
+  const placeEntry = buildSeparatedMapAdminEntry(
+    {
+      bengaliName: 'ইসলামিয়া ব্যাংক মোড়',
+      category: 'স্ট্যান্ড',
+      area: 'গফরগাঁও পৌরসভা',
+      lat: 24.455,
+      lng: 90.549,
+      idSeed: 777,
+    },
+    'place'
+  );
+  assert.equal(placeEntry.target, 'place');
+  assert.equal('stand' in placeEntry, false);
+  if (placeEntry.target === 'place') {
+    assert.equal(placeEntry.place.id, 'place-map-777');
+    assert.equal(placeEntry.place.category, 'মোড়');
+    assert.equal(placeEntry.place.showOnMap, true);
+  }
+});
+
 

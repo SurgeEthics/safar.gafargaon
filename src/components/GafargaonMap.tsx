@@ -49,7 +49,7 @@ import {
   STATIC_GAFARGAON_PLACE_IDS
 } from '../data/gafargaonPlaces';
 import {
-  buildAdminPlaceAndStandPayloads,
+  buildSeparatedMapAdminEntry,
   CategoryMetaCandidate,
   computeStandVehicleTypesSummary,
   filterCustomMapPlaces,
@@ -219,7 +219,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
     isResolving: boolean;
   } | null>(null);
   const [isAdminPinSaveModalOpen, setIsAdminPinSaveModalOpen] = useState<boolean>(false);
-  const [adminPinSaveTarget, setAdminPinSaveTarget] = useState<'both' | 'place' | 'stand'>('both');
+  const [adminPinSaveTarget, setAdminPinSaveTarget] = useState<'place' | 'stand'>('place');
   const [adminPinCoordInput, setAdminPinCoordInput] = useState<string>('');
   const [adminPinForm, setAdminPinForm] = useState<{
     bengaliName: string;
@@ -231,7 +231,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
   }>({
     bengaliName: '',
     name: '',
-    category: (placeCategories[0]?.value || 'স্ট্যান্ড') as PlaceCategory,
+    category: (placeCategories.find((c) => c.value !== 'স্ট্যান্ড')?.value || 'মোড়') as PlaceCategory,
     area: GAFARGAON_UNIONS[0].nameBengali,
     lat: 24.4536,
     lng: 90.5479
@@ -1699,16 +1699,21 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                         droppedPin.unionName?.includes(u.nameBengali) ||
                         droppedPin.unionName?.includes(u.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', ''))
                     );
+                    const defaultPlaceCat = (
+                      placeCategories.find((c) => c.value !== 'স্ট্যান্ড')?.value ||
+                      placeCategories[0]?.value ||
+                      'মোড়'
+                    ) as PlaceCategory;
                     setAdminPinForm({
                       bengaliName: droppedPin.title,
                       name: '',
-                      category: (placeCategories[0]?.value || 'স্ট্যান্ড') as PlaceCategory,
+                      category: defaultPlaceCat,
                       area: matchedUnion ? matchedUnion.nameBengali : GAFARGAON_UNIONS[0].nameBengali,
                       lat: Number(droppedPin.lat.toFixed(14)),
                       lng: Number(droppedPin.lng.toFixed(14))
                     });
                     setAdminPinCoordInput('');
-                    setAdminPinSaveTarget('both');
+                    setAdminPinSaveTarget('place');
                     setIsAdminPinSaveModalOpen(true);
                   }}
                   className="w-full px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 text-[11px] font-black flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition active:scale-98"
@@ -1758,12 +1763,11 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                 onSubmit={(e) => {
                   e.preventDefault();
                   if (!adminPinForm.bengaliName.trim()) return;
-                  const { place, stand } = buildAdminPlaceAndStandPayloads(adminPinForm);
-                  if ((adminPinSaveTarget === 'both' || adminPinSaveTarget === 'place') && onSaveCustomPlace) {
-                    onSaveCustomPlace(place);
-                  }
-                  if ((adminPinSaveTarget === 'both' || adminPinSaveTarget === 'stand') && onSaveCustomStand) {
-                    onSaveCustomStand(stand);
+                  const entry = buildSeparatedMapAdminEntry(adminPinForm, adminPinSaveTarget);
+                  if (entry.target === 'place' && onSaveCustomPlace) {
+                    onSaveCustomPlace(entry.place);
+                  } else if (entry.target === 'stand' && onSaveCustomStand) {
+                    onSaveCustomStand(entry.stand);
                   }
                   setIsAdminPinSaveModalOpen(false);
                   setDroppedPin(null);
@@ -1771,18 +1775,17 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                 className="p-4 sm:p-5 space-y-3 text-xs overflow-y-auto flex-1"
               >
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">কোথায় যুক্ত হবে (ফায়ারস্টোর লাইভ সিঙ্ক):</label>
-                  <div className="grid grid-cols-3 gap-1.5">
+                  <label className="font-bold text-slate-700 block mb-1">কোথায় যুক্ত হবে (পৃথক রুল — কোনো মিক্সআপ হবে না):</label>
+                  <div className="grid grid-cols-2 gap-2">
                     {[
-                      { id: 'both' as const, label: 'নতুন স্ট্যান্ড + জনপ্রিয় স্থান' },
-                      { id: 'place' as const, label: 'শুধু জনপ্রিয় স্থান' },
-                      { id: 'stand' as const, label: 'শুধু নতুন স্ট্যান্ড' }
+                      { id: 'place' as const, label: '📍 শুধু জনপ্রিয় স্থান (Places)' },
+                      { id: 'stand' as const, label: '🚏 শুধু নতুন স্ট্যান্ড (Stands)' }
                     ].map((opt) => (
                       <button
                         key={opt.id}
                         type="button"
                         onClick={() => setAdminPinSaveTarget(opt.id)}
-                        className={`px-2 py-2 rounded-xl border text-[10.5px] font-extrabold text-center transition cursor-pointer ${
+                        className={`px-2.5 py-2.5 rounded-xl border text-[11px] font-extrabold text-center transition cursor-pointer ${
                           adminPinSaveTarget === opt.id
                             ? 'bg-emerald-700 text-white border-emerald-800 shadow-xs'
                             : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -1792,6 +1795,11 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                       </button>
                     ))}
                   </div>
+                  <p className="mt-1.5 text-[10.5px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5">
+                    {adminPinSaveTarget === 'stand'
+                      ? 'স্ট্যান্ড নিয়ম: এটি শুধুমাত্র অ্যাডমিন প্যানেলের "স্ট্যান্ডসমূহ" ও স্ট্যান্ড তালিকায় যুক্ত হবে।'
+                      : 'স্থান নিয়ম: এটি শুধুমাত্র অ্যাডমিন প্যানেলের "জনপ্রিয় স্থানসমূহ" ও স্থান তালিকায় যুক্ত হবে।'}
+                  </p>
                 </div>
 
                 <div>
@@ -1819,21 +1827,25 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">ক্যাটাগরি / ধরন:</label>
-                    <select
-                      value={adminPinForm.category}
-                      onChange={(e) => setAdminPinForm({ ...adminPinForm, category: e.target.value as PlaceCategory })}
-                      className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    >
-                      {(placeCategories && placeCategories.length > 0 ? placeCategories : PLACE_CATEGORY_OPTIONS).map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div className={`grid ${adminPinSaveTarget === 'place' ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+                  {adminPinSaveTarget === 'place' && (
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">স্থানের ক্যাটাগরি / ধরন:</label>
+                      <select
+                        value={adminPinForm.category}
+                        onChange={(e) => setAdminPinForm({ ...adminPinForm, category: e.target.value as PlaceCategory })}
+                        className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      >
+                        {(placeCategories && placeCategories.length > 0 ? placeCategories : PLACE_CATEGORY_OPTIONS)
+                          .filter((opt) => opt.value !== 'স্ট্যান্ড')
+                          .map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div>
                     <label className="font-bold text-slate-700 block mb-1">

@@ -465,4 +465,170 @@ export function removePlaceCategory(
   return { ok: true, list: filtered };
 }
 
+export interface UnionCandidate {
+  id: string;
+  nameBengali: string;
+}
+
+export interface DynamicPlaceInput {
+  id: string;
+  name?: string;
+  bengaliName?: string;
+  category?: string;
+  area?: string;
+  lat: number;
+  lng: number;
+  searchKeywords?: string[];
+}
+
+export interface DynamicStandInput {
+  id: string;
+  name?: string;
+  nameBn?: string;
+  bengaliName?: string;
+  area?: string;
+  location?: string;
+  lat: number;
+  lng: number;
+}
+
+export interface DynamicAutocompleteItem {
+  id: string;
+  name: string;
+  bengaliName: string;
+  category: string;
+  categoryLabel: string;
+  area: string;
+  unionNameBengali: string;
+  unionId: string;
+  searchKeywords: string[];
+  sourceType: 'stand' | 'place';
+  isStand: boolean;
+  lat: number;
+  lng: number;
+}
+
+function matchUnionFromArea(areaText: string | undefined, unions: readonly UnionCandidate[]): UnionCandidate | undefined {
+  if (!areaText) return undefined;
+  const normalized = areaText.toLowerCase();
+  return unions.find((u) => {
+    const full = u.nameBengali.toLowerCase();
+    const short = u.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', '').trim().toLowerCase();
+    return normalized.includes(full) || (short.length > 0 && normalized.includes(short));
+  });
+}
+
+function isBogusPlaceName(label: string): boolean {
+  const lower = label.toLowerCase();
+  return (
+    lower.includes('গয়েশপুর ইউনিয়ন পরিষদ') ||
+    lower.includes('গয়েশপুর ইউপি') ||
+    lower.includes('gayeshpur union parishad')
+  );
+}
+
+/**
+ * Strictly builds the Pickup/Destination autocomplete list from live Admin-managed
+ * stands and popularPlaces (zero static seed pollution, strict stand/place separation).
+ */
+export function buildDynamicAutocompletePlaces(
+  popularPlaces: readonly DynamicPlaceInput[],
+  stands: readonly DynamicStandInput[],
+  unions: readonly UnionCandidate[]
+): DynamicAutocompleteItem[] {
+  const list: DynamicAutocompleteItem[] = [];
+  const seenStandIds = new Set<string>();
+  const seenPlaceIds = new Set<string>();
+
+  for (const s of stands || []) {
+    if (!s) continue;
+    const bn = (s.bengaliName || s.nameBn || s.name || '').trim();
+    if (!bn || isBogusPlaceName(bn)) continue;
+    const standKey = (s.id || bn).trim().toLowerCase();
+    if (seenStandIds.has(standKey)) continue;
+    seenStandIds.add(standKey);
+
+    const locText = (s.location || s.area || '').trim();
+    const matchedUnion = matchUnionFromArea(`${s.area || ''} ${s.location || ''}`, unions);
+    const unionNameBengali = matchedUnion ? matchedUnion.nameBengali : (s.area || locText || 'গফরগাঁও পৌরসভা');
+
+    list.push({
+      id: s.id,
+      name: (s.name || bn).trim(),
+      bengaliName: bn,
+      category: 'স্ট্যান্ড',
+      categoryLabel: 'স্ট্যান্ড',
+      area: locText || unionNameBengali,
+      unionNameBengali,
+      unionId: matchedUnion ? matchedUnion.id : 'pourashava',
+      searchKeywords: [],
+      sourceType: 'stand',
+      isStand: true,
+      lat: Number(s.lat) || 24.4536,
+      lng: Number(s.lng) || 90.5479,
+    });
+  }
+
+  for (const p of popularPlaces || []) {
+    if (!p) continue;
+    const bn = (p.bengaliName || p.name || '').trim();
+    if (!bn || isBogusPlaceName(bn)) continue;
+    const placeKey = (p.id || bn).trim().toLowerCase();
+    if (seenPlaceIds.has(placeKey)) continue;
+    seenPlaceIds.add(placeKey);
+
+    const matchedUnion = matchUnionFromArea(p.area, unions);
+    const unionNameBengali = matchedUnion ? matchedUnion.nameBengali : (p.area || 'গফরগাঁও পৌরসভা');
+    const resolvedCategory = p.category && p.category !== 'স্ট্যান্ড' ? p.category : 'মোড়';
+
+    list.push({
+      id: p.id,
+      name: (p.name || bn).trim(),
+      bengaliName: bn,
+      category: resolvedCategory,
+      categoryLabel: resolvedCategory,
+      area: (p.area || unionNameBengali).trim(),
+      unionNameBengali,
+      unionId: matchedUnion ? matchedUnion.id : 'pourashava',
+      searchKeywords: Array.isArray(p.searchKeywords) ? p.searchKeywords : [],
+      sourceType: 'place',
+      isStand: false,
+      lat: Number(p.lat) || 24.4536,
+      lng: Number(p.lng) || 90.5479,
+    });
+  }
+
+  return list;
+}
+
+export type SeparatedMapAdminEntry =
+  | {
+      target: 'stand';
+      stand: ReturnType<typeof buildAdminPlaceAndStandPayloads>['stand'];
+    }
+  | {
+      target: 'place';
+      place: ReturnType<typeof buildAdminPlaceAndStandPayloads>['place'];
+    };
+
+/**
+ * Enforces strict 1-to-1 separation when adding from the map pin modal:
+ * a stand goes ONLY to stands, and a place goes ONLY to popularPlaces.
+ */
+export function buildSeparatedMapAdminEntry(
+  input: MapAdminPinInput,
+  target: 'stand' | 'place'
+): SeparatedMapAdminEntry {
+  const sanitizedInput: MapAdminPinInput =
+    target === 'place' && input.category === 'স্ট্যান্ড'
+      ? { ...input, category: 'মোড়' }
+      : input;
+  const payloads = buildAdminPlaceAndStandPayloads(sanitizedInput);
+  if (target === 'stand') {
+    return { target: 'stand', stand: payloads.stand };
+  }
+  return { target: 'place', place: payloads.place };
+}
+
+
 

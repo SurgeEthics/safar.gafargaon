@@ -78,7 +78,7 @@ export const UnionQuickDestinations: React.FC<UnionQuickDestinationsProps> = ({
             {/* Quick Union Directory Accordion */}
             {GAFARGAON_UNIONS.map((union: UnionInfo) => {
               const isUnionExpanded = activeUnionId === union.id;
-              const sourcePlaces = (allPlaces && allPlaces.length > 0) ? allPlaces : COMPREHENSIVE_UNION_PLACES;
+              const sourcePlaces = allPlaces !== undefined ? allPlaces : COMPREHENSIVE_UNION_PLACES;
               const cleanTarget = union.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', '').trim().toLowerCase();
               
               const unionPlaces = sourcePlaces.filter(p => {

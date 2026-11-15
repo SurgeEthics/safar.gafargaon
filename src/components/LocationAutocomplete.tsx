@@ -29,6 +29,7 @@ export interface LocationAutocompleteProps {
     area?: string;
     unionNameBengali?: string;
     searchKeywords?: string[];
+    sourceType?: 'stand' | 'place';
     isStand?: boolean;
     lat: number;
     lng: number;
@@ -43,6 +44,7 @@ export interface UnifiedPlaceItem {
   categoryLabel: string;
   unionName?: string;
   area?: string;
+  sourceType?: 'stand' | 'place';
   isStand?: boolean;
   isLiveOsm?: boolean;
   searchKeywords?: string[];
@@ -113,15 +115,18 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         cleanArea = cleanArea.replace(/গয়েশপুর ইউনিয়ন/g, 'পাইথল ইউনিয়ন, পাগলা');
       }
 
+      const isStandItem = p.sourceType ? p.sourceType === 'stand' : Boolean(p.isStand);
+
       return {
         id: p.id || `place-${idx}`,
         name: p.bengaliName || p.name || 'স্থান',
         englishName: p.name || '',
-        category: p.category || (p.isStand ? 'স্ট্যান্ড' : 'স্থান'),
-        categoryLabel: p.categoryLabel || p.category || (p.isStand ? 'স্ট্যান্ড' : 'জনপ্রিয় স্থান'),
+        category: isStandItem ? 'স্ট্যান্ড' : (p.category || 'স্থান'),
+        categoryLabel: isStandItem ? 'স্ট্যান্ড' : (p.categoryLabel || p.category || 'জনপ্রিয় স্থান'),
         unionName: rawUnion,
         area: cleanArea,
-        isStand: Boolean(p.isStand || (p.category && p.category.includes('স্ট্যান্ড'))),
+        sourceType: p.sourceType || (isStandItem ? 'stand' : 'place'),
+        isStand: isStandItem,
         searchKeywords: p.searchKeywords || [],
         lat: p.lat,
         lng: p.lng
@@ -313,11 +318,21 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-xl max-h-80 overflow-y-auto z-50 p-2 animate-in fade-in zoom-in-95">
           {/* Header & Quick Union Filter */}
           <div className="pb-1.5 mb-1.5 border-b border-slate-100">
-            <div className="flex items-center justify-between px-1 mb-1 text-[10.5px]">
+            <div className="flex items-center justify-between px-1 mb-1 text-[10.5px] gap-1.5">
               <span className="font-bold text-slate-700">১৫ ইউনিয়ন, পৌরসভা ও +৪ কিমি সীমান্ত</span>
-              <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                {filteredPlaces.length + uniqueLiveResults.length}টি স্থান
-              </span>
+              {(() => {
+                const visibleStandCount = filteredPlaces.filter((p) => p.isStand).length;
+                const visiblePlaceCount = filteredPlaces.filter((p) => !p.isStand).length + uniqueLiveResults.length;
+                const totalVisible = visibleStandCount + visiblePlaceCount;
+                return (
+                  <span
+                    data-testid="autocomplete-total-count-badge"
+                    className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full shrink-0"
+                  >
+                    {totalVisible}টি ({visibleStandCount} স্ট্যান্ড • {visiblePlaceCount} স্থান)
+                  </span>
+                );
+              })()}
             </div>
 
             {/* Quick Union Filter Tags - Horizontal Scroll with all 15 unions + Pourashava */}
@@ -403,7 +418,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
                   const isSelected = inputValue.trim() === place.name.trim();
                   return (
                     <button
-                      key={`${place.name}-${place.lat}-${place.lng}`}
+                      key={`${place.isStand ? 'stand' : 'place'}-${place.id || place.name}-${place.lat}-${place.lng}`}
                       type="button"
                       onClick={() => handleSelectPlace(place)}
                       className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs flex items-center justify-between gap-2 transition-colors cursor-pointer ${

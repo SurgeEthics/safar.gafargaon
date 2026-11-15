@@ -94,13 +94,12 @@ import { AutoMarqueeText } from './components/AutoMarqueeText';
 import { PauseMarqueeText } from './components/PauseMarqueeText';
 import { collection, doc, setDoc, getDoc, getDocs, getDocFromServer, getDocsFromServer, onSnapshot, updateDoc, deleteDoc, query, where, orderBy, limit, runTransaction } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
-import { stripUndefinedFields, mergeRemoteSettingsWithDefaults, shouldSeedDefaultCollection, computeStandVehicleTypesSummary, resolveVehicleCategoryMeta } from './utils/adminPersistence';
+import { stripUndefinedFields, mergeRemoteSettingsWithDefaults, shouldSeedDefaultCollection, computeStandVehicleTypesSummary, resolveVehicleCategoryMeta, buildDynamicAutocompletePlaces } from './utils/adminPersistence';
 
 import { LocationAutocomplete } from './components/LocationAutocomplete';
 import { GAFARGAON_PLACES, resolveLocationCoordinates, GafargaonPlace } from './data/gafargaonPlaces';
 import { UnionQuickDestinations } from './components/UnionQuickDestinations';
 import { COMPREHENSIVE_UNION_PLACES, GAFARGAON_UNIONS } from './data/gafargaonUnionData';
-import { GAFARGAON_OSM_PLACES } from './data/gafargaonOsmPlaces';
 import { GafargaonMap } from './components/GafargaonMap';
 import { CloudflareSettingsModal } from './components/CloudflareSettingsModal';
 import { useLiveTracking } from './hooks/useLiveTracking';
@@ -3434,111 +3433,11 @@ export default function App() {
     showAdminToastMessage('জনপ্রিয় স্থানসমূহ ডিফল্ট তালিকায় রিস্টোর ও ক্লাউডে সিঙ্ক হয়েছে');
   };
 
-  // Memoized unified places and stands list for 15-Union Autocomplete in Pickup & Destination
-  const allAutocompletePlaces = useMemo(() => {
-    const list: any[] = [];
-    const addedNames = new Set<string>();
-
-    // 1. Add all 15 unions' stands and popular places from COMPREHENSIVE_UNION_PLACES
-    COMPREHENSIVE_UNION_PLACES.forEach(p => {
-      const key = p.bengaliName.trim().toLowerCase();
-      if (!addedNames.has(key)) {
-        addedNames.add(key);
-        list.push({
-          id: p.id,
-          name: p.name || p.bengaliName,
-          bengaliName: p.bengaliName,
-          category: p.category,
-          categoryLabel: p.category,
-          area: p.area,
-          unionNameBengali: p.unionNameBengali,
-          searchKeywords: p.searchKeywords || [],
-          isStand: p.isStand,
-          lat: p.lat,
-          lng: p.lng
-        });
-      }
-    });
-
-    // 2. Add or override with admin-managed popular places from Firestore
-    popularPlaces.forEach(p => {
-      const key = p.bengaliName.trim().toLowerCase();
-      if (key.includes('গয়েশপুর ইউনিয়ন পরিষদ') || key.includes('গয়েশপুর ইউপি') || p.id.includes('gayeshpur-up')) return;
-
-      if (!addedNames.has(key)) {
-        addedNames.add(key);
-        const unionMatch = GAFARGAON_UNIONS.find(u => 
-          (p.area && p.area.includes(u.nameBengali)) ||
-          (p.area && p.area.includes(u.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', '')))
-        );
-        const unionName = unionMatch ? unionMatch.nameBengali : (p.area || 'গফরগাঁও পৌরসভা');
-        list.push({
-          id: p.id,
-          name: p.name,
-          bengaliName: p.bengaliName,
-          category: p.category,
-          categoryLabel: p.category,
-          area: p.area || unionName,
-          unionNameBengali: unionName,
-          unionId: unionMatch ? unionMatch.id : 'pourashava',
-          isStand: p.category === 'স্ট্যান্ড',
-          lat: p.lat,
-          lng: p.lng
-        });
-      }
-    });
-
-    // 3. Add stands
-    stands.forEach(s => {
-      const key = s.bengaliName.trim().toLowerCase();
-      if (!addedNames.has(key)) {
-        addedNames.add(key);
-        const unionMatch = GAFARGAON_UNIONS.find(u => 
-          (s.location && s.location.includes(u.nameBengali)) ||
-          (s.area && s.area.includes(u.nameBengali)) ||
-          (s.location && s.location.includes(u.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', ''))) ||
-          (s.area && s.area.includes(u.nameBengali.replace(' ইউনিয়ন', '').replace(' (পাগলা)', '')))
-        );
-        const unionName = unionMatch ? unionMatch.nameBengali : (s.area || s.location || 'গফরগাঁও পৌরসভা');
-        list.push({
-          id: s.id,
-          name: s.name,
-          bengaliName: s.bengaliName,
-          category: 'স্ট্যান্ড',
-          categoryLabel: 'স্ট্যান্ড',
-          area: s.location || s.area || unionName,
-          unionNameBengali: unionName,
-          unionId: unionMatch ? unionMatch.id : 'pourashava',
-          isStand: true,
-          lat: s.lat,
-          lng: s.lng
-        });
-      }
-    });
-
-    // 4. Add verified OSM places (Gafargaon, Pagla & +3-4km border area)
-    GAFARGAON_OSM_PLACES.forEach(p => {
-      const key = p.bengaliName.trim().toLowerCase();
-      if (!addedNames.has(key)) {
-        addedNames.add(key);
-        list.push({
-          id: p.id,
-          name: p.name || p.bengaliName,
-          bengaliName: p.bengaliName,
-          category: p.category,
-          categoryLabel: p.category,
-          area: p.area,
-          unionNameBengali: p.unionNameBengali,
-          searchKeywords: p.searchKeywords || [],
-          isStand: p.isStand,
-          lat: p.lat,
-          lng: p.lng
-        });
-      }
-    });
-
-    return list;
-  }, [popularPlaces, stands]);
+  // Memoized live places & stands list strictly synced from Admin Panel (no static seed override)
+  const allAutocompletePlaces = useMemo(
+    () => buildDynamicAutocompletePlaces(popularPlaces, stands, GAFARGAON_UNIONS),
+    [popularPlaces, stands]
+  );
 
   // Helper to resolve live GPS coordinates into nearest recognized Gafargaon/Pagla stand or landmark name
   const getNearestLocationName = useCallback((lat: number, lng: number): string => {
@@ -6915,10 +6814,12 @@ export default function App() {
               }`}
             >
               <span>সকল স্ট্যান্ড</span>
-              <span className={`text-[9px] px-1 rounded-full ${
+              <span
+                data-testid="all-stands-count-badge"
+                className={`text-[9px] px-1 rounded-full ${
                 selectedStand === 'all' ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-200 text-slate-600'
               }`}>
-                {drivers.length}
+                {stands.length}
               </span>
             </button>
             {stands.map((stand) => {

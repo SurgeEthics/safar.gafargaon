@@ -2,67 +2,836 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Drivers collection and all subcollections (completed_trips, etc.)
-    match /drivers/{driverId}/{document=**} {
-      allow read, write: if true;
+    // 1. Global Safety Net (Default Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    // Places collection (Viewable and manageable by app/admin)
-    match /places/{placeId} {
-      allow read, write: if true;
+    // =========================================================================
+    // Global Hardened Primitives & Validation Helpers
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // Stands collection (Viewable by all, editable from Super Admin Control Panel)
-    match /stands/{standId} {
-      allow read: if true;
-      allow write: if true;
+    function incoming() {
+      return request.resource.data;
     }
 
-    // Categories collection (Viewable by all, editable from Super Admin Control Panel)
-    match /categories/{categoryId} {
-      allow read: if true;
-      allow write: if true;
+    function existing() {
+      return resource.data;
     }
 
-    // App Settings collection (Colors, themes, density, widgets, URLs)
-    match /settings/{settingId} {
-      allow read: if true;
-      allow write: if true;
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Hotlines collection (Hospital, Fire, Police, National emergency numbers)
-    match /hotlines/{hotlineId} {
-      allow read: if true;
-      allow write: if true;
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    // Ride Requests collection (Passengers create, drivers update status)
-    match /ride_requests/{requestId} {
-      allow read: if true;
-      allow write: if true;
+    function isOwner(uid) {
+      return isVerifiedUser() && request.auth.uid == uid;
     }
 
-    // Users collection & Passenger Trip History subcollection
-    match /users/{userId}/{document=**} {
-      allow read: if true;
-      allow write: if true;
+    // Cost-safe admin check (no DB read) for use inside allow list queries
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'safar.gafargaon@gmail.com';
     }
 
-    // Passengers collection (Passenger accounts, authentication PINs, profiles)
-    match /passengers/{passengerId}/{document=**} {
-      allow read: if true;
-      allow write: if true;
+    // Full RBAC admin check for single-document read/write gates
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
     }
 
-    // Driver Reviews collection (Ratings & Reviews submitted by passengers)
-    match /driver_reviews/{reviewId} {
-      allow read: if true;
-      allow write: if true;
+    function isValidLat(v) {
+      return (v is int || v is float) && v >= 20.0 && v <= 27.0;
     }
 
-    // Admins collection
+    function isValidLng(v) {
+      return (v is int || v is float) && v >= 88.0 && v <= 93.0;
+    }
+
+    function isOptStr(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isReqStr(data, key, minLen, maxLen) {
+      return (key in data) && data[key] is string && data[key].size() >= minLen && data[key].size() <= maxLen;
+    }
+
+    function isOptNum(data, key, minVal, maxVal) {
+      return !(key in data) || ((data[key] is int || data[key] is float) && data[key] >= minVal && data[key] <= maxVal);
+    }
+
+    function isReqNum(data, key, minVal, maxVal) {
+      return (key in data) && (data[key] is int || data[key] is float) && data[key] >= minVal && data[key] <= maxVal;
+    }
+
+    function isOptBool(data, key) {
+      return !(key in data) || data[key] is bool;
+    }
+
+    function isOptStringOrTimestamp(data, key) {
+      return !(key in data) || (data[key] is timestamp) || (data[key] is string && data[key].size() <= 64);
+    }
+
+    function isDriverOwner(driverId) {
+      return isVerifiedUser() &&
+        exists(/databases/$(database)/documents/drivers/$(driverId)) &&
+        get(/databases/$(database)/documents/drivers/$(driverId)).data.ownerUid == request.auth.uid;
+    }
+
+    function isRideParticipant(requestId) {
+      return isVerifiedUser() &&
+        exists(/databases/$(database)/documents/ride_requests/$(requestId)) &&
+        (
+          get(/databases/$(database)/documents/ride_requests/$(requestId)).data.passengerUid == request.auth.uid ||
+          get(/databases/$(database)/documents/ride_requests/$(requestId)).data.driverUid == request.auth.uid
+        );
+    }
+
+    // =========================================================================
+    // Entity Validation Blueprints (NO existing() or diff() inside helpers)
+    // =========================================================================
+    function isValidAdminUser(data) {
+      return isReqStr(data, 'uid', 1, 128)
+        && isReqStr(data, 'email', 3, 150)
+        && (data.role in ['super_admin', 'admin'])
+        && isOptStringOrTimestamp(data, 'createdAt');
+    }
+
+    function isValidStand(data) {
+      return isOptStr(data, 'id', 128)
+        && isReqStr(data, 'name', 1, 120)
+        && isReqStr(data, 'bengaliName', 1, 120)
+        && isOptStr(data, 'area', 120)
+        && isOptStr(data, 'location', 180)
+        && ('lat' in data) && isValidLat(data.lat)
+        && ('lng' in data) && isValidLng(data.lng)
+        && isOptNum(data, 'activeDrivers', 0, 10000)
+        && isOptNum(data, 'driverCount', 0, 10000)
+        && isOptBool(data, 'isPopular')
+        && isOptStr(data, 'description', 250)
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidPlace(data) {
+      return isOptStr(data, 'id', 128)
+        && isReqStr(data, 'name', 1, 120)
+        && isReqStr(data, 'bengaliName', 1, 120)
+        && isReqStr(data, 'category', 1, 60)
+        && isReqStr(data, 'area', 1, 120)
+        && ('lat' in data) && isValidLat(data.lat)
+        && ('lng' in data) && isValidLng(data.lng)
+        && isOptBool(data, 'isPopular')
+        && isOptBool(data, 'showOnMap')
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return isOptStr(data, 'id', 128)
+        && isOptStr(data, 'name', 60)
+        && isReqStr(data, 'nameBengali', 1, 60)
+        && isOptStr(data, 'subtitle', 150)
+        && isOptStr(data, 'badgeBg', 60)
+        && isOptStr(data, 'badgeBorder', 60)
+        && isOptStr(data, 'textColor', 60)
+        && isOptStr(data, 'accentColor', 30)
+        && isOptStr(data, 'icon', 20)
+        && isOptStr(data, 'iconType', 30)
+        && isReqNum(data, 'baseFare', 0, 50000)
+        && isReqNum(data, 'perKmFare', 0, 5000)
+        && isOptNum(data, 'minFare', 0, 50000)
+        && isOptBool(data, 'isActive')
+        && isOptBool(data, 'isEmergency')
+        && isOptBool(data, 'isFree')
+        && isOptStr(data, 'description', 200)
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidAppSettings(data) {
+      return isOptStr(data, 'primaryColor', 50)
+        && isOptStr(data, 'customHexColor', 20)
+        && isOptStr(data, 'fontFamily', 60)
+        && isOptStr(data, 'fontSizeMode', 20)
+        && isOptStr(data, 'cardRadius', 30)
+        && isOptStr(data, 'densityMode', 20)
+        && isOptStr(data, 'headerHotlineText', 200)
+        && isOptStr(data, 'announcementNotice', 300)
+        && isOptStr(data, 'customAppUrl', 200)
+        && isOptBool(data, 'showLiveMapWidget')
+        && isOptBool(data, 'showQuickChipsWidget')
+        && isOptBool(data, 'showHotlineTicker')
+        && isOptBool(data, 'showDriverStatsRow')
+        && isOptNum(data, 'baseFareMinimum', 0, 10000)
+        && isOptNum(data, 'perKmMultiplier', 0, 20)
+        && isOptBool(data, 'roundFareToNearest5')
+        && (!('quickDestinations' in data) || (
+          data.quickDestinations is list &&
+          data.quickDestinations.size() <= 30 &&
+          (data.quickDestinations.size() == 0 || data.quickDestinations[0] is string)
+        ))
+        && (!('placeCategories' in data) || (
+          data.placeCategories is list &&
+          data.placeCategories.size() <= 40 &&
+          (data.placeCategories.size() == 0 || data.placeCategories[0] is map)
+        ))
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminSecurity(data) {
+      return isOptStr(data, 'pinHash', 128)
+        && ('hasCustomPin' in data) && data.hasCustomPin is bool
+        && isOptStr(data, 'updatedByUid', 128)
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidHotlines(data) {
+      return isOptStr(data, 'hospital', 40)
+        && isOptStr(data, 'fire', 40)
+        && isOptStr(data, 'police', 40)
+        && isOptStr(data, 'national', 40)
+        && (!('contacts' in data) || (
+          data.contacts is list &&
+          data.contacts.size() <= 100 &&
+          (data.contacts.size() == 0 || data.contacts[0] is map)
+        ))
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidUserProfile(data) {
+      return isReqStr(data, 'uid', 1, 128)
+        && isReqStr(data, 'name', 1, 100)
+        && isOptStr(data, 'email', 150)
+        && isOptStr(data, 'phone', 20)
+        && isOptStr(data, 'homeLocation', 180)
+        && isOptStr(data, 'emergencyContact', 80)
+        && isOptStr(data, 'photoUrl', 500)
+        && ('role' in data) && (data.role in ['passenger', 'driver'])
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidPassengerTrip(data) {
+      return isReqStr(data, 'id', 1, 128)
+        && isOptStr(data, 'date', 60)
+        && isReqStr(data, 'pickupPoint', 1, 160)
+        && isReqStr(data, 'destination', 1, 160)
+        && isOptStr(data, 'driverName', 100)
+        && isOptStr(data, 'driverPhone', 25)
+        && isOptStr(data, 'vehicleCategory', 50)
+        && isOptStr(data, 'vehicleModel', 100)
+        && isOptStr(data, 'plateNumber', 50)
+        && isReqNum(data, 'fare', 0, 50000)
+        && isReqStr(data, 'status', 1, 40)
+        && isOptNum(data, 'ratingGiven', 1, 5)
+        && isOptNum(data, 'createdAtMs', 0, 9999999999999)
+        && ('createdAt' in data) && data.createdAt is timestamp;
+    }
+
+    function isValidDriverPublic(data) {
+      return isReqStr(data, 'id', 1, 128)
+        && isReqStr(data, 'ownerUid', 1, 128)
+        && isReqStr(data, 'name', 1, 100)
+        && isOptStr(data, 'nameBn', 100)
+        && isReqStr(data, 'category', 1, 50)
+        && isOptStr(data, 'categoryBengali', 60)
+        && isOptStr(data, 'vehicleModel', 100)
+        && isOptStr(data, 'plateNumber', 50)
+        && isOptStr(data, 'licensePlate', 50)
+        && isReqStr(data, 'standName', 1, 120)
+        && ('lat' in data) && isValidLat(data.lat)
+        && ('lng' in data) && isValidLng(data.lng)
+        && isOptNum(data, 'rating', 0, 5)
+        && isOptNum(data, 'totalTrips', 0, 1000000)
+        && isOptStr(data, 'todayDate', 20)
+        && isOptNum(data, 'todayTrips', 0, 500)
+        && isOptNum(data, 'todayEarnings', 0, 500000)
+        && isOptBool(data, 'isOnline')
+        && isOptBool(data, 'isVerified')
+        && isOptBool(data, 'nidVerified')
+        && isOptBool(data, 'licenseVerified')
+        && isOptBool(data, 'phoneVerified')
+        && (!('verificationStatus' in data) || (data.verificationStatus in ['pending', 'verified', 'rejected']))
+        && isOptStr(data, 'regAppId', 60)
+        && isOptStr(data, 'registeredAt', 60)
+        && isOptStr(data, 'avatarBg', 60)
+        && isOptNum(data, 'approxSpeedKmh', 5, 160)
+        && isOptStr(data, 'driverPhoto', 60000)
+        && isOptStr(data, 'photoUrl', 60000)
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidDriverPrivateKyc(data) {
+      return isReqStr(data, 'ownerUid', 1, 128)
+        && isReqStr(data, 'phone', 5, 20)
+        && isOptStr(data, 'licenseNumber', 60)
+        && isOptStr(data, 'firstIssueDate', 40)
+        && isOptStr(data, 'licenseType', 60)
+        && isOptStr(data, 'regLastFour', 16)
+        && isOptStr(data, 'manufacturingYear', 16)
+        && isOptStr(data, 'chassisNumber', 60)
+        && isOptStr(data, 'engineNumber', 60)
+        && isOptStr(data, 'nidNumber', 30)
+        && isOptStr(data, 'nidFrontPhoto', 120000)
+        && isOptStr(data, 'nidBackPhoto', 120000)
+        && isOptStr(data, 'taxTokenReceiptPhoto', 120000)
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidDriverCompletedTrip(data) {
+      return isReqStr(data, 'id', 1, 128)
+        && isReqStr(data, 'ownerUid', 1, 128)
+        && isOptStr(data, 'date', 40)
+        && isOptStr(data, 'dateBengali', 60)
+        && isOptStr(data, 'time', 40)
+        && isReqStr(data, 'pickup', 1, 160)
+        && isReqStr(data, 'destination', 1, 160)
+        && isReqNum(data, 'fare', 0, 50000)
+        && isOptNum(data, 'distanceKm', 0, 500)
+        && isOptStr(data, 'passengerName', 100)
+        && isReqNum(data, 'createdAtMs', 0, 9999999999999);
+    }
+
+    function isValidRideRequest(data) {
+      return isReqStr(data, 'id', 1, 128)
+        && isReqStr(data, 'passengerUid', 1, 128)
+        && isReqStr(data, 'passengerName', 1, 100)
+        && isReqStr(data, 'pickupPoint', 1, 180)
+        && isOptStr(data, 'pickupLandmark', 180)
+        && isReqStr(data, 'destination', 1, 180)
+        && isReqStr(data, 'category', 1, 50)
+        && isReqNum(data, 'distanceKm', 0, 500)
+        && isReqNum(data, 'estFare', 0, 50000)
+        && (!('pickupCoords' in data) || data.pickupCoords == null || (
+          data.pickupCoords is map &&
+          isValidLat(data.pickupCoords.lat) &&
+          isValidLng(data.pickupCoords.lng)
+        ))
+        && (!('destCoords' in data) || data.destCoords == null || (
+          data.destCoords is map &&
+          isValidLat(data.destCoords.lat) &&
+          isValidLng(data.destCoords.lng)
+        ))
+        && ('status' in data) && (data.status in ['pending', 'accepted', 'in_transit', 'completed', 'cancelled', 'declined'])
+        && isOptStr(data, 'driverId', 128)
+        && isOptStr(data, 'driverUid', 128)
+        && isOptStr(data, 'driverName', 100)
+        && isOptStr(data, 'driverCategory', 50)
+        && (!('driverLat' in data) || isValidLat(data.driverLat))
+        && (!('driverLng' in data) || isValidLng(data.driverLng))
+        && isOptStr(data, 'driverVehicleModel', 100)
+        && isOptStr(data, 'driverLicensePlate', 50)
+        && isOptStr(data, 'driverPlateNumber', 50)
+        && isOptStr(data, 'driverPhoto', 60000)
+        && isOptNum(data, 'driverRating', 0, 5)
+        && isReqNum(data, 'createdAtMs', 0, 9999999999999)
+        && isOptStringOrTimestamp(data, 'requestedAt')
+        && isOptStringOrTimestamp(data, 'acceptedAt')
+        && isOptStringOrTimestamp(data, 'boardedAt')
+        && isOptStringOrTimestamp(data, 'completedAt')
+        && isOptStringOrTimestamp(data, 'cancelledAt')
+        && isOptStringOrTimestamp(data, 'declinedAt')
+        && ('createdAt' in data) && data.createdAt is timestamp
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidRidePrivateContact(data) {
+      return isReqStr(data, 'passengerUid', 1, 128)
+        && isOptStr(data, 'passengerPhone', 20)
+        && isOptStr(data, 'driverUid', 128)
+        && isOptStr(data, 'driverPhone', 20)
+        && isOptStr(data, 'otp', 10)
+        && ('updatedAt' in data) && data.updatedAt is timestamp;
+    }
+
+    function isValidDriverReview(data) {
+      return isReqStr(data, 'id', 1, 128)
+        && isReqStr(data, 'authorUid', 1, 128)
+        && isReqStr(data, 'driverId', 1, 128)
+        && isValidId(data.driverId)
+        && isReqNum(data, 'rating', 1, 5)
+        && (!('tags' in data) || (
+          data.tags is list &&
+          data.tags.size() <= 10 &&
+          (data.tags.size() == 0 || data.tags[0] is string)
+        ))
+        && isOptStr(data, 'comment', 500)
+        && isOptStr(data, 'passengerName', 100)
+        && isOptStr(data, 'date', 60)
+        && ('createdAt' in data) && data.createdAt is timestamp;
+    }
+
+    // =========================================================================
+    // Collection Match Blocks
+    // =========================================================================
+
+    // Connectivity health probe
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // Admin role registry
     match /admins/{adminId} {
-      allow read, write: if true;
+      allow get: if isValidId(adminId) && (isAdmin() || (isVerifiedUser() && request.auth.uid == adminId));
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(adminId)
+        && isAdmin()
+        && isValidAdminUser(incoming())
+        && incoming().keys().hasAll(['uid', 'email', 'role', 'createdAt'])
+        && incoming().keys().hasOnly(['uid', 'email', 'role', 'createdAt'])
+        && incoming().uid == adminId
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(adminId)
+        && isAdmin()
+        && isValidAdminUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'role']);
+      allow delete: if isValidId(adminId) && isAdmin() && adminId != request.auth.uid;
+    }
+
+    // Vehicle Stands (Public Read, Admin-only Write)
+    match /stands/{standId} {
+      allow get: if isValidId(standId);
+      allow list: if true;
+      allow create: if isValidId(standId)
+        && isAdmin()
+        && isValidStand(incoming())
+        && incoming().keys().hasAll(['id', 'name', 'bengaliName', 'lat', 'lng', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'name', 'bengaliName', 'area', 'location', 'lat', 'lng', 'activeDrivers', 'driverCount', 'isPopular', 'description', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(standId)
+        && isAdmin()
+        && isValidStand(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['id', 'name', 'bengaliName', 'area', 'location', 'lat', 'lng', 'activeDrivers', 'driverCount', 'isPopular', 'description', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(standId) && isAdmin();
+    }
+
+    // Popular Places (Public Read, Admin-only Write)
+    match /places/{placeId} {
+      allow get: if isValidId(placeId);
+      allow list: if true;
+      allow create: if isValidId(placeId)
+        && isAdmin()
+        && isValidPlace(incoming())
+        && incoming().keys().hasAll(['id', 'name', 'bengaliName', 'category', 'area', 'lat', 'lng', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'name', 'bengaliName', 'category', 'area', 'lat', 'lng', 'isPopular', 'showOnMap', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(placeId)
+        && isAdmin()
+        && isValidPlace(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['id', 'name', 'bengaliName', 'category', 'area', 'lat', 'lng', 'isPopular', 'showOnMap', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(placeId) && isAdmin();
+    }
+
+    // Vehicle Categories (Public Read, Admin-only Write)
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId);
+      allow list: if true;
+      allow create: if isValidId(categoryId)
+        && isAdmin()
+        && isValidCategory(incoming())
+        && incoming().keys().hasAll(['id', 'nameBengali', 'baseFare', 'perKmFare', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'name', 'nameBengali', 'subtitle', 'badgeBg', 'badgeBorder', 'textColor', 'accentColor', 'icon', 'iconType', 'baseFare', 'perKmFare', 'minFare', 'isActive', 'isEmergency', 'isFree', 'description', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(categoryId)
+        && isAdmin()
+        && isValidCategory(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['id', 'name', 'nameBengali', 'subtitle', 'badgeBg', 'badgeBorder', 'textColor', 'accentColor', 'icon', 'iconType', 'baseFare', 'perKmFare', 'minFare', 'isActive', 'isEmergency', 'isFree', 'description', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(categoryId) && isAdmin();
+    }
+
+    // App Settings (app_config public read; admin_security strictly Admin-only read/write)
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && (settingId == 'app_config' || isAdmin());
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(settingId) && isAdmin() && incoming().updatedAt == request.time && (
+        (
+          settingId == 'app_config' &&
+          isValidAppSettings(incoming()) &&
+          incoming().keys().hasAll(['updatedAt']) &&
+          incoming().keys().hasOnly(['primaryColor', 'customHexColor', 'fontFamily', 'fontSizeMode', 'cardRadius', 'densityMode', 'headerHotlineText', 'announcementNotice', 'customAppUrl', 'showLiveMapWidget', 'showQuickChipsWidget', 'showHotlineTicker', 'showDriverStatsRow', 'baseFareMinimum', 'perKmMultiplier', 'roundFareToNearest5', 'quickDestinations', 'placeCategories', 'updatedAt'])
+        ) || (
+          settingId == 'admin_security' &&
+          isValidAdminSecurity(incoming()) &&
+          incoming().keys().hasAll(['hasCustomPin', 'updatedAt']) &&
+          incoming().keys().hasOnly(['pinHash', 'hasCustomPin', 'updatedByUid', 'updatedAt'])
+        )
+      );
+      allow update: if isValidId(settingId) && isAdmin() && incoming().updatedAt == request.time && (
+        (
+          settingId == 'app_config' &&
+          isValidAppSettings(incoming()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['primaryColor', 'customHexColor', 'fontFamily', 'fontSizeMode', 'cardRadius', 'densityMode', 'headerHotlineText', 'announcementNotice', 'customAppUrl', 'showLiveMapWidget', 'showQuickChipsWidget', 'showHotlineTicker', 'showDriverStatsRow', 'baseFareMinimum', 'perKmMultiplier', 'roundFareToNearest5', 'quickDestinations', 'placeCategories', 'updatedAt'])
+        ) || (
+          settingId == 'admin_security' &&
+          isValidAdminSecurity(incoming()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['pinHash', 'hasCustomPin', 'updatedByUid', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(settingId) && isAdmin();
+    }
+
+    // Emergency Hotlines (Public Read, Admin-only Write)
+    match /hotlines/{hotlineId} {
+      allow get: if isValidId(hotlineId);
+      allow list: if true;
+      allow create: if isValidId(hotlineId)
+        && isAdmin()
+        && isValidHotlines(incoming())
+        && incoming().keys().hasAll(['updatedAt'])
+        && incoming().keys().hasOnly(['hospital', 'fire', 'police', 'national', 'contacts', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(hotlineId)
+        && isAdmin()
+        && isValidHotlines(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['hospital', 'fire', 'police', 'national', 'contacts', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(hotlineId) && isAdmin();
+    }
+
+    // Authenticated Users (Keyed strictly by Firebase Auth UID — Owner + Admin Only, NO blanket list)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(userId)
+        && (isOwner(userId) || isAdmin())
+        && isValidUserProfile(incoming())
+        && incoming().uid == userId
+        && (isAdmin() || incoming().role in ['passenger', 'driver'])
+        && incoming().keys().hasAll(['uid', 'name', 'role', 'updatedAt'])
+        && incoming().keys().hasOnly(['uid', 'name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && (isOwner(userId) || isAdmin())
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'updatedAt'])
+          ) ||
+          (
+            incoming().role in ['passenger', 'driver'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(userId) && isAdmin();
+
+      // Passenger Trip History Subcollection (Master Gate + Strict Owner Isolation)
+      match /trips/{tripId} {
+        allow get: if isValidId(userId)
+          && isValidId(tripId)
+          && exists(/databases/$(database)/documents/users/$(userId))
+          && (isOwner(userId) || isAdmin());
+        allow list: if isOwner(userId) || isBootstrappedAdmin();
+        allow create: if isValidId(userId)
+          && isValidId(tripId)
+          && exists(/databases/$(database)/documents/users/$(userId))
+          && (isOwner(userId) || isAdmin())
+          && isValidPassengerTrip(incoming())
+          && incoming().keys().hasAll(['id', 'pickupPoint', 'destination', 'fare', 'status', 'createdAt'])
+          && incoming().keys().hasOnly(['id', 'date', 'pickupPoint', 'destination', 'driverName', 'driverPhone', 'vehicleCategory', 'vehicleModel', 'plateNumber', 'fare', 'status', 'ratingGiven', 'createdAt', 'createdAtMs'])
+          && incoming().createdAt == request.time;
+        allow update: if isValidId(userId)
+          && isValidId(tripId)
+          && isAdmin()
+          && isValidPassengerTrip(incoming())
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'ratingGiven']);
+        allow delete: if isValidId(userId)
+          && isValidId(tripId)
+          && exists(/databases/$(database)/documents/users/$(userId))
+          && (isOwner(userId) || isAdmin());
+      }
+    }
+
+    // Drivers Public Directory (Non-PII display fields ONLY; Admin or Verified Owner writes)
+    match /drivers/{driverId} {
+      allow get: if isValidId(driverId);
+      allow list: if true;
+      allow create: if isValidId(driverId)
+        && isVerifiedUser()
+        && isValidDriverPublic(incoming())
+        && incoming().id == driverId
+        && incoming().updatedAt == request.time
+        && incoming().keys().hasAll(['id', 'ownerUid', 'name', 'category', 'standName', 'lat', 'lng', 'updatedAt'])
+        && incoming().keys().hasOnly([
+          'id', 'ownerUid', 'name', 'nameBn', 'category', 'categoryBengali',
+          'vehicleModel', 'plateNumber', 'licensePlate', 'standName', 'lat', 'lng',
+          'rating', 'totalTrips', 'todayDate', 'todayTrips', 'todayEarnings',
+          'isOnline', 'isVerified', 'nidVerified', 'licenseVerified', 'phoneVerified',
+          'verificationStatus', 'regAppId', 'registeredAt', 'avatarBg', 'approxSpeedKmh',
+          'driverPhoto', 'photoUrl', 'updatedAt'
+        ])
+        && (
+          isAdmin() || (
+            incoming().ownerUid == request.auth.uid &&
+            incoming().get('isVerified', false) == false &&
+            incoming().get('nidVerified', false) == false &&
+            incoming().get('licenseVerified', false) == false &&
+            incoming().get('phoneVerified', false) == false &&
+            incoming().get('verificationStatus', 'pending') == 'pending' &&
+            incoming().get('rating', 5.0) == 5.0 &&
+            incoming().get('totalTrips', 0) == 0
+          )
+        );
+      allow update: if isValidId(driverId)
+        && isVerifiedUser()
+        && isValidDriverPublic(incoming())
+        && (!('id' in existing()) || incoming().id == existing().id)
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() || (
+            existing().ownerUid == request.auth.uid &&
+            incoming().ownerUid == existing().ownerUid &&
+            incoming().get('isVerified', false) == existing().get('isVerified', false) &&
+            incoming().get('nidVerified', false) == existing().get('nidVerified', false) &&
+            incoming().get('licenseVerified', false) == existing().get('licenseVerified', false) &&
+            incoming().get('phoneVerified', false) == existing().get('phoneVerified', false) &&
+            incoming().get('verificationStatus', 'pending') == existing().get('verificationStatus', 'pending') &&
+            incoming().get('rating', 5.0) == existing().get('rating', 5.0) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'isOnline', 'lat', 'lng', 'standName', 'vehicleModel',
+              'driverPhoto', 'photoUrl', 'todayDate', 'todayTrips',
+              'todayEarnings', 'totalTrips', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(driverId) && isAdmin();
+
+      // Isolated Private KYC Vault (Phone, NID, BRTA License, Photos) — Owner + Admin Only
+      match /private/{docId} {
+        allow get: if isValidId(driverId)
+          && isValidId(docId)
+          && (isDriverOwner(driverId) || isAdmin());
+        allow list: if isBootstrappedAdmin();
+        allow create: if isValidId(driverId)
+          && docId == 'kyc'
+          && isVerifiedUser()
+          && isValidDriverPrivateKyc(incoming())
+          && incoming().keys().hasAll(['ownerUid', 'phone', 'updatedAt'])
+          && incoming().keys().hasOnly([
+            'ownerUid', 'phone', 'licenseNumber', 'firstIssueDate', 'licenseType',
+            'regLastFour', 'manufacturingYear', 'chassisNumber', 'engineNumber',
+            'nidNumber', 'nidFrontPhoto', 'nidBackPhoto', 'taxTokenReceiptPhoto', 'updatedAt'
+          ])
+          && (isAdmin() || (incoming().ownerUid == request.auth.uid && isDriverOwner(driverId)))
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(driverId)
+          && docId == 'kyc'
+          && isVerifiedUser()
+          && isValidDriverPrivateKyc(incoming())
+          && incoming().ownerUid == existing().ownerUid
+          && (isAdmin() || isDriverOwner(driverId))
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'phone', 'licenseNumber', 'firstIssueDate', 'licenseType',
+            'regLastFour', 'manufacturingYear', 'chassisNumber', 'engineNumber',
+            'nidNumber', 'nidFrontPhoto', 'nidBackPhoto', 'taxTokenReceiptPhoto', 'updatedAt'
+          ])
+          && incoming().updatedAt == request.time;
+        allow delete: if isValidId(driverId) && isValidId(docId) && isAdmin();
+      }
+
+      // Driver Daily Earnings Log Subcollection
+      match /completed_trips/{tripId} {
+        allow get: if isValidId(driverId)
+          && isValidId(tripId)
+          && (isDriverOwner(driverId) || isAdmin());
+        allow list: if isVerifiedUser() && (
+          resource.data.ownerUid == request.auth.uid || isBootstrappedAdmin()
+        );
+        allow create: if isValidId(driverId)
+          && isValidId(tripId)
+          && isVerifiedUser()
+          && isValidDriverCompletedTrip(incoming())
+          && incoming().keys().hasAll(['id', 'ownerUid', 'pickup', 'destination', 'fare', 'createdAtMs'])
+          && incoming().keys().hasOnly([
+            'id', 'ownerUid', 'date', 'dateBengali', 'time',
+            'pickup', 'destination', 'fare', 'distanceKm', 'passengerName', 'createdAtMs'
+          ])
+          && (isAdmin() || (incoming().ownerUid == request.auth.uid && isDriverOwner(driverId)));
+        allow update: if isValidId(driverId)
+          && isValidId(tripId)
+          && isAdmin()
+          && isValidDriverCompletedTrip(incoming())
+          && incoming().diff(existing()).affectedKeys().hasOnly(['fare', 'pickup', 'destination']);
+        allow delete: if isValidId(driverId) && isValidId(tripId) && isAdmin();
+      }
+    }
+
+    // Ride Requests (Authenticated Verified Users Only + Strict State Machine + No PII)
+    match /ride_requests/{requestId} {
+      allow get: if isValidId(requestId) && isVerifiedUser() && (
+        existing().passengerUid == request.auth.uid ||
+        existing().get('driverUid', '') == request.auth.uid ||
+        existing().status == 'pending' ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        resource.data.passengerUid == request.auth.uid ||
+        resource.data.driverUid == request.auth.uid ||
+        resource.data.status == 'pending' ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isValidId(requestId)
+        && isVerifiedUser()
+        && isValidRideRequest(incoming())
+        && incoming().id == requestId
+        && incoming().passengerUid == request.auth.uid
+        && incoming().status == 'pending'
+        && !('driverUid' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && incoming().keys().hasAll([
+          'id', 'passengerUid', 'passengerName', 'pickupPoint', 'destination',
+          'category', 'distanceKm', 'estFare', 'status', 'createdAtMs', 'createdAt', 'updatedAt'
+        ])
+        && incoming().keys().hasOnly([
+          'id', 'passengerUid', 'passengerName', 'pickupPoint', 'pickupLandmark',
+          'destination', 'category', 'distanceKm', 'estFare', 'pickupCoords',
+          'destCoords', 'status', 'driverId', 'driverName', 'createdAtMs',
+          'requestedAt', 'createdAt', 'updatedAt'
+        ]);
+      allow update: if isValidId(requestId)
+        && isVerifiedUser()
+        && isValidRideRequest(incoming())
+        && incoming().id == existing().id
+        && incoming().passengerUid == existing().passengerUid
+        && incoming().estFare == existing().estFare
+        && incoming().distanceKm == existing().distanceKm
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdAtMs == existing().createdAtMs
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() || (
+            // Terminal State Locking: completed/cancelled/declined cannot be changed by non-admins
+            !(existing().status in ['completed', 'cancelled', 'declined']) && (
+              // Action 1: Driver Accepts Pending Ride
+              (
+                existing().status == 'pending' &&
+                incoming().status == 'accepted' &&
+                incoming().driverUid == request.auth.uid &&
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'status', 'driverId', 'driverUid', 'driverName', 'driverCategory',
+                  'driverLat', 'driverLng', 'driverVehicleModel', 'driverLicensePlate',
+                  'driverPlateNumber', 'driverPhoto', 'driverRating', 'acceptedAt', 'updatedAt'
+                ])
+              ) ||
+              // Action 2: Driver Updates Live Location during Active Ride
+              (
+                (existing().status in ['accepted', 'in_transit']) &&
+                existing().get('driverUid', '') == request.auth.uid &&
+                incoming().driverUid == existing().driverUid &&
+                incoming().status == existing().status &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['driverLat', 'driverLng', 'updatedAt'])
+              ) ||
+              // Action 3: Start Transit (Boarding confirmed)
+              (
+                existing().status == 'accepted' &&
+                incoming().status == 'in_transit' &&
+                incoming().driverUid == existing().driverUid &&
+                (existing().get('driverUid', '') == request.auth.uid || existing().passengerUid == request.auth.uid) &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'driverLat', 'driverLng', 'boardedAt', 'updatedAt'])
+              ) ||
+              // Action 4: Complete Active Ride
+              (
+                (existing().status in ['accepted', 'in_transit']) &&
+                incoming().status == 'completed' &&
+                incoming().driverUid == existing().driverUid &&
+                (existing().get('driverUid', '') == request.auth.uid || existing().passengerUid == request.auth.uid) &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'updatedAt'])
+              ) ||
+              // Action 5: Passenger Cancels Own Pending/Accepted Ride
+              (
+                existing().passengerUid == request.auth.uid &&
+                (existing().status in ['pending', 'accepted']) &&
+                incoming().status == 'cancelled' &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt', 'updatedAt'])
+              ) ||
+              // Action 6: Assigned Driver Declines/Cancels Ride (including direct pending request)
+              (
+                (
+                  (
+                    existing().get('driverUid', '') == request.auth.uid &&
+                    (existing().status in ['accepted', 'in_transit'])
+                  ) || (
+                    existing().status == 'pending' &&
+                    ('driverId' in existing()) &&
+                    existing().driverId is string &&
+                    existing().driverId.size() > 0 &&
+                    isDriverOwner(existing().driverId)
+                  )
+                ) &&
+                (incoming().status in ['cancelled', 'declined']) &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt', 'declinedAt', 'updatedAt'])
+              )
+            )
+          )
+        );
+      allow delete: if isValidId(requestId)
+        && isVerifiedUser()
+        && ((existing().passengerUid == request.auth.uid && existing().status == 'pending') || isAdmin());
+
+      // Participant-Only Ride Contact & OTP Vault
+      match /private/{docId} {
+        allow get: if isValidId(requestId)
+          && isValidId(docId)
+          && (isRideParticipant(requestId) || isAdmin());
+        allow list: if isBootstrappedAdmin();
+        allow create: if isValidId(requestId)
+          && docId == 'contact'
+          && isVerifiedUser()
+          && exists(/databases/$(database)/documents/ride_requests/$(requestId))
+          && isValidRidePrivateContact(incoming())
+          && incoming().passengerUid == get(/databases/$(database)/documents/ride_requests/$(requestId)).data.passengerUid
+          && (incoming().passengerUid == request.auth.uid || isAdmin())
+          && incoming().keys().hasAll(['passengerUid', 'updatedAt'])
+          && incoming().keys().hasOnly(['passengerUid', 'passengerPhone', 'driverUid', 'driverPhone', 'otp', 'updatedAt'])
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(requestId)
+          && docId == 'contact'
+          && isVerifiedUser()
+          && exists(/databases/$(database)/documents/ride_requests/$(requestId))
+          && isValidRidePrivateContact(incoming())
+          && incoming().passengerUid == existing().passengerUid
+          && incoming().updatedAt == request.time
+          && (
+            isAdmin() || (
+              (
+                get(/databases/$(database)/documents/ride_requests/$(requestId)).data.driverUid == request.auth.uid ||
+                existing().passengerUid == request.auth.uid
+              ) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['driverUid', 'driverPhone', 'otp', 'passengerPhone', 'updatedAt'])
+            )
+          );
+        allow delete: if isValidId(requestId) && isValidId(docId) && isAdmin();
+      }
+    }
+
+    // Driver Reviews & Ratings (Public Read, Verified Author Create, Immutable)
+    match /driver_reviews/{reviewId} {
+      allow get: if isValidId(reviewId);
+      allow list: if true;
+      allow create: if isValidId(reviewId)
+        && isVerifiedUser()
+        && isValidDriverReview(incoming())
+        && incoming().id == reviewId
+        && incoming().authorUid == request.auth.uid
+        && exists(/databases/$(database)/documents/drivers/$(incoming().driverId))
+        && incoming().createdAt == request.time
+        && incoming().keys().hasAll(['id', 'authorUid', 'driverId', 'rating', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'authorUid', 'driverId', 'rating', 'tags', 'comment', 'passengerName', 'date', 'createdAt']);
+      allow update, delete: if isValidId(reviewId) && isAdmin();
     }
   }
 }

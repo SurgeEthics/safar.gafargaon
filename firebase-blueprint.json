@@ -1,69 +1,146 @@
 {
   "entities": {
     "driver": {
-      "title": "Driver",
-      "description": "Transport driver profile for Gafargaon",
+      "title": "DriverPublic",
+      "description": "Public transport driver catalog profile (PII-isolated)",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "maxLength": 128 },
         "name": { "type": "string", "maxLength": 100 },
         "nameBn": { "type": "string", "maxLength": 100 },
-        "phone": { "type": "string", "maxLength": 20 },
-        "category": { "type": "string" },
-        "categoryBengali": { "type": "string", "maxLength": 50 },
+        "category": { "type": "string", "maxLength": 50 },
+        "categoryBengali": { "type": "string", "maxLength": 60 },
         "vehicleModel": { "type": "string", "maxLength": 100 },
         "plateNumber": { "type": "string", "maxLength": 50 },
-        "licenseNumber": { "type": "string", "maxLength": 50 },
-        "standName": { "type": "string", "maxLength": 100 },
+        "licensePlate": { "type": "string", "maxLength": 50 },
+        "standName": { "type": "string", "maxLength": 120 },
         "lat": { "type": "number" },
         "lng": { "type": "number" },
         "rating": { "type": "number" },
         "totalTrips": { "type": "number" },
+        "todayDate": { "type": "string", "maxLength": 20 },
+        "todayTrips": { "type": "number" },
+        "todayEarnings": { "type": "number" },
         "isOnline": { "type": "boolean" },
         "isVerified": { "type": "boolean" },
         "nidVerified": { "type": "boolean" },
         "licenseVerified": { "type": "boolean" },
         "phoneVerified": { "type": "boolean" },
-        "driverPhoto": { "type": "string", "maxLength": 500 },
-        "nidNumber": { "type": "string", "maxLength": 50 },
-        "updatedAt": { "type": "string" }
+        "verificationStatus": { "type": "string", "enum": ["pending", "verified", "rejected"] },
+        "regAppId": { "type": "string", "maxLength": 60 },
+        "registeredAt": { "type": "string", "maxLength": 60 },
+        "avatarBg": { "type": "string", "maxLength": 60 },
+        "approxSpeedKmh": { "type": "number" },
+        "driverPhoto": { "type": "string", "maxLength": 60000 },
+        "photoUrl": { "type": "string", "maxLength": 60000 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["name", "phone", "category", "standName"]
+      "required": ["id", "ownerUid", "name", "category", "standName", "lat", "lng"]
+    },
+    "driverPrivateKyc": {
+      "title": "DriverPrivateKyc",
+      "description": "Isolated sensitive KYC and contact details for driver owner and admin only",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "licenseNumber": { "type": "string", "maxLength": 60 },
+        "firstIssueDate": { "type": "string", "maxLength": 40 },
+        "licenseType": { "type": "string", "maxLength": 60 },
+        "regLastFour": { "type": "string", "maxLength": 16 },
+        "manufacturingYear": { "type": "string", "maxLength": 16 },
+        "chassisNumber": { "type": "string", "maxLength": 60 },
+        "engineNumber": { "type": "string", "maxLength": 60 },
+        "nidNumber": { "type": "string", "maxLength": 30 },
+        "nidFrontPhoto": { "type": "string", "maxLength": 120000 },
+        "nidBackPhoto": { "type": "string", "maxLength": 120000 },
+        "taxTokenReceiptPhoto": { "type": "string", "maxLength": 120000 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["ownerUid", "phone"]
+    },
+    "driverCompletedTrip": {
+      "title": "DriverCompletedTrip",
+      "description": "Driver completed trip earnings log entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 40 },
+        "dateBengali": { "type": "string", "maxLength": 60 },
+        "time": { "type": "string", "maxLength": 40 },
+        "pickup": { "type": "string", "maxLength": 160 },
+        "destination": { "type": "string", "maxLength": 160 },
+        "fare": { "type": "number" },
+        "distanceKm": { "type": "number" },
+        "passengerName": { "type": "string", "maxLength": 100 },
+        "createdAtMs": { "type": "number" }
+      },
+      "required": ["id", "pickup", "destination", "fare", "createdAtMs"]
     },
     "stand": {
       "title": "Stand",
       "description": "Vehicle stand in Gafargaon / Pagla area",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string", "maxLength": 100 },
-        "bengaliName": { "type": "string", "maxLength": 100 },
-        "location": { "type": "string", "maxLength": 150 },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 120 },
+        "bengaliName": { "type": "string", "maxLength": 120 },
+        "area": { "type": "string", "maxLength": 120 },
+        "location": { "type": "string", "maxLength": 180 },
         "lat": { "type": "number" },
         "lng": { "type": "number" },
+        "activeDrivers": { "type": "number" },
         "driverCount": { "type": "number" },
         "isPopular": { "type": "boolean" },
         "description": { "type": "string", "maxLength": 250 },
-        "updatedAt": { "type": "string" }
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["name", "bengaliName", "lat", "lng"]
+    },
+    "place": {
+      "title": "PopularPlace",
+      "description": "Gafargaon & Pagla landmark/place managed by Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 120 },
+        "bengaliName": { "type": "string", "maxLength": 120 },
+        "category": { "type": "string", "maxLength": 60 },
+        "area": { "type": "string", "maxLength": 120 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "isPopular": { "type": "boolean" },
+        "showOnMap": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["name", "bengaliName", "category", "area", "lat", "lng"]
     },
     "category": {
       "title": "VehicleCategory",
       "description": "Transportation vehicle category and fare rates",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string", "maxLength": 50 },
-        "nameBengali": { "type": "string", "maxLength": 50 },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 60 },
+        "nameBengali": { "type": "string", "maxLength": 60 },
+        "subtitle": { "type": "string", "maxLength": 150 },
+        "badgeBg": { "type": "string", "maxLength": 60 },
+        "badgeBorder": { "type": "string", "maxLength": 60 },
+        "textColor": { "type": "string", "maxLength": 60 },
+        "accentColor": { "type": "string", "maxLength": 30 },
         "icon": { "type": "string", "maxLength": 20 },
+        "iconType": { "type": "string", "maxLength": 30 },
         "baseFare": { "type": "number" },
         "perKmFare": { "type": "number" },
         "minFare": { "type": "number" },
         "isActive": { "type": "boolean" },
-        "description": { "type": "string", "maxLength": 200 }
+        "isEmergency": { "type": "boolean" },
+        "isFree": { "type": "boolean" },
+        "description": { "type": "string", "maxLength": 200 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["name", "nameBengali", "baseFare", "perKmFare"]
+      "required": ["nameBengali", "baseFare", "perKmFare"]
     },
     "appSettings": {
       "title": "AppSettings",
@@ -72,12 +149,12 @@
       "properties": {
         "primaryColor": { "type": "string", "maxLength": 50 },
         "customHexColor": { "type": "string", "maxLength": 20 },
-        "fontFamily": { "type": "string", "maxLength": 50 },
+        "fontFamily": { "type": "string", "maxLength": 60 },
         "fontSizeMode": { "type": "string", "maxLength": 20 },
         "cardRadius": { "type": "string", "maxLength": 30 },
         "densityMode": { "type": "string", "maxLength": 20 },
-        "headerHotlineText": { "type": "string", "maxLength": 150 },
-        "announcementNotice": { "type": "string", "maxLength": 250 },
+        "headerHotlineText": { "type": "string", "maxLength": 200 },
+        "announcementNotice": { "type": "string", "maxLength": 300 },
         "customAppUrl": { "type": "string", "maxLength": 200 },
         "showLiveMapWidget": { "type": "boolean" },
         "showQuickChipsWidget": { "type": "boolean" },
@@ -86,105 +163,214 @@
         "baseFareMinimum": { "type": "number" },
         "perKmMultiplier": { "type": "number" },
         "roundFareToNearest5": { "type": "boolean" },
-        "updatedAt": { "type": "string" }
+        "quickDestinations": { "type": "array" },
+        "placeCategories": { "type": "array" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       }
+    },
+    "adminSecuritySettings": {
+      "title": "AdminSecuritySettings",
+      "description": "Hashed secondary UI PIN metadata readable and writable by Admin only",
+      "type": "object",
+      "properties": {
+        "pinHash": { "type": "string", "maxLength": 128 },
+        "hasCustomPin": { "type": "boolean" },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["hasCustomPin", "updatedAt"]
     },
     "hotlines": {
       "title": "EmergencyHotlines",
-      "description": "Emergency hotline directory numbers",
+      "description": "Emergency hotline numbers and directory",
       "type": "object",
       "properties": {
-        "hospital": { "type": "string", "maxLength": 30 },
-        "fire": { "type": "string", "maxLength": 30 },
-        "police": { "type": "string", "maxLength": 30 },
-        "national": { "type": "string", "maxLength": 30 },
-        "updatedAt": { "type": "string" }
+        "hospital": { "type": "string", "maxLength": 40 },
+        "fire": { "type": "string", "maxLength": 40 },
+        "police": { "type": "string", "maxLength": 40 },
+        "national": { "type": "string", "maxLength": 40 },
+        "contacts": { "type": "array" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       }
     },
-    "rideRequest": {
-      "title": "Ride Request",
-      "description": "Passenger ride booking request",
+    "userProfile": {
+      "title": "UserProfile",
+      "description": "Google-authenticated passenger/driver private profile keyed by Firebase UID",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "passengerName": { "type": "string", "maxLength": 100 },
-        "passengerPhone": { "type": "string", "maxLength": 20 },
-        "pickupLocation": { "type": "string", "maxLength": 150 },
-        "destinationLocation": { "type": "string", "maxLength": 150 },
-        "vehicleCategory": { "type": "string" },
-        "status": { "type": "string" },
-        "estimatedFare": { "type": "number" },
-        "createdAt": { "type": "string" }
+        "uid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "homeLocation": { "type": "string", "maxLength": 180 },
+        "emergencyContact": { "type": "string", "maxLength": 80 },
+        "photoUrl": { "type": "string", "maxLength": 500 },
+        "role": { "type": "string", "enum": ["passenger", "driver"] },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["passengerName", "passengerPhone", "pickupLocation", "destinationLocation", "status"]
+      "required": ["uid", "name", "role"]
     },
     "passengerTrip": {
-      "title": "Passenger Trip Record",
-      "description": "Completed trip record stored for passenger history",
+      "title": "PassengerTripRecord",
+      "description": "Completed trip record stored under user's UID",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "date": { "type": "string" },
-        "pickupPoint": { "type": "string" },
-        "destination": { "type": "string" },
-        "driverName": { "type": "string" },
-        "driverPhone": { "type": "string" },
-        "vehicleCategory": { "type": "string" },
-        "vehicleModel": { "type": "string" },
-        "plateNumber": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 60 },
+        "pickupPoint": { "type": "string", "maxLength": 160 },
+        "destination": { "type": "string", "maxLength": 160 },
+        "driverName": { "type": "string", "maxLength": 100 },
+        "driverPhone": { "type": "string", "maxLength": 25 },
+        "vehicleCategory": { "type": "string", "maxLength": 50 },
+        "vehicleModel": { "type": "string", "maxLength": 100 },
+        "plateNumber": { "type": "string", "maxLength": 50 },
         "fare": { "type": "number" },
-        "status": { "type": "string" },
+        "status": { "type": "string", "maxLength": 40 },
         "ratingGiven": { "type": "number" },
-        "createdAt": { "type": "string" }
-      }
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "createdAtMs": { "type": "number" }
+      },
+      "required": ["id", "pickupPoint", "destination", "fare", "status"]
+    },
+    "rideRequest": {
+      "title": "RideRequest",
+      "description": "Real-time passenger ride request with strict state machine",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "passengerUid": { "type": "string", "maxLength": 128 },
+        "passengerName": { "type": "string", "maxLength": 100 },
+        "pickupPoint": { "type": "string", "maxLength": 180 },
+        "pickupLandmark": { "type": "string", "maxLength": 180 },
+        "destination": { "type": "string", "maxLength": 180 },
+        "category": { "type": "string", "maxLength": 50 },
+        "distanceKm": { "type": "number" },
+        "estFare": { "type": "number" },
+        "pickupCoords": { "type": "object" },
+        "destCoords": { "type": "object" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "in_transit", "completed", "cancelled", "declined"] },
+        "driverId": { "type": "string", "maxLength": 128 },
+        "driverUid": { "type": "string", "maxLength": 128 },
+        "driverName": { "type": "string", "maxLength": 100 },
+        "driverCategory": { "type": "string", "maxLength": 50 },
+        "driverLat": { "type": "number" },
+        "driverLng": { "type": "number" },
+        "driverVehicleModel": { "type": "string", "maxLength": 100 },
+        "driverLicensePlate": { "type": "string", "maxLength": 50 },
+        "driverPlateNumber": { "type": "string", "maxLength": 50 },
+        "driverPhoto": { "type": "string", "maxLength": 60000 },
+        "driverRating": { "type": "number" },
+        "createdAtMs": { "type": "number" },
+        "requestedAt": { "type": "string", "maxLength": 64 },
+        "acceptedAt": { "type": "string", "maxLength": 64 },
+        "boardedAt": { "type": "string", "maxLength": 64 },
+        "completedAt": { "type": "string", "maxLength": 64 },
+        "cancelledAt": { "type": "string", "maxLength": 64 },
+        "declinedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "passengerUid", "passengerName", "pickupPoint", "destination", "category", "distanceKm", "estFare", "status", "createdAtMs"]
+    },
+    "ridePrivateContact": {
+      "title": "RidePrivateContact",
+      "description": "Participant-only ride contact phones and verification OTP",
+      "type": "object",
+      "properties": {
+        "passengerUid": { "type": "string", "maxLength": 128 },
+        "passengerPhone": { "type": "string", "maxLength": 20 },
+        "driverUid": { "type": "string", "maxLength": 128 },
+        "driverPhone": { "type": "string", "maxLength": 20 },
+        "otp": { "type": "string", "maxLength": 10 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["passengerUid"]
     },
     "driverReview": {
-      "title": "Driver Review & Rating",
+      "title": "DriverReview",
       "description": "Passenger rating and review for driver",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "driverId": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "driverId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "rating": { "type": "number" },
-        "comment": { "type": "string" },
-        "passengerName": { "type": "string" },
-        "date": { "type": "string" },
-        "createdAt": { "type": "string" }
-      }
+        "tags": { "type": "array" },
+        "comment": { "type": "string", "maxLength": 500 },
+        "passengerName": { "type": "string", "maxLength": 100 },
+        "date": { "type": "string", "maxLength": 60 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "authorUid", "driverId", "rating", "createdAt"]
+    },
+    "adminUser": {
+      "title": "AdminUser",
+      "description": "Authorized Super Admin role registry",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 150 },
+        "role": { "type": "string", "enum": ["super_admin", "admin"] },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "email", "role"]
     }
   },
   "firestore": {
+    "/admins/{adminId}": {
+      "schema": "adminUser",
+      "description": "Admin role grant documents (Admin-only)"
+    },
     "/drivers/{driverId}": {
       "schema": "driver",
-      "description": "Collection of local drivers registered in Safar Gafargaon"
+      "description": "Public safe driver directory (PII excluded)"
+    },
+    "/drivers/{driverId}/private/{docId}": {
+      "schema": "driverPrivateKyc",
+      "description": "Driver KYC and private contact vault (Owner + Admin only)"
+    },
+    "/drivers/{driverId}/completed_trips/{tripId}": {
+      "schema": "driverCompletedTrip",
+      "description": "Driver completed trip earnings log (Owner + Admin only)"
     },
     "/stands/{standId}": {
       "schema": "stand",
-      "description": "Collection of transportation stands across Gafargaon and Pagla"
+      "description": "Transportation stands (Public read, Admin write)"
+    },
+    "/places/{placeId}": {
+      "schema": "place",
+      "description": "Popular places & landmarks (Public read, Admin write)"
     },
     "/categories/{categoryId}": {
       "schema": "category",
-      "description": "Vehicle categories and fare specifications"
+      "description": "Vehicle categories & fares (Public read, Admin write)"
     },
     "/settings/{settingId}": {
       "schema": "appSettings",
-      "description": "App settings, themes, and configuration"
+      "description": "Public app_config (Admin write) and private admin_security (Admin read/write)"
     },
     "/hotlines/{hotlineId}": {
       "schema": "hotlines",
-      "description": "Emergency service hotlines"
+      "description": "Emergency hotlines & contacts directory (Public read, Admin write)"
     },
-    "/ride_requests/{requestId}": {
-      "schema": "rideRequest",
-      "description": "Collection of ride requests submitted by passengers"
+    "/users/{userId}": {
+      "schema": "userProfile",
+      "description": "Authenticated user profile keyed by Firebase Auth UID (Owner + Admin only)"
     },
     "/users/{userId}/trips/{tripId}": {
       "schema": "passengerTrip",
-      "description": "Passenger personal completed trip history"
+      "description": "Passenger completed trip history (Owner + Admin only)"
+    },
+    "/ride_requests/{requestId}": {
+      "schema": "rideRequest",
+      "description": "Active ride dispatch state with strict state machine"
+    },
+    "/ride_requests/{requestId}/private/{docId}": {
+      "schema": "ridePrivateContact",
+      "description": "Ride participant contact & OTP vault (Passenger + Assigned Driver + Admin)"
     },
     "/driver_reviews/{reviewId}": {
       "schema": "driverReview",
-      "description": "Passenger reviews and ratings for drivers"
+      "description": "Passenger reviews & ratings (Public read, verified author create)"
     }
   }
 }

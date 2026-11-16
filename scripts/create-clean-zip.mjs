@@ -10,15 +10,14 @@ const EXCLUDE_DIRS = new Set([
   '.playwright-cli',
   'dev-dist',
   'aistudio',
+  'dist',
+  'private-archives',
 ]);
 const EXCLUDE_EXTENSIONS = new Set(['.zip', '.log', '.map']);
 const EXCLUDE_FILES = new Set(['.DS_Store', 'Thumbs.db']);
 
-const ZIP_NAMES = [
-  'safar-gafargaon-clean-source.zip',
-  'safar-gafargaon-latest.zip',
-  'safar-gafargaon-final.zip',
-];
+const PRIVATE_ARCHIVE_DIR = path.join(ROOT_DIR, 'private-archives');
+const PRIVATE_ZIP_PATH = path.join(PRIVATE_ARCHIVE_DIR, 'safar-gafargaon-clean-source.zip');
 
 // Precompute IEEE 802.3 CRC-32 lookup table
 const CRC_TABLE = new Uint32Array(256);
@@ -92,7 +91,6 @@ function buildZipBuffer(fileEntries) {
     const { dosTime, dosDate } = toDosTimeDate(stat.mtime);
     const fileCrc = crc32(raw);
 
-    // Compress using raw deflate; fallback to store (0) if compressed isn't smaller
     const deflated = zlib.deflateRawSync(raw, { level: 9 });
     const useDeflate = deflated.length < raw.length;
     const payload = useDeflate ? deflated : raw;
@@ -100,11 +98,10 @@ function buildZipBuffer(fileEntries) {
 
     const nameBuf = Buffer.from(item.relPath.replace(/\\/g, '/'), 'utf8');
 
-    // Local File Header (30 bytes)
     const localHeader = Buffer.allocUnsafe(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
     localHeader.writeUInt16LE(20, 4);
-    localHeader.writeUInt16LE(0x0800, 6); // UTF-8 filename flag
+    localHeader.writeUInt16LE(0x0800, 6);
     localHeader.writeUInt16LE(method, 8);
     localHeader.writeUInt16LE(dosTime, 10);
     localHeader.writeUInt16LE(dosDate, 12);
@@ -116,12 +113,11 @@ function buildZipBuffer(fileEntries) {
 
     localParts.push(localHeader, nameBuf, payload);
 
-    // Central Directory File Header (46 bytes)
     const centralHeader = Buffer.allocUnsafe(46);
     centralHeader.writeUInt32LE(0x02014b50, 0);
     centralHeader.writeUInt16LE(0x0314, 4);
     centralHeader.writeUInt16LE(20, 6);
-    centralHeader.writeUInt16LE(0x0800, 8); // UTF-8 filename flag
+    centralHeader.writeUInt16LE(0x0800, 8);
     centralHeader.writeUInt16LE(method, 10);
     centralHeader.writeUInt16LE(dosTime, 12);
     centralHeader.writeUInt16LE(dosDate, 14);
@@ -155,8 +151,8 @@ function buildZipBuffer(fileEntries) {
 }
 
 function main() {
-  // Remove stale zips before scanning files
-  for (const dir of ['public', 'dist']) {
+  // Never expose project archives inside public/ or dist/
+  for (const dir of ['public', 'dist', 'private-archives']) {
     const dirPath = path.join(ROOT_DIR, dir);
     if (!fs.existsSync(dirPath)) continue;
     for (const file of fs.readdirSync(dirPath)) {
@@ -178,18 +174,10 @@ function main() {
     throw new Error(`Generated ZIP (${sizeMb.toFixed(2)} MB) exceeds Cloudflare Pages 25 MB limit`);
   }
 
-  const targetDirs = ['public'];
-  if (fs.existsSync(path.join(ROOT_DIR, 'dist'))) {
-    targetDirs.push('dist');
-  }
+  fs.mkdirSync(PRIVATE_ARCHIVE_DIR, { recursive: true });
+  fs.writeFileSync(PRIVATE_ZIP_PATH, zipBuffer);
 
-  for (const dir of targetDirs) {
-    for (const zipName of ZIP_NAMES) {
-      fs.writeFileSync(path.join(ROOT_DIR, dir, zipName), zipBuffer);
-    }
-  }
-
-  console.log(`✅ Created clean project archives (${sizeMb.toFixed(2)} MB, ${files.length} files) in ${targetDirs.join(' & ')}`);
+  console.log(`✅ Created secured private archive (${sizeMb.toFixed(2)} MB, ${files.length} files) at private-archives/safar-gafargaon-clean-source.zip`);
 }
 
 main();

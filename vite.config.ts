@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
@@ -47,7 +46,7 @@ export default defineConfig(() => {
         },
         workbox: {
           importScripts: ['/sw-notifications.js'],
-          globIgnores: ['**/assets/aistudio/**', '**/*.zip'],
+          globIgnores: ['**/assets/aistudio/**', '**/*.zip', '**/private-archives/**'],
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           navigateFallbackDenylist: [/^\/.*\.zip$/, /^\/api\/.*/],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,mp3,woff,woff2}'],
@@ -87,76 +86,6 @@ export default defineConfig(() => {
           type: 'module',
         },
       }),
-      {
-        name: 'download-zip-and-api-middleware',
-        configureServer(server) {
-          server.middlewares.use((req, res, next) => {
-            const urlPath = req.url ? req.url.split('?')[0] : '';
-            if (
-              urlPath === '/safar-app.zip' || 
-              urlPath === '/safar-gafargaon.zip' ||
-              urlPath === '/safar-gafargaon-clean-source.zip' ||
-              urlPath === '/safar-gafargaon-latest.zip' ||
-              urlPath === '/safar-gafargaon-final.zip' ||
-              urlPath === '/download-zip' ||
-              urlPath === '/api/download-zip' ||
-              urlPath === '/download/project.zip'
-            ) {
-              const primaryZip = path.resolve(process.cwd(), 'public', 'safar-gafargaon-clean-source.zip');
-              const fallbackZip = path.resolve(process.cwd(), 'public', 'safar-app.zip');
-              const zipPath = fs.existsSync(primaryZip) ? primaryZip : fallbackZip;
-
-              if (fs.existsSync(zipPath)) {
-                const stat = fs.statSync(zipPath);
-                res.writeHead(200, {
-                  'Content-Type': 'application/zip',
-                  'Content-Length': stat.size,
-                  'Content-Disposition': 'attachment; filename="safar-gafargaon-clean-source.zip"',
-                  'Access-Control-Allow-Origin': '*',
-                  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-                  'Cache-Control': 'no-cache, no-store, must-revalidate',
-                  'Pragma': 'no-cache',
-                  'Expires': '0',
-                });
-                fs.createReadStream(zipPath).pipe(res);
-                return;
-              }
-            }
-
-            if (req.url && (req.url === '/api/live/health' || req.url.startsWith('/api/live/health?'))) {
-              res.setHeader('Content-Type', 'application/json; charset=utf-8');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(JSON.stringify({
-                status: 'online',
-                server: 'সফর গফরগাঁও বিল্ট-ইন লাইভ এজ সার্ভার',
-                edgeColo: 'Local / Edge Simulator',
-                timestamp: new Date().toISOString(),
-                activeDriversCount: 12,
-                activePassengersCount: 6,
-                features: {
-                  webSockets: true,
-                  liveGpsStreaming: true,
-                  emergencyAlerts: true
-                }
-              }));
-              return;
-            }
-
-            if (req.url && (req.url === '/api/live/drivers' || req.url.startsWith('/api/live/drivers?'))) {
-              res.setHeader('Content-Type', 'application/json; charset=utf-8');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(JSON.stringify({
-                success: true,
-                count: 12,
-                message: 'Active drivers stream operational'
-              }));
-              return;
-            }
-
-            next();
-          });
-        },
-      },
     ],
     resolve: {
       alias: {
@@ -165,8 +94,10 @@ export default defineConfig(() => {
       dedupe: [
         'firebase',
         'firebase/app',
+        'firebase/auth',
         'firebase/firestore',
         '@firebase/app',
+        '@firebase/auth',
         '@firebase/firestore',
         '@firebase/component',
         '@firebase/util',
@@ -175,6 +106,7 @@ export default defineConfig(() => {
     optimizeDeps: {
       include: [
         'firebase/app',
+        'firebase/auth',
         'firebase/firestore',
         'leaflet',
         'lucide-react',

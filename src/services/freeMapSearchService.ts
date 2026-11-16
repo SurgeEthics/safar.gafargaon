@@ -8,6 +8,7 @@ import {
   isWithinGafargaonServiceArea,
 } from '../utils/gafargaonGeo';
 import { toBengaliNumber } from '../utils/calculator';
+import { sanitizePlainText, isValidBdCoordinate } from '../utils/security';
 
 export interface FreeGeocodedPlace {
   id: string;
@@ -48,7 +49,7 @@ export async function searchBoundedFreePlaces(
   localPlaces: PlaceReferenceCandidate[] = [],
   signal?: AbortSignal
 ): Promise<FreeGeocodedPlace[]> {
-  const q = rawQuery.trim();
+  const q = sanitizePlainText(rawQuery, 120);
   if (q.length < 2) return [];
 
   const cacheKey = q.toLowerCase();
@@ -60,6 +61,7 @@ export async function searchBoundedFreePlaces(
   const seenKeys = new Set<string>();
 
   const pushUnique = (item: FreeGeocodedPlace) => {
+    if (!isValidBdCoordinate(item.lat, item.lng)) return;
     if (!isWithinGafargaonServiceArea(item.lat, item.lng)) return;
     const normName = item.bengaliName.toLowerCase().trim();
     if (!normName) return;
@@ -83,24 +85,25 @@ export async function searchBoundedFreePlaces(
     const res = await fetch(arcUrl, { signal });
     if (res.ok) {
       const json = await res.json();
-      const candidates = Array.isArray(json?.candidates) ? json.candidates : [];
+      const candidates = Array.isArray(json?.candidates) ? json.candidates.slice(0, 15) : [];
       for (let i = 0; i < candidates.length; i++) {
         const c = candidates[i];
         const rawLat = c?.location?.y;
         const rawLng = c?.location?.x;
-        if (typeof rawLat !== 'number' || typeof rawLng !== 'number') continue;
-        const lat = Number(rawLat.toFixed(14));
-        const lng = Number(rawLng.toFixed(14));
+        if (!isValidBdCoordinate(rawLat, rawLng)) continue;
+        const lat = Number(Number(rawLat).toFixed(14));
+        const lng = Number(Number(rawLng).toFixed(14));
         if (!isWithinGafargaonServiceArea(lat, lng)) continue;
 
         const attrs = c.attributes || {};
-        const displayName = (attrs.PlaceName || c.address || '').split(',')[0].trim();
+        const rawName = (attrs.PlaceName || c.address || '').split(',')[0];
+        const displayName = sanitizePlainText(rawName, 100);
         if (!displayName || displayName.toLowerCase() === 'gafargaon') continue;
 
         const inferred = inferNearestAreaInfo(lat, lng, localPlaces);
         const cat = mapArcgisTypeToCategory(attrs.Type, displayName);
         const areaText =
-          (attrs.Place_addr || '').trim() ||
+          sanitizePlainText(attrs.Place_addr, 140) ||
           `${inferred.nearestPlaceName} সংলগ্ন`;
 
         pushUnique({
@@ -166,7 +169,7 @@ export async function reverseGeocodeFree(
     clearTimeout(timer);
     if (res.ok) {
       const data = await res.json();
-      const loc = (data?.locality || data?.city || '').trim();
+      const loc = sanitizePlainText(data?.locality || data?.city || '', 80);
       if (loc && loc !== 'বাংলাদেশ') {
         remoteLocality = loc;
       }

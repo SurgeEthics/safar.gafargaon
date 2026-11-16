@@ -1,7 +1,8 @@
+import { validateSafeExternalUrl, isValidBdCoordinate, sanitizePlainText } from '../utils/security';
+
 export interface LiveDriverLocation {
   id: string;
   name: string;
-  phone: string;
   category: string;
   vehicleModel?: string;
   plateNumber?: string;
@@ -17,8 +18,6 @@ export interface LiveDriverLocation {
 
 export interface LivePassengerLocation {
   id: string;
-  name: string;
-  phone?: string;
   pickupPoint: string;
   destination?: string;
   lat: number;
@@ -44,19 +43,25 @@ class LiveLocationService {
     passengers: [],
     status: 'connected',
     latencyMs: 35,
-    serverType: 'local'
+    serverType: 'local',
   };
   private listeners: Set<Listener> = new Set();
 
   constructor() {
     if (typeof window !== 'undefined') {
       try {
-        this.customServerUrl = localStorage.getItem('safar_custom_worker_url') || '';
-        if (this.customServerUrl) {
-          this.state.serverType = 'cloudflare';
+        const stored = localStorage.getItem('safar_custom_worker_url') || '';
+        if (stored) {
+          const check = validateSafeExternalUrl(stored);
+          if (check.ok && check.normalizedUrl) {
+            this.customServerUrl = check.normalizedUrl;
+            this.state.serverType = 'cloudflare';
+          } else {
+            localStorage.removeItem('safar_custom_worker_url');
+          }
         }
       } catch {
-        // ignore
+        // ignore storage errors
       }
     }
   }
@@ -65,22 +70,34 @@ class LiveLocationService {
     return this.customServerUrl;
   }
 
-  public setCustomServerUrl(url: string): void {
-    this.customServerUrl = url.trim();
+  public setCustomServerUrl(url: string): { ok: boolean; error?: string } {
+    const trimmed = url.trim();
+    if (!trimmed) {
+      this.customServerUrl = '';
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.removeItem('safar_custom_worker_url');
+        } catch {}
+      }
+      this.state.serverType = 'local';
+      this.notify();
+      return { ok: true };
+    }
+
+    const check = validateSafeExternalUrl(trimmed);
+    if (!check.ok || !check.normalizedUrl) {
+      return { ok: false, error: check.error || 'অবৈধ URL' };
+    }
+
+    this.customServerUrl = check.normalizedUrl;
     if (typeof window !== 'undefined') {
       try {
-        if (this.customServerUrl) {
-          localStorage.setItem('safar_custom_worker_url', this.customServerUrl);
-          this.state.serverType = 'cloudflare';
-        } else {
-          localStorage.removeItem('safar_custom_worker_url');
-          this.state.serverType = 'local';
-        }
-      } catch {
-        // ignore
-      }
+        localStorage.setItem('safar_custom_worker_url', this.customServerUrl);
+      } catch {}
     }
+    this.state.serverType = 'cloudflare';
     this.notify();
+    return { ok: true };
   }
 
   public syncDriversFromCatalog(catalogDrivers: any[]): void {
@@ -89,20 +106,19 @@ class LiveLocationService {
     const liveDrivers: LiveDriverLocation[] = catalogDrivers
       .filter((d: any) => d.isOnline !== false)
       .map((d: any) => ({
-        id: d.id,
-        name: d.name || d.nameBn || 'চালক',
-        phone: d.phone || '',
-        category: d.category || 'cng',
-        vehicleModel: d.vehicleModel || d.vehicleName || '',
-        plateNumber: d.plateNumber || d.licensePlate || '',
-        standName: d.standName || '',
-        lat: d.lat || 24.4536,
-        lng: d.lng || 90.5479,
+        id: sanitizePlainText(d.id, 128),
+        name: sanitizePlainText(d.name || d.nameBn, 80) || 'চালক',
+        category: sanitizePlainText(d.category, 40) || 'cng',
+        vehicleModel: sanitizePlainText(d.vehicleModel || d.vehicleName, 80),
+        plateNumber: sanitizePlainText(d.plateNumber || d.licensePlate, 40),
+        standName: sanitizePlainText(d.standName, 100),
+        lat: isValidBdCoordinate(d.lat, d.lng) ? d.lat : 24.4536,
+        lng: isValidBdCoordinate(d.lat, d.lng) ? d.lng : 90.5479,
         speed: d.approxSpeedKmh || 25,
         rating: d.rating || 4.9,
         isOnline: d.isOnline !== false,
         isLiveEdge: true,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       }));
 
     const current = this.state.drivers;
@@ -129,22 +145,36 @@ class LiveLocationService {
     this.notify();
   }
 
-  public registerPassenger(passenger: LivePassengerLocation): void {
-    const existingIdx = this.state.passengers.findIndex((p: LivePassengerLocation) => p.id === passenger.id);
+  public registerPassenger(passenger: LivePassengerLocation & { name?: string; phone?: string }): void {
+    const cleanLat = isValidBdCoordinate(passenger.lat, passenger.lng) ? passenger.lat : 24.4335;
+    const cleanLng = isValidBdCoordinate(passenger.lat, passenger.lng) ? passenger.lng : 90.5512;
+    const sanitized: LivePassengerLocation = {
+      id: sanitizePlainText(passenger.id, 128) || 'passenger-current',
+      pickupPoint: sanitizePlainText(passenger.pickupPoint, 120),
+      destination: sanitizePlainText(passenger.destination, 120),
+      lat: cleanLat,
+      lng: cleanLng,
+      status: passenger.status,
+      updatedAt: passenger.updatedAt || new Date().toISOString(),
+    };
+
+    const existingIdx = this.state.passengers.findIndex(
+      (p: LivePassengerLocation) => p.id === sanitized.id
+    );
     if (existingIdx >= 0) {
       const existing = this.state.passengers[existingIdx];
       if (
-        existing.pickupPoint === passenger.pickupPoint &&
-        existing.destination === passenger.destination &&
-        existing.status === passenger.status &&
-        Math.abs(existing.lat - passenger.lat) < 0.0001 &&
-        Math.abs(existing.lng - passenger.lng) < 0.0001
+        existing.pickupPoint === sanitized.pickupPoint &&
+        existing.destination === sanitized.destination &&
+        existing.status === sanitized.status &&
+        Math.abs(existing.lat - sanitized.lat) < 0.0001 &&
+        Math.abs(existing.lng - sanitized.lng) < 0.0001
       ) {
-        return; // Identical, avoid re-triggering listeners
+        return;
       }
-      this.state.passengers[existingIdx] = passenger;
+      this.state.passengers[existingIdx] = sanitized;
     } else {
-      this.state.passengers.push(passenger);
+      this.state.passengers.push(sanitized);
     }
     this.notify();
   }

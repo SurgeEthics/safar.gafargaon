@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Cloud, Check, Wifi, Globe, Server, RefreshCw } from 'lucide-react';
 import { liveLocationService } from '../services/liveLocationService';
+import { validateSafeExternalUrl } from '../utils/security';
 
 interface CloudflareSettingsModalProps {
   isOpen: boolean;
@@ -28,8 +29,12 @@ export const CloudflareSettingsModal: React.FC<CloudflareSettingsModalProps> = (
   if (!isOpen) return null;
 
   const handleSave = () => {
-    liveLocationService.setCustomServerUrl(workerUrl);
-    setTestStatus('সার্ভার সফলভাবে কনফিগার করা হয়েছে!');
+    const res = liveLocationService.setCustomServerUrl(workerUrl);
+    if (!res.ok) {
+      setTestStatus(`❌ ${res.error || 'অবৈধ URL অনুমোদিত নয়'}`);
+      return;
+    }
+    setTestStatus('✅ সার্ভার সফলভাবে কনফিগার করা হয়েছে!');
     setTimeout(() => {
       setTestStatus(null);
       onClose();
@@ -49,8 +54,16 @@ export const CloudflareSettingsModal: React.FC<CloudflareSettingsModalProps> = (
     setIsTesting(true);
     setTestStatus(null);
 
-    const targetUrl = workerUrl.trim() || `${window.location.origin}`;
-    const cleanUrl = targetUrl.replace(/\/+$/, '');
+    let cleanUrl = window.location.origin;
+    if (workerUrl.trim()) {
+      const check = validateSafeExternalUrl(workerUrl);
+      if (!check.ok || !check.normalizedUrl) {
+        setTestStatus(`❌ ${check.error || 'নিরাপদ HTTPS Worker URL দিন'}`);
+        setIsTesting(false);
+        return;
+      }
+      cleanUrl = check.normalizedUrl;
+    }
     const endpoint = `${cleanUrl}/api/live/health`;
 
     try {

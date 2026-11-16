@@ -13,8 +13,9 @@ import {
   Wallet
 } from 'lucide-react';
 import { toBengaliNumber } from '../utils/calculator';
-import { collection, query, orderBy, limit, onSnapshot, setDoc, doc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { db, auth, handleFirestoreError } from '../lib/firebase';
+import { isAuthorizedAdminEmail } from '../utils/adminAuth';
 import { AutoMarqueeText } from './AutoMarqueeText';
 
 export interface DriverTripLogEntry {
@@ -267,116 +268,55 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
       saveTripsState(currentTrips);
     }
 
-    // Listener A: drivers/${cleanPhone}/completed_trips
-    try {
-      const q1 = query(
-        collection(db, 'drivers', cleanPhone, 'completed_trips'),
-        orderBy('createdAtMs', 'desc'),
-        limit(100)
-      );
-      unsubs.push(onSnapshot(q1, (snap) => {
-        if (!snap.empty) {
-          snap.forEach((docSnap) => {
-            const d = docSnap.data();
-            const dateKey = getLocalDateKey(d.createdAtMs, d.date);
-            const timeFormatted = formatBengaliTime(d.time, d.createdAtMs);
-            const entry: DriverTripLogEntry = {
-              id: getCanonicalTripId(docSnap.id),
-              date: dateKey,
-              dateBengali: d.dateBengali || formatBengaliDate(dateKey),
-              time: timeFormatted,
-              pickup: d.pickup || d.pickupPoint || 'পিকআপ স্থান',
-              destination: d.destination || 'গন্তব্য স্থান',
-              fare: Number(d.fare) || 30,
-              distanceKm: d.distanceKm,
-              passengerName: d.passengerName || 'সম্মানিত যাত্রী',
-              createdAtMs: d.createdAtMs || Date.now()
-            };
-            currentTrips = upsertTripEntry(currentTrips, entry);
-          });
-          saveTripsState(currentTrips);
-        }
-      }, () => {}));
-    } catch {}
+    // Listener A & B require authenticated Firebase user (satisfies secure Firestore allow list rules)
+    const currentUser = auth.currentUser;
+    const isAdminUser = isAuthorizedAdminEmail(currentUser?.email, currentUser?.emailVerified);
+    const driverKeys = new Set<string>();
+    if (cleanPhone) driverKeys.add(cleanPhone);
+    if (driverId) driverKeys.add(driverId);
 
-    // Listener B: drivers/${driverId}/completed_trips (if driverId !== cleanPhone)
-    const driverKey = driverId || cleanPhone;
-    if (driverKey && driverKey !== cleanPhone) {
-      try {
-        const q2 = query(
-          collection(db, 'drivers', driverKey, 'completed_trips'),
-          orderBy('createdAtMs', 'desc'),
-          limit(100)
-        );
-        unsubs.push(onSnapshot(q2, (snap) => {
-          if (!snap.empty) {
-            snap.forEach((docSnap) => {
-              const d = docSnap.data();
-              const dateKey = getLocalDateKey(d.createdAtMs, d.date);
-              const timeFormatted = formatBengaliTime(d.time, d.createdAtMs);
-              const entry: DriverTripLogEntry = {
-                id: getCanonicalTripId(docSnap.id),
-                date: dateKey,
-                dateBengali: d.dateBengali || formatBengaliDate(dateKey),
-                time: timeFormatted,
-                pickup: d.pickup || d.pickupPoint || 'পিকআপ স্থান',
-                destination: d.destination || 'গন্তব্য স্থান',
-                fare: Number(d.fare) || 30,
-                distanceKm: d.distanceKm,
-                passengerName: d.passengerName || 'সম্মানিত যাত্রী',
-                createdAtMs: d.createdAtMs || Date.now()
-              };
-              currentTrips = upsertTripEntry(currentTrips, entry);
-            });
-            saveTripsState(currentTrips);
-          }
-        }, () => {}));
-      } catch {}
+    if (currentUser?.emailVerified) {
+      driverKeys.forEach((docKey) => {
+        try {
+          const path = `drivers/${docKey}/completed_trips`;
+          const qTrips = isAdminUser
+            ? query(collection(db, 'drivers', docKey, 'completed_trips'), orderBy('createdAtMs', 'desc'), limit(100))
+            : query(collection(db, 'drivers', docKey, 'completed_trips'), where('ownerUid', '==', currentUser.uid), limit(100));
+
+          unsubs.push(
+            onSnapshot(
+              qTrips,
+              (snap) => {
+                if (!snap.empty) {
+                  snap.forEach((docSnap) => {
+                    const d = docSnap.data();
+                    const dateKey = getLocalDateKey(d.createdAtMs, d.date);
+                    const timeFormatted = formatBengaliTime(d.time, d.createdAtMs);
+                    const entry: DriverTripLogEntry = {
+                      id: getCanonicalTripId(docSnap.id),
+                      date: dateKey,
+                      dateBengali: d.dateBengali || formatBengaliDate(dateKey),
+                      time: timeFormatted,
+                      pickup: d.pickup || d.pickupPoint || 'পিকআপ স্থান',
+                      destination: d.destination || 'গন্তব্য স্থান',
+                      fare: Number(d.fare) || 30,
+                      distanceKm: d.distanceKm,
+                      passengerName: d.passengerName || 'সম্মানিত যাত্রী',
+                      createdAtMs: d.createdAtMs || Date.now(),
+                    };
+                    currentTrips = upsertTripEntry(currentTrips, entry);
+                  });
+                  saveTripsState(currentTrips);
+                }
+              },
+              (err) => {
+                handleFirestoreError(err, 'list', path);
+              }
+            )
+          );
+        } catch {}
+      });
     }
-
-    // Listener C: ride_requests where status === 'completed'
-    try {
-      const q3 = query(
-        collection(db, 'ride_requests'),
-        orderBy('createdAtMs', 'desc'),
-        limit(50)
-      );
-      unsubs.push(onSnapshot(q3, (snap) => {
-        if (!snap.empty) {
-          let updated = false;
-          snap.forEach((docSnap) => {
-            const d = docSnap.data();
-            if (d.status !== 'completed') return;
-            const dPhone = (d.driverPhone || '').replace(/[^0-9]/g, '');
-            const dName = d.driverName || '';
-            const matches = (cleanPhone && dPhone && (cleanPhone === dPhone || cleanPhone.endsWith(dPhone) || dPhone.endsWith(cleanPhone))) ||
-                            (driverName && dName && driverName === dName) ||
-                            (isTasnimul && dName.toUpperCase().includes('TASNIMUL'));
-            if (matches) {
-              const dateKey = getLocalDateKey(d.createdAtMs, d.completedAt || d.requestedAt);
-              const timeFormatted = formatBengaliTime(d.requestedAt, d.createdAtMs);
-              const entry: DriverTripLogEntry = {
-                id: getCanonicalTripId(docSnap.id),
-                date: dateKey,
-                dateBengali: formatBengaliDate(dateKey),
-                time: timeFormatted,
-                pickup: d.pickupPoint || 'পিকআপ স্থান',
-                destination: d.destination || 'গন্তব্য স্থান',
-                fare: Number(d.estFare) || Number(d.fare) || 30,
-                distanceKm: d.distanceKm,
-                passengerName: d.passengerName || 'সম্মানিত যাত্রী',
-                createdAtMs: d.createdAtMs || Date.now()
-              };
-              currentTrips = upsertTripEntry(currentTrips, entry);
-              updated = true;
-            }
-          });
-          if (updated) {
-            saveTripsState(currentTrips);
-          }
-        }
-      }, () => {}));
-    } catch {}
 
     return () => {
       unsubs.forEach(u => u());

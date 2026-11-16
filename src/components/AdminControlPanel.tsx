@@ -54,6 +54,8 @@ import { GAFARGAON_UNIONS, COMPREHENSIVE_UNION_PLACES, ComprehensivePlace, Union
 import { parseGoogleMapsCoordinates, upsertPlaceCategory, removePlaceCategory } from '../utils/adminPersistence';
 import { AutoMarqueeText } from './AutoMarqueeText';
 import { PauseMarqueeText } from './PauseMarqueeText';
+import { getAuthIdToken } from '../lib/firebase';
+import { validateSafeExternalUrl } from '../utils/security';
 
 export interface AppCustomSettings {
   primaryColor: string;
@@ -115,8 +117,8 @@ export interface AdminControlPanelProps {
   tripStats?: { total: number; completed: number; cancelled: number };
   onOpenSourceCodeModal?: () => void;
   adminPinState?: { hasCustomPin: boolean };
-  onChangeAdminPin?: (currentPin: string, newPin: string, confirmPin: string) => { ok: boolean; message: string };
-  onResetAdminPinToDefault?: () => void;
+  onChangeAdminPin?: (currentPin: string, newPin: string, confirmPin: string) => Promise<{ ok: boolean; message: string }> | { ok: boolean; message: string };
+  onResetAdminPinToDefault?: () => Promise<void> | void;
 }
 
 export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
@@ -160,7 +162,9 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [downloadReadyUrl, setDownloadReadyUrl] = useState<string | null>(null);
   const [downloadReadySize, setDownloadReadySize] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৫৮ MB');
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.২৫ MB');
+  const [signedZipToken, setSignedZipToken] = useState<string | null>(null);
+  const [isRefreshingZipLink, setIsRefreshingZipLink] = useState(false);
 
   // Dedicated Admin Password / PIN Change Slot State
   const [currentPinInput, setCurrentPinInput] = useState('');
@@ -169,20 +173,48 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [showPinCharacters, setShowPinCharacters] = useState(false);
   const [pinChangeFeedback, setPinChangeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const fetchFreshSignedZipToken = async (forceRefreshToken = false): Promise<string | null> => {
+    try {
+      const idToken = await getAuthIdToken(forceRefreshToken);
+      if (!idToken) return null;
+      const tokenRes = await fetch('/api/admin/source-zip-token', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!tokenRes.ok) return null;
+      const data = await tokenRes.json();
+      if (typeof data?.sizeBytes === 'number' && data.sizeBytes > 0) {
+        const mb = (data.sizeBytes / (1024 * 1024)).toFixed(2);
+        setZipDisplaySize(`${toBengaliNumber(mb)} MB`);
+      }
+      if (data?.token) {
+        setSignedZipToken(data.token);
+        return data.token;
+      }
+    } catch {
+      // Ignore silent token check failure when archive isn't built yet
+    }
+    return null;
+  };
+
   useEffect(() => {
     if (!isOpen) return;
-    fetch('/safar-gafargaon-clean-source.zip', { method: 'HEAD', cache: 'no-store' })
-      .then(res => {
-        const cl = res.headers.get('content-length');
-        if (cl) {
-          const bytes = parseInt(cl, 10);
-          if (bytes > 0) {
-            const mb = (bytes / (1024 * 1024)).toFixed(2);
-            setZipDisplaySize(`${toBengaliNumber(mb)} MB`);
-          }
-        }
-      })
-      .catch(() => {});
+    let active = true;
+    (async () => {
+      const token = await fetchFreshSignedZipToken(false);
+      if (!active && token) return;
+    })();
+    // Refresh 5-min signed link every 4 minutes while panel stays open
+    const intervalId = window.setInterval(() => {
+      if (active) {
+        fetchFreshSignedZipToken(false);
+      }
+    }, 240000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
   }, [isOpen, activeTab]);
 
   // Stand Form Modal State
@@ -490,9 +522,21 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     setEditingCategory(null);
   };
 
-  // Apply Appearance Draft
+  // Apply Appearance Draft (with SSRF validation for customAppUrl)
   const handleSaveAppearance = () => {
-    onSaveCustomSettings(settingsDraft);
+    const rawCustomUrl = (settingsDraft.customAppUrl || '').trim();
+    if (rawCustomUrl) {
+      const check = validateSafeExternalUrl(rawCustomUrl);
+      if (!check.ok || !check.normalizedUrl) {
+        showToast(`⚠️ ওয়েবসাইট URL অবৈধ: ${check.error || 'কেবল নিরাপদ HTTPS ডোমেইন অনুমোদিত'}`);
+        return;
+      }
+      const normalizedSettings = { ...settingsDraft, customAppUrl: check.normalizedUrl };
+      setSettingsDraft(normalizedSettings);
+      onSaveCustomSettings(normalizedSettings);
+    } else {
+      onSaveCustomSettings({ ...settingsDraft, customAppUrl: '' });
+    }
     showToast('🎉 অ্যাপের ডিজাইন, কালার ও লেআউট তাৎক্ষণিক আপডেট হয়েছে!');
   };
 
@@ -848,44 +892,34 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     showToast('কনফিগারেশন ব্যাকআপ ডাউনলোড সম্পন্ন হয়েছে!');
   };
 
-  // Full Project Source Code 1-Click ZIP Download (Binary-Validated Safe In-App Blob Downloader)
+  // Full Project Source Code 1-Click Authenticated ZIP Download
   const handleDownloadZip = async () => {
     setIsZipDownloading(true);
     setDownloadError(null);
     try {
-      showToast('⏳ সম্পূর্ণ প্রজেক্ট জিপ মেমোরিতে প্রস্তুত করা হচ্ছে...');
+      showToast('⏳ অ্যাডমিন অনুমোদন যাচাই করে প্রজেক্ট জিপ প্রস্তুত করা হচ্ছে...');
 
-      const endpoints = [
-        `/safar-gafargaon-clean-source.zip?t=${Date.now()}`,
-        `/safar-gafargaon-final.zip?t=${Date.now()}`,
-        `/safar-gafargaon-latest.zip?t=${Date.now()}`,
-        `/api/download-zip?t=${Date.now()}`
-      ];
-
-      let validBuffer: ArrayBuffer | null = null;
-      let lastErrMsg = '';
-
-      for (const endpoint of endpoints) {
-        try {
-          const res = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store' });
-          if (res.ok) {
-            const buf = await res.arrayBuffer();
-            // Validate: Must be real zip binary (> 500KB and starts with PK header 0x50, 0x4B)
-            if (buf && buf.byteLength > 500000) {
-              const u8 = new Uint8Array(buf.slice(0, 4));
-              if (u8[0] === 0x50 && u8[1] === 0x4b) {
-                validBuffer = buf;
-                break;
-              }
-            }
-          }
-        } catch (e: any) {
-          lastErrMsg = e?.message || '';
-        }
+      const idToken = await getAuthIdToken(true);
+      if (!idToken) {
+        throw new Error('অ্যাডমিন Google অ্যাকাউন্ট সেশন পাওয়া যায়নি।');
       }
 
-      if (!validBuffer) {
-        throw new Error(lastErrMsg || 'জিপ ফাইলটি প্রস্তুত করা সম্ভব হয়নি। ফাইল সাইজ অপর্যাপ্ত।');
+      const res = await fetch(`/api/admin/source-zip?t=${Date.now()}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error(`সার্ভার অনুমোদন ব্যর্থ (HTTP ${res.status})`);
+      }
+
+      const validBuffer = await res.arrayBuffer();
+      const u8 = validBuffer && validBuffer.byteLength > 50000 ? new Uint8Array(validBuffer.slice(0, 4)) : null;
+      if (!u8 || u8[0] !== 0x50 || u8[1] !== 0x4b) {
+        throw new Error('জিপ ফাইলটি প্রস্তুত করা সম্ভব হয়নি। ফাইল সাইজ অপর্যাপ্ত।');
       }
 
       const blob = new Blob([validBuffer], { type: 'application/zip' });
@@ -896,7 +930,6 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       setDownloadReadySize(sizeStr);
       setZipDisplaySize(sizeStr);
 
-      // Trigger automatic save to device
       const link = document.createElement('a');
       link.href = blobUrl;
       link.download = 'safar-gafargaon-clean-source.zip';
@@ -2851,15 +2884,18 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
           {/* TAB: BACKUP, ADMIN PASSWORD SLOT & RESTORE                */}
           {/* ========================================================== */}
           {activeTab === 'backup' && (() => {
+            const zipSuffix = signedZipToken
+              ? `/api/admin/source-zip?token=${encodeURIComponent(signedZipToken)}`
+              : `/api/admin/source-zip`;
             const liveOriginZipUrl = typeof window !== 'undefined'
-              ? `${window.location.origin}/safar-gafargaon-clean-source.zip`
-              : '/safar-gafargaon-clean-source.zip';
+              ? `${window.location.origin}${zipSuffix}`
+              : zipSuffix;
 
-            const handleAdminPasswordSubmit = (e: React.FormEvent) => {
+            const handleAdminPasswordSubmit = async (e: React.FormEvent) => {
               e.preventDefault();
               setPinChangeFeedback(null);
               if (!onChangeAdminPin) return;
-              const result = onChangeAdminPin(currentPinInput, newPinInput, confirmPinInput);
+              const result = await onChangeAdminPin(currentPinInput, newPinInput, confirmPinInput);
               setPinChangeFeedback({ ok: result.ok, text: result.message });
               if (result.ok) {
                 setCurrentPinInput('');
@@ -2870,7 +2906,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
 
             return (
             <div className="space-y-6 max-w-3xl">
-              {/* DEDICATED SLOT: ADMIN PANEL PASSWORD / PIN CHANGE */}
+              {/* DEDICATED SLOT: ADMIN PANEL SECONDARY PIN LOCK */}
               <div
                 id="admin-password-change-slot"
                 className="bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 text-white p-5 rounded-2xl border-2 border-amber-400/80 shadow-md space-y-4 scroll-mt-4"
@@ -2885,7 +2921,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                         অ্যাডমিন প্যানেল পাসওয়ার্ড / পিন পরিবর্তন স্লট
                       </h3>
                       <p className="text-[11px] text-slate-300">
-                        অ্যাডমিন প্রবেশদ্বারের গোপন পিন বা পাসওয়ার্ড এখান থেকে পরিবর্তন ও রিসেট করুন
+                        Google সাইন-ইন বাধ্যতামূলক — অতিরিক্ত ২য় স্তরের সিকিউরিটি পিন এখান থেকে সেট বা পরিবর্তন করুন
                       </p>
                     </div>
                   </div>
@@ -2895,29 +2931,31 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                       : 'bg-amber-400/20 text-amber-200 border-amber-400/40'
                   }`}>
                     <Lock className="w-3 h-3" />
-                    <span>{adminPinState?.hasCustomPin ? 'কাস্টম পাসওয়ার্ড সক্রিয়' : 'ডিফল্ট পিন (7788) সক্রিয়'}</span>
+                    <span>{adminPinState?.hasCustomPin ? 'Google + সেকেন্ডারি পিন সক্রিয়' : 'Google সাইন-ইন ভেরিফাইড'}</span>
                   </span>
                 </div>
 
                 <form onSubmit={handleAdminPasswordSubmit} className="space-y-3 text-xs">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label htmlFor="admin-current-pin-input" className="block font-bold text-slate-200 mb-1">
-                        বর্তমান পিন / পাসওয়ার্ড:
-                      </label>
-                      <input
-                        id="admin-current-pin-input"
-                        type={showPinCharacters ? 'text' : 'password'}
-                        value={currentPinInput}
-                        onChange={(e) => {
-                          setCurrentPinInput(e.target.value);
-                          setPinChangeFeedback(null);
-                        }}
-                        placeholder="যেমন: 7788"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
-                        required
-                      />
-                    </div>
+                  <div className={`grid grid-cols-1 ${adminPinState?.hasCustomPin ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3`}>
+                    {adminPinState?.hasCustomPin && (
+                      <div>
+                        <label htmlFor="admin-current-pin-input" className="block font-bold text-slate-200 mb-1">
+                          বর্তমান পিন / পাসওয়ার্ড:
+                        </label>
+                        <input
+                          id="admin-current-pin-input"
+                          type={showPinCharacters ? 'text' : 'password'}
+                          value={currentPinInput}
+                          onChange={(e) => {
+                            setCurrentPinInput(e.target.value);
+                            setPinChangeFeedback(null);
+                          }}
+                          placeholder="বর্তমান পিন লিখুন"
+                          className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                          required
+                        />
+                      </div>
+                    )}
 
                     <div>
                       <label htmlFor="admin-new-pin-input" className="block font-bold text-slate-200 mb-1">
@@ -2981,23 +3019,23 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                         <span>পাসওয়ার্ড / পিন আপডেট করুন</span>
                       </button>
 
-                      {onResetAdminPinToDefault && (
+                      {onResetAdminPinToDefault && adminPinState?.hasCustomPin && (
                         <button
                           type="button"
-                          onClick={() => {
-                            onResetAdminPinToDefault();
+                          onClick={async () => {
+                            await onResetAdminPinToDefault();
                             setCurrentPinInput('');
                             setNewPinInput('');
                             setConfirmPinInput('');
                             setPinChangeFeedback({
                               ok: true,
-                              text: 'ডিফল্ট অ্যাডমিন পিন (7788)-এ রিসেট সম্পন্ন হয়েছে!'
+                              text: 'সেকেন্ডারি পিন মুছে ফেলা হয়েছে — এখন সরাসরি Google সাইন-ইন দিয়ে প্রবেশ হবে!'
                             });
                           }}
                           className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3.5 py-2.5 rounded-xl text-xs border border-slate-700 cursor-pointer transition"
                         >
                           <RotateCcw className="w-3.5 h-3.5 text-amber-300" />
-                          <span>ডিফল্ট পিন (7788)-এ রিসেট</span>
+                          <span>সেকেন্ডারি পিন রিসেট করুন</span>
                         </button>
                       )}
                     </div>
@@ -3106,17 +3144,15 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </button>
 
                   {/* Direct Link Alternate Download Button */}
-                  <a
-                    href={liveOriginZipUrl}
-                    download="safar-gafargaon-clean-source.zip"
-                    onClick={() => {
-                      showToast(`🎉 সরাসরি ফ্রেশ জিপ প্যাকেজ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
-                    }}
+                  <button
+                    type="button"
+                    onClick={handleDownloadZip}
+                    disabled={isZipDownloading}
                     className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-bold px-4 py-3.5 rounded-xl text-xs sm:text-sm shadow-xs border border-slate-300 cursor-pointer transition active:scale-95"
                   >
                     <Download className="w-4 h-4 text-slate-700" />
                     <span>বিকল্প ডাউনলোড লিঙ্ক</span>
-                  </a>
+                  </button>
 
                   {onOpenSourceCodeModal && (
                     <button
@@ -3161,41 +3197,62 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   </div>
                 )}
 
-                {/* Direct Link Active Bar & Copy Button */}
+                {/* Direct Signed Link Bar & Copy Button */}
                 <div className="bg-white/95 p-3 rounded-xl border border-amber-400 space-y-2.5 mt-2 shadow-2xs">
                   <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="text-[11px] font-black text-amber-900 shrink-0">সর্বশেষ আপডেটেড লিঙ্ক:</span>
+                      <span className="text-[11px] font-black text-amber-900 shrink-0">সর্বশেষ সিকিউরড আপডেটেড লিঙ্ক:</span>
                       <a
-                        href={`${liveOriginZipUrl}?v=${Date.now()}`}
+                        href={liveOriginZipUrl}
                         download="safar-gafargaon-clean-source.zip"
-                        onClick={() => {
-                          showToast(`🎉 সর্বশেষ আপডেটেড প্রজেক্ট জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
+                        onClick={(e) => {
+                          if (!signedZipToken) {
+                            e.preventDefault();
+                            handleDownloadZip();
+                          } else {
+                            showToast(`🎉 সর্বশেষ আপডেটেড প্রজেক্ট জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
+                          }
                         }}
                         className="text-[11px] font-mono text-emerald-800 hover:text-emerald-950 underline truncate font-bold cursor-pointer"
-                        title="ক্লিক করে সর্বশেষ আপডেটেড জিপ ফাইল ডাউনলোড করুন"
+                        title="৫-মিনিট মেয়াদী স্বাক্ষরিত সিকিউরড জিপ লিঙ্ক"
                       >
                         {liveOriginZipUrl}
                       </a>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <a
-                        href={`${liveOriginZipUrl}?v=${Date.now()}`}
-                        download="safar-gafargaon-clean-source.zip"
-                        onClick={() => {
-                          showToast(`🎉 সরাসরি ফ্রেশ জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
-                        }}
+                      <button
+                        type="button"
+                        onClick={handleDownloadZip}
                         className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition"
                       >
                         <Download className="w-3 h-3" />
                         <span>সরাসরি ডাউনলোড</span>
-                      </a>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isRefreshingZipLink}
+                        onClick={async () => {
+                          setIsRefreshingZipLink(true);
+                          const token = await fetchFreshSignedZipToken(true);
+                          setIsRefreshingZipLink(false);
+                          if (token) {
+                            showToast('🔄 নতুন ৫-মিনিট মেয়াদী ডাইরেক্ট ডাউনলোড লিঙ্ক তৈরি হয়েছে!');
+                          } else {
+                            showToast('সাইনড লিঙ্ক রিফ্রেশ করতে অ্যাডমিন Google সেশন যাচাই করুন।');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-2.5 py-1.5 rounded-lg text-[11px] cursor-pointer transition shrink-0 border border-slate-300 disabled:opacity-60"
+                        title="নতুন ৫-মিনিট মেয়াদী টোকেন লিঙ্ক তৈরি করুন"
+                      >
+                        <RotateCcw className={`w-3 h-3 ${isRefreshingZipLink ? 'animate-spin' : ''}`} />
+                        <span>রিফ্রেশ</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
                           if (typeof window !== 'undefined' && navigator.clipboard) {
                             navigator.clipboard.writeText(liveOriginZipUrl);
-                            showToast('📋 আপডেটেড জিপ লিঙ্ক কপি করা হয়েছে!');
+                            showToast('📋 সিকিউরড জিপ লিঙ্ক কপি করা হয়েছে!');
                           }
                         }}
                         className="inline-flex items-center gap-1 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition shrink-0"
@@ -3206,16 +3263,16 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     </div>
                   </div>
 
-                  {/* Quick Dev & Shared Download Mirrors */}
+                  {/* Quick Dev & Shared Signed Download Mirrors */}
                   <div className="pt-2 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10.5px]">
                     {[
                       {
                         label: 'ডেভ প্রিভিউ লিঙ্ক',
-                        url: 'https://ais-dev-w6vgd7lt5ex5bc5rbquynw-243355990991.asia-northeast1.run.app/safar-gafargaon-clean-source.zip'
+                        url: `https://ais-dev-w6vgd7lt5ex5bc5rbquynw-243355990991.asia-northeast1.run.app${zipSuffix}`
                       },
                       {
                         label: 'শেয়ার্ড অ্যাপ লিঙ্ক',
-                        url: 'https://ais-pre-w6vgd7lt5ex5bc5rbquynw-243355990991.asia-northeast1.run.app/safar-gafargaon-clean-source.zip'
+                        url: `https://ais-pre-w6vgd7lt5ex5bc5rbquynw-243355990991.asia-northeast1.run.app${zipSuffix}`
                       }
                     ].map((mirror) => (
                       <div key={mirror.label} className="flex items-center justify-between gap-1.5 bg-amber-50/80 border border-amber-200 rounded-lg px-2 py-1.5 min-w-0">
@@ -3224,6 +3281,14 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                           <a
                             href={mirror.url}
                             download="safar-gafargaon-clean-source.zip"
+                            onClick={(e) => {
+                              if (!signedZipToken) {
+                                e.preventDefault();
+                                handleDownloadZip();
+                              } else {
+                                showToast(`🎉 ${mirror.label} থেকে জিপ (${zipDisplaySize}) ডাউনলোড শুরু হয়েছে!`);
+                              }
+                            }}
                             className="font-mono text-[10px] text-emerald-800 underline truncate block font-bold"
                           >
                             {mirror.url}

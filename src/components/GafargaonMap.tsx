@@ -716,18 +716,19 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
 
     // Then overwrite or add real-time Cloudflare/Server live drivers
     liveDrivers.forEach((ld) => {
+      const existing = displayedDriversMap.get(ld.id);
       displayedDriversMap.set(ld.id, {
         id: ld.id,
         name: ld.name,
-        phone: ld.phone,
+        phone: existing?.phone || '',
         category: ld.category,
-        vehicleModel: ld.vehicleModel || '',
-        plateNumber: ld.plateNumber || '',
-        standName: ld.standName || '',
+        vehicleModel: ld.vehicleModel || existing?.vehicleModel || '',
+        plateNumber: ld.plateNumber || existing?.plateNumber || '',
+        standName: ld.standName || existing?.standName || '',
         lat: ld.lat,
         lng: ld.lng,
         speed: ld.speed || 0,
-        rating: ld.rating || 4.9,
+        rating: ld.rating || existing?.rating || 4.9,
         isLiveEdge: true
       });
     });
@@ -799,10 +800,14 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
             <div style="font-size: 11px; color: #0284c7; font-weight: 700; margin-bottom: 2px;">${driver.vehicleModel || catInfo.name}</div>
             <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">স্ট্যান্ড: ${driver.standName || resolvedPos.matchedStandName || 'গফরগাঁও'} • গতি: ${toBengaliNumber(driver.speed)} কিমি/ঘণ্টা</div>
             <div style="display: flex; flex-direction: column; gap: 4px;">
-              <a href="tel:${(driver.phone || '').replace(/[^0-9]/g, '')}" 
+              ${driver.phone ? `
+              <a href="tel:${driver.phone.replace(/[^0-9]/g, '')}" 
                  style="display: block; text-align: center; background: #059669; color: white; padding: 5px 8px; border-radius: 6px; font-weight: 700; font-size: 11px; text-decoration: none;">
-                📞 সরাসরি কল করুন (${driver.phone || ''})
-              </a>
+                📞 সরাসরি কল করুন (${driver.phone})
+              </a>` : `
+              <div style="display: block; text-align: center; background: #f1f5f9; color: #334155; padding: 5px 8px; border-radius: 6px; font-weight: 700; font-size: 10.5px; border: 1px solid #cbd5e1;">
+                🔒 রাইড কনফার্ম হলে নম্বর দৃশ্যমান হবে
+              </div>`}
               <button onclick="window.__selectPickupPlace && window.__selectPickupPlace('${safeStandName}', ${resolvedPos.lat}, ${resolvedPos.lng})"
                       style="display: block; width: 100%; text-align: center; background-color: #ecfdf5; color: #047857; padding: 4px 8px; border-radius: 6px; border: 1px solid #a7f3d0; font-size: 10.5px; font-weight: 700; cursor: pointer;">
                 🚖 এই স্ট্যান্ড পিকআপ করুন
@@ -859,7 +864,7 @@ export const GafargaonMap: React.FC<GafargaonMapProps> = ({
             <span style="font-size: 10px; background: #dbeafe; color: #1e40af; font-weight: 700; padding: 1px 6px; border-radius: 4px;">
               লাইভ যাত্রী (অনলাইন)
             </span>
-            <h4 style="font-weight: 800; color: #1e3a8a; margin: 4px 0 2px 0; font-size: 13px;">${passenger.name}</h4>
+            <h4 style="font-weight: 800; color: #1e3a8a; margin: 4px 0 2px 0; font-size: 13px;">গফরগাঁও লাইভ যাত্রী</h4>
             <p style="font-size: 11px; color: #475569; margin: 0 0 2px 0;">পিকআপ: <b>${passenger.pickupPoint}</b></p>
             ${passenger.destination ? `<p style="font-size: 11px; color: #dc2626; margin: 0 0 4px 0;">গন্তব্য: <b>${passenger.destination}</b></p>` : ''}
             <span style="font-size: 10px; color: #059669; font-weight: 700;">🟢 রাইডের অপেক্ষায় আছেন</span>

@@ -1,13 +1,16 @@
+import { randomHex, sha256Hex, SUPER_ADMIN_EMAIL } from './security';
+
 /**
- * Pure authentication, password/PIN validation, and master recovery helpers
- * for the Safar Gafargaon Admin Control Panel.
+ * Authentication, Google Super Admin verification, and salted SHA-256 optional
+ * secondary lock PIN helpers for Safar Gafargaon Admin Control Panel.
+ *
+ * ZERO hardcoded passwords, PINs, or recovery secrets exist in this module.
+ * Primary Admin authentication MUST use Firebase Google Sign-In verified as
+ * SUPER_ADMIN_EMAIL (or explicit /admins/{uid} role grant in Firestore).
  */
 
-export const DEFAULT_ADMIN_PINS = ['7788', '2026'] as const;
-export const MASTER_ADMIN_RECOVERY_CODE = '77882026';
-
 export interface AdminPinConfig {
-  customPin: string | null;
+  pinHash?: string | null;
   hasCustomPin: boolean;
 }
 
@@ -32,7 +35,6 @@ const BENGALI_TO_ENGLISH_DIGITS: Record<string, string> = {
 
 /**
  * Normalizes Bengali numerals ('০'..'৯') to ASCII ('0'..'9') and trims whitespace.
- * Preserves case and symbols for alphanumeric admin passwords.
  */
 export function normalizeAdminCredential(raw: string | null | undefined): string {
   if (typeof raw !== 'string') return '';
@@ -42,85 +44,96 @@ export function normalizeAdminCredential(raw: string | null | undefined): string
 }
 
 /**
- * Verifies an admin PIN/password attempt against either the customized PIN
- * (when configured) or the default Safar admin PINs ('7788' / '2026').
+ * Verifies Google Auth Super Admin authorization.
  */
-export function verifyAdminPin(
-  input: string,
-  config?: AdminPinConfig | null
+export function isAuthorizedAdminEmail(
+  email: string | null | undefined,
+  emailVerified: boolean | null | undefined
 ): boolean {
-  const normalizedInput = normalizeAdminCredential(input);
-  if (!normalizedInput) return false;
-
-  if (config?.hasCustomPin && config.customPin) {
-    const normalizedCustom = normalizeAdminCredential(config.customPin);
-    if (normalizedCustom.length > 0) {
-      return normalizedInput === normalizedCustom;
-    }
-  }
-
-  return (DEFAULT_ADMIN_PINS as readonly string[]).includes(normalizedInput);
+  if (emailVerified !== true || typeof email !== 'string') return false;
+  return email.trim().toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
 }
 
 /**
- * Validates a request to change the Admin Panel password/PIN inside the dedicated
- * Admin Control Panel slot.
+ * Creates a salted SHA-256 hash (`v2$<salt>$<hex>`) for optional secondary PIN lock.
  */
-export function validateAdminPinChange(
-  currentPinInput: string,
-  newPinInput: string,
-  confirmPinInput: string,
-  config?: AdminPinConfig | null
-): PinChangeValidationResult {
-  if (!verifyAdminPin(currentPinInput, config)) {
-    return {
-      ok: false,
-      message: 'বর্তমান অ্যাডমিন পিন বা পাসওয়ার্ডটি সঠিক নয়!'
-    };
-  }
+export async function hashAdminPin(rawPin: string, providedSalt?: string): Promise<string> {
+  const normalized = normalizeAdminCredential(rawPin);
+  const salt = providedSalt || randomHex(12);
+  const digest = await sha256Hex(`${salt}:${normalized}`);
+  return `v2$${salt}$${digest}`;
+}
 
+/**
+ * Constant-time string comparison to avoid timing leaks on digests.
+ */
+function timingSafeStringEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Verifies an optional secondary lock PIN against a salted SHA-256 hash.
+ */
+export async function verifyAdminPinHash(
+  input: string,
+  config?: AdminPinConfig | null
+): Promise<boolean> {
+  if (!config?.hasCustomPin || !config.pinHash) {
+    return false;
+  }
+  const normalizedInput = normalizeAdminCredential(input);
+  if (!normalizedInput) return false;
+
+  const parts = config.pinHash.split('$');
+  if (parts.length !== 3 || parts[0] !== 'v2') {
+    return false;
+  }
+  const [, salt, expectedDigest] = parts;
+  if (!salt || !expectedDigest) return false;
+
+  const candidateDigest = await sha256Hex(`${salt}:${normalizedInput}`);
+  return timingSafeStringEqual(candidateDigest, expectedDigest);
+}
+
+/**
+ * Validates new secondary PIN/password setup or update (minimum 4 chars, max 24).
+ */
+export function validateNewAdminPin(
+  newPinInput: string,
+  confirmPinInput: string
+): PinChangeValidationResult {
   const normalizedNew = normalizeAdminCredential(newPinInput);
   const normalizedConfirm = normalizeAdminCredential(confirmPinInput);
 
   if (normalizedNew.length < 4) {
     return {
       ok: false,
-      message: 'নতুন পাসওয়ার্ড বা পিন কমপক্ষে ৪ অক্ষরের হতে হবে!'
+      message: 'নতুন সেকেন্ডারি পিন কমপক্ষে ৪ অক্ষরের হতে হবে!'
     };
   }
 
   if (normalizedNew.length > 24) {
     return {
       ok: false,
-      message: 'নতুন পাসওয়ার্ড বা পিন সর্বোচ্চ ২৪ অক্ষরের হতে পারবে।'
+      message: 'নতুন সেকেন্ডারি পিন সর্বোচ্চ ২৪ অক্ষরের হতে পারবে।'
     };
   }
 
   if (normalizedNew !== normalizedConfirm) {
     return {
       ok: false,
-      message: 'নতুন পাসওয়ার্ড এবং কনফার্ম পাসওয়ার্ড মিলছে না!'
-    };
-  }
-
-  if (normalizedNew === MASTER_ADMIN_RECOVERY_CODE) {
-    return {
-      ok: false,
-      message: 'অনুগ্রহ করে মাস্টার রিকভারি কোড ব্যতীত অন্য পাসওয়ার্ড বা পিন দিন।'
+      message: 'নতুন পিন এবং কনফার্ম পিন মিলছে না!'
     };
   }
 
   return {
     ok: true,
     normalizedPin: normalizedNew,
-    message: 'অ্যাডমিন প্যানেল পাসওয়ার্ড / পিন সফলভাবে পরিবর্তন করা হয়েছে!'
+    message: 'সেকেন্ডারি অ্যাডমিন লক পিন সফলভাবে সংরক্ষণ করা হয়েছে!'
   };
-}
-
-/**
- * Verifies the owner's Master Recovery Code to reset a forgotten custom PIN
- * back to the default ('7788').
- */
-export function verifyMasterRecoveryCode(codeInput: string): boolean {
-  return normalizeAdminCredential(codeInput) === MASTER_ADMIN_RECOVERY_CODE;
 }

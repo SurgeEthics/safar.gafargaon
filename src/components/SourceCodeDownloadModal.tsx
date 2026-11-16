@@ -14,6 +14,7 @@ import {
   HardDrive
 } from 'lucide-react';
 import { toBengaliNumber } from '../utils/calculator';
+import { getAuthIdToken } from '../lib/firebase';
 
 interface SourceCodeDownloadModalProps {
   isOpen: boolean;
@@ -28,12 +29,21 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
-  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৬.৩৮ MB');
+  const [zipDisplaySize, setZipDisplaySize] = useState<string>('৩.২৫ MB');
 
   useEffect(() => {
     if (!isOpen) return;
-    fetch('/safar-gafargaon-clean-source.zip', { method: 'HEAD', cache: 'no-store' })
-      .then(res => {
+    let active = true;
+    (async () => {
+      try {
+        const token = await getAuthIdToken();
+        if (!token) return;
+        const res = await fetch('/api/admin/source-zip', {
+          method: 'HEAD',
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!active || !res.ok) return;
         const cl = res.headers.get('content-length');
         if (cl) {
           const bytes = parseInt(cl, 10);
@@ -42,8 +52,13 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
             setZipDisplaySize(`${toBengaliNumber(mb)} MB`);
           }
         }
-      })
-      .catch(() => {});
+      } catch {
+        // ignore metadata check failure
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -54,13 +69,20 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
     setDownloadSuccess(false);
 
     try {
-      // 1. Fetch the zip directly from same-origin with cache busting
-      const response = await fetch(`/safar-gafargaon-clean-source.zip?t=${Date.now()}`, {
+      const token = await getAuthIdToken(true);
+      if (!token) {
+        throw new Error('অ্যাডমিন Google অ্যাকাউন্টে সাইন-ইন থাকা আবশ্যক');
+      }
+
+      const response = await fetch(`/api/admin/source-zip?t=${Date.now()}`, {
         cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       if (!response.ok) {
-        throw new Error(`সার্ভার এরর: HTTP ${response.status}`);
+        throw new Error(`সার্ভার অনুমোদন ব্যর্থ: HTTP ${response.status}`);
       }
 
       const buf = await response.arrayBuffer();
@@ -73,18 +95,14 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
       const mb = (blob.size / (1024 * 1024)).toFixed(2);
       setZipDisplaySize(`${toBengaliNumber(mb)} MB`);
 
-      // 2. Create in-memory object URL
       const objectUrl = window.URL.createObjectURL(blob);
       const tempLink = document.createElement('a');
       tempLink.href = objectUrl;
       tempLink.download = 'safar-gafargaon-clean-source.zip';
       tempLink.style.display = 'none';
       document.body.appendChild(tempLink);
-      
-      // 3. Trigger native download dialog
       tempLink.click();
 
-      // Clean up after small delay
       setTimeout(() => {
         window.URL.revokeObjectURL(objectUrl);
         document.body.removeChild(tempLink);
@@ -93,13 +111,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
       setDownloadSuccess(true);
     } catch (err: any) {
       console.error('Download error:', err);
-      // Fallback: try navigating window location to zip
       setErrorMessage(err?.message || 'ডাউনলোড শুরু করা যায়নি');
-      const fallbackLink = document.createElement('a');
-      fallbackLink.href = '/safar-gafargaon-clean-source.zip';
-      fallbackLink.setAttribute('download', 'safar-gafargaon-clean-source.zip');
-      fallbackLink.target = '_blank';
-      fallbackLink.click();
     } finally {
       setDownloading(false);
     }
@@ -157,7 +169,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
-              এই জিপ ফাইলে রয়েছে আপনার অ্যাপের সমস্ত সোর্স কোড, চালক ভেরিফিকেশন পপআপের নিখুঁত কোড, লাইভ ম্যাপ, আইকন, এবং প্রস্তুতকৃত <strong>dist/</strong> বিল্ড ফাইল।
+              এই ক্লিন জিপ ফাইলে রয়েছে আপনার অ্যাপের সমস্ত সোর্স কোড, চালক ও যাত্রী ভেরিফিকেশন পপআপের কোড, লাইভ ম্যাপ, আইকন এবং সম্পূর্ণ <strong>npm run build</strong> রেডি প্রজেক্ট স্ট্রাকচার (গোপন কী ও ভারী <code>node_modules</code> ছাড়া)।
             </p>
 
             {/* Main Action Button */}
@@ -194,7 +206,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
             {errorMessage && (
               <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                <span>{errorMessage} (সরাসরি ডাউনলোড উইন্ডো চেষ্টা করা হচ্ছে)</span>
+                <span>{errorMessage}</span>
               </div>
             )}
           </div>
@@ -219,7 +231,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
               </div>
               <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-100 text-slate-700">
                 <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                <span>রেডি <strong>dist/</strong> প্রোডাকশন বিল্ড</span>
+                <span>ক্লাউডফ্লেয়ার ও Vercel বিল্ড-রেডি</span>
               </div>
             </div>
           </div>

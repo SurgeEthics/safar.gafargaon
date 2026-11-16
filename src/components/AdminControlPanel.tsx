@@ -97,7 +97,7 @@ export interface AdminControlPanelProps {
   onSaveDriver?: (driver: Driver, isEdit: boolean) => void;
   onDeleteDriver: (driverId: string, name: string) => void;
   customSettings: AppCustomSettings;
-  onSaveCustomSettings: (settings: AppCustomSettings) => void;
+  onSaveCustomSettings: (settings: AppCustomSettings) => Promise<boolean> | boolean | void;
   onResetToDefaults: () => void;
   hotlines: {
     hospital: string;
@@ -523,7 +523,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   };
 
   // Apply Appearance Draft (with SSRF validation for customAppUrl)
-  const handleSaveAppearance = () => {
+  const handleSaveAppearance = async () => {
     const rawCustomUrl = (settingsDraft.customAppUrl || '').trim();
     if (rawCustomUrl) {
       const check = validateSafeExternalUrl(rawCustomUrl);
@@ -533,11 +533,15 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       }
       const normalizedSettings = { ...settingsDraft, customAppUrl: check.normalizedUrl };
       setSettingsDraft(normalizedSettings);
-      onSaveCustomSettings(normalizedSettings);
+      const savedOk = await onSaveCustomSettings(normalizedSettings);
+      if (savedOk === false) return;
     } else {
-      onSaveCustomSettings({ ...settingsDraft, customAppUrl: '' });
+      const normalizedSettings = { ...settingsDraft, customAppUrl: '' };
+      setSettingsDraft(normalizedSettings);
+      const savedOk = await onSaveCustomSettings(normalizedSettings);
+      if (savedOk === false) return;
     }
-    showToast('🎉 অ্যাপের ডিজাইন, কালার ও লেআউট তাৎক্ষণিক আপডেট হয়েছে!');
+    showToast('🎉 অ্যাপের ডিজাইন, জরুরি ঘোষণা ও লেআউট স্থায়ীভাবে আপডেট হয়েছে!');
   };
 
   // Save Hotlines
@@ -1470,12 +1474,38 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   অ্যাপের হেডারের নিচে প্রদর্শিত হলুদ রঙের জরুরি ঘোষণা বারটিতে যে বার্তা স্ক্রল করাতে চান তা এখানে লিখুন বা এডিট করুন:
                 </p>
                 <textarea
-                  rows={2}
+                  rows={3}
+                  maxLength={1000}
                   value={settingsDraft.announcementNotice || ''}
                   onChange={(e) => setSettingsDraft({ ...settingsDraft, announcementNotice: e.target.value })}
                   placeholder="গফরগাঁও পৌরসভা ও পাগলা থানা এলাকার নির্ভরযোগ্য নিরাপদ যাত্রা সেবা..."
                   className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs leading-relaxed"
                 />
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-amber-800">
+                    অক্ষর: {(settingsDraft.announcementNotice || '').length} / ১০০০
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettingsDraft((prev) => ({ ...prev, announcementNotice: '' }));
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 cursor-pointer transition"
+                    >
+                      খালি করুন
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveAppearance}
+                      className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-3.5 py-1.5 rounded-lg text-xs shadow-xs cursor-pointer transition active:scale-95"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>নোটিশ সেভ করুন</span>
+                    </button>
+                  </div>
+                </div>
 
                 {/* Live Preview Box */}
                 {settingsDraft.announcementNotice && settingsDraft.announcementNotice.trim() !== '' && (

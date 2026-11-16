@@ -1753,8 +1753,8 @@ export default function App() {
                   fontSizeMode: appCustomSettings.fontSizeMode,
                   cardRadius: appCustomSettings.cardRadius,
                   densityMode: appCustomSettings.densityMode,
-                  headerHotlineText: sanitizePlainText(appCustomSettings.headerHotlineText || '', 200),
-                  announcementNotice: sanitizePlainText(appCustomSettings.announcementNotice || '', 300),
+                  headerHotlineText: sanitizePlainText(appCustomSettings.headerHotlineText || '', 500),
+                  announcementNotice: sanitizePlainText(appCustomSettings.announcementNotice || '', 1000),
                   showLiveMapWidget: appCustomSettings.showLiveMapWidget,
                   showQuickChipsWidget: appCustomSettings.showQuickChipsWidget,
                   showHotlineTicker: appCustomSettings.showHotlineTicker,
@@ -2122,53 +2122,61 @@ export default function App() {
     };
   });
 
-  const saveCustomSettings = async (newSettings: AppCustomSettings) => {
+  const saveCustomSettings = async (newSettings: AppCustomSettings): Promise<boolean> => {
     if (newSettings.customAppUrl && newSettings.customAppUrl.trim()) {
       const urlCheck = validateSafeExternalUrl(newSettings.customAppUrl);
       if (!urlCheck.ok) {
         showAdminToastMessage(urlCheck.error || 'অবৈধ অ্যাপ URL');
-        return;
+        return false;
       }
       newSettings = { ...newSettings, customAppUrl: urlCheck.normalizedUrl };
     }
-    const cleanSettings = stripUndefinedFields(newSettings);
-    setAppCustomSettings(cleanSettings);
+    const sanitizedSettings: AppCustomSettings = stripUndefinedFields({
+      ...newSettings,
+      headerHotlineText: sanitizePlainText(newSettings.headerHotlineText || '', 500),
+      announcementNotice: sanitizePlainText(newSettings.announcementNotice || '', 1000),
+      customAppUrl: newSettings.customAppUrl || '',
+    });
+    setAppCustomSettings(sanitizedSettings);
     try {
-      localStorage.setItem('safar_custom_settings_v3', JSON.stringify(cleanSettings));
+      localStorage.setItem('safar_custom_settings_v3', JSON.stringify(sanitizedSettings));
     } catch {}
     if (!isFirebaseAdmin) {
       showAdminToastMessage('অ্যাডমিন Google সাইন-ইন ছাড়া ক্লাউড সেটিংস পরিবর্তন অনুমোদিত নয়');
-      return;
+      return false;
     }
     try {
       await setDoc(
         doc(db, 'settings', 'app_config'),
         stripUndefinedFields({
-          primaryColor: cleanSettings.primaryColor,
-          customHexColor: cleanSettings.customHexColor,
-          fontFamily: cleanSettings.fontFamily,
-          fontSizeMode: cleanSettings.fontSizeMode,
-          cardRadius: cleanSettings.cardRadius,
-          densityMode: cleanSettings.densityMode,
-          headerHotlineText: sanitizePlainText(cleanSettings.headerHotlineText || '', 200),
-          announcementNotice: sanitizePlainText(cleanSettings.announcementNotice || '', 300),
-          customAppUrl: cleanSettings.customAppUrl || '',
-          showLiveMapWidget: cleanSettings.showLiveMapWidget,
-          showQuickChipsWidget: cleanSettings.showQuickChipsWidget,
-          showHotlineTicker: cleanSettings.showHotlineTicker,
-          showDriverStatsRow: cleanSettings.showDriverStatsRow,
-          baseFareMinimum: clampFiniteNumber(cleanSettings.baseFareMinimum, 0, 10000, 20),
-          perKmMultiplier: clampFiniteNumber(cleanSettings.perKmMultiplier, 0, 20, 1.0),
-          roundFareToNearest5: Boolean(cleanSettings.roundFareToNearest5),
-          quickDestinations: Array.isArray(cleanSettings.quickDestinations) ? cleanSettings.quickDestinations.slice(0, 30) : [],
-          placeCategories: Array.isArray(cleanSettings.placeCategories) ? cleanSettings.placeCategories.slice(0, 40) : undefined,
+          primaryColor: sanitizedSettings.primaryColor,
+          customHexColor: sanitizedSettings.customHexColor,
+          fontFamily: sanitizedSettings.fontFamily,
+          fontSizeMode: sanitizedSettings.fontSizeMode,
+          cardRadius: sanitizedSettings.cardRadius,
+          densityMode: sanitizedSettings.densityMode,
+          headerHotlineText: sanitizedSettings.headerHotlineText,
+          announcementNotice: sanitizedSettings.announcementNotice,
+          customAppUrl: sanitizedSettings.customAppUrl,
+          showLiveMapWidget: sanitizedSettings.showLiveMapWidget,
+          showQuickChipsWidget: sanitizedSettings.showQuickChipsWidget,
+          showHotlineTicker: sanitizedSettings.showHotlineTicker,
+          showDriverStatsRow: sanitizedSettings.showDriverStatsRow,
+          baseFareMinimum: clampFiniteNumber(sanitizedSettings.baseFareMinimum, 0, 10000, 20),
+          perKmMultiplier: clampFiniteNumber(sanitizedSettings.perKmMultiplier, 0, 20, 1.0),
+          roundFareToNearest5: Boolean(sanitizedSettings.roundFareToNearest5),
+          quickDestinations: Array.isArray(sanitizedSettings.quickDestinations) ? sanitizedSettings.quickDestinations.slice(0, 30) : [],
+          placeCategories: Array.isArray(sanitizedSettings.placeCategories) ? sanitizedSettings.placeCategories.slice(0, 40) : undefined,
           updatedAt: serverTimestamp()
-        })
+        }),
+        { merge: true }
       );
-      showAdminToastMessage('অ্যাপ কাস্টমাইজেশন ও উইজেট সেটিংস ফায়ারস্টোরে স্থায়ীভাবে সেভ হয়েছে!');
+      showAdminToastMessage('অ্যাপ কাস্টমাইজেশন, জরুরি ঘোষণা ও উইজেট সেটিংস ফায়ারস্টোরে স্থায়ীভাবে সেভ হয়েছে!');
+      return true;
     } catch (err) {
       handleFirestoreError(err, 'write', 'settings/app_config');
-      showAdminToastMessage('লোকাল সেটিংস আপডেট হয়েছে, তবে ক্লাউড সিঙ্কে সমস্যা হয়েছে — নেটওয়ার্ক চেক করুন');
+      showAdminToastMessage('ক্লাউড ফায়ারস্টোরে সেভ করতে সমস্যা হয়েছে — অনুগ্রহ করে পুনরায় চেষ্টা করুন');
+      return false;
     }
   };
 
@@ -2789,13 +2797,8 @@ export default function App() {
     try {
       const user = await signInWithGooglePopup();
       if (!user || !user.emailVerified || !isAuthorizedAdminEmail(user.email, user.emailVerified)) {
-        const signedEmail = user?.email ? ` (${user.email})` : '';
         await signOutFirebase().catch(() => {});
-        setAdminAuthError(
-          signedEmail
-            ? `আপনি${signedEmail} দিয়ে সাইন-ইন করেছেন — অনুমোদিত অ্যাডমিন ইমেইল (${SUPER_ADMIN_EMAIL}) দিয়ে সাইন-ইন করা বাধ্যতামূলক।`
-            : `অনুমোদিত অ্যাডমিন ইমেইল (${SUPER_ADMIN_EMAIL}) দিয়ে সাইন-ইন করা বাধ্যতামূলক।`
-        );
+        setAdminAuthError('এই Google অ্যাকাউন্টটি অ্যাডমিন হিসেবে অনুমোদিত নয়। অনুগ্রহ করে অনুমোদিত সুপার অ্যাডমিন Google অ্যাকাউন্ট দিয়ে সাইন-ইন করুন।');
         return;
       }
 
@@ -6007,7 +6010,7 @@ export default function App() {
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isFirebaseAdmin) {
-      setAdminAuthError(`প্রথমে অনুমোদিত অ্যাডমিন Google অ্যাকাউন্ট (${SUPER_ADMIN_EMAIL}) দিয়ে সাইন-ইন করুন।`);
+      setAdminAuthError('প্রথমে অনুমোদিত সুপার অ্যাডমিন Google অ্যাকাউন্ট দিয়ে সাইন-ইন করুন।');
       return;
     }
 
@@ -10624,7 +10627,7 @@ export default function App() {
                     <span>বাধ্যতামূলক অ্যাডমিন Google যাচাই</span>
                   </p>
                   <p className="text-[11px] text-amber-900 leading-relaxed">
-                    সুপার অ্যাডমিন প্যানেলে প্রবেশ করতে শুধুমাত্র অনুমোদিত Google অ্যাকাউন্ট (<span className="font-mono font-bold">{SUPER_ADMIN_EMAIL}</span>) দিয়ে সাইন-ইন করতে হবে।
+                    সুপার অ্যাডমিন প্যানেলে প্রবেশ করতে শুধুমাত্র অনুমোদিত সুপার অ্যাডমিন Google অ্যাকাউন্ট দিয়ে সাইন-ইন করতে হবে।
                   </p>
                 </div>
 

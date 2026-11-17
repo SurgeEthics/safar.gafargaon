@@ -36,6 +36,7 @@ export function shouldSeedDefaultCollection(
 }
 
 import type { PlaceCategory, PlaceCategoryOption } from '../data/gafargaonPlaces';
+import { clampFiniteNumber, sanitizePlainText } from './security';
 
 export interface MapAdminPinInput {
   bengaliName: string;
@@ -629,6 +630,69 @@ export function buildSeparatedMapAdminEntry(
   }
   return { target: 'place', place: payloads.place };
 }
+
+export interface AppSettingsPayloadInput {
+  primaryColor?: unknown;
+  customHexColor?: unknown;
+  fontFamily?: unknown;
+  fontSizeMode?: unknown;
+  cardRadius?: unknown;
+  densityMode?: unknown;
+  headerHotlineText?: unknown;
+  announcementNotice?: unknown;
+  customAppUrl?: unknown;
+  showLiveMapWidget?: unknown;
+  showQuickChipsWidget?: unknown;
+  showHotlineTicker?: unknown;
+  showDriverStatsRow?: unknown;
+  baseFareMinimum?: unknown;
+  perKmMultiplier?: unknown;
+  roundFareToNearest5?: unknown;
+  quickDestinations?: unknown;
+  placeCategories?: unknown;
+}
+
+/**
+ * Builds a complete, non-null, Firestore-rule-compliant payload for `settings/app_config`.
+ * Ensures no `null` or `undefined` field can break `isValidAppSettings()` on `{ merge: true }`.
+ */
+export function buildAppSettingsFirestorePayload(input: AppSettingsPayloadInput) {
+  const safeQuickDestinations = Array.isArray(input.quickDestinations)
+    ? input.quickDestinations
+        .filter((d): d is string => typeof d === 'string' && d.trim().length > 0)
+        .map((d) => sanitizePlainText(d, 100))
+        .filter(Boolean)
+        .slice(0, 30)
+    : [];
+
+  const safePlaceCategories = Array.isArray(input.placeCategories)
+    ? input.placeCategories
+        .filter((c): c is Record<string, unknown> => Boolean(c) && typeof c === 'object' && !Array.isArray(c))
+        .slice(0, 40)
+    : [];
+
+  return {
+    primaryColor: sanitizePlainText(input.primaryColor ?? 'emerald', 50) || 'emerald',
+    customHexColor: sanitizePlainText(input.customHexColor ?? '#059669', 20) || '#059669',
+    fontFamily: sanitizePlainText(input.fontFamily ?? "'Hind Siliguri', sans-serif", 60) || "'Hind Siliguri', sans-serif",
+    fontSizeMode: sanitizePlainText(input.fontSizeMode ?? 'normal', 20) || 'normal',
+    cardRadius: sanitizePlainText(input.cardRadius ?? 'rounded-2xl', 30) || 'rounded-2xl',
+    densityMode: sanitizePlainText(input.densityMode ?? 'standard', 20) || 'standard',
+    headerHotlineText: sanitizePlainText(input.headerHotlineText ?? '', 500),
+    announcementNotice: sanitizePlainText(input.announcementNotice ?? '', 1000),
+    customAppUrl: sanitizePlainText(input.customAppUrl ?? '', 200),
+    showLiveMapWidget: input.showLiveMapWidget === undefined || input.showLiveMapWidget === null ? true : Boolean(input.showLiveMapWidget),
+    showQuickChipsWidget: input.showQuickChipsWidget === undefined || input.showQuickChipsWidget === null ? true : Boolean(input.showQuickChipsWidget),
+    showHotlineTicker: input.showHotlineTicker === undefined || input.showHotlineTicker === null ? true : Boolean(input.showHotlineTicker),
+    showDriverStatsRow: input.showDriverStatsRow === undefined || input.showDriverStatsRow === null ? true : Boolean(input.showDriverStatsRow),
+    baseFareMinimum: clampFiniteNumber(input.baseFareMinimum, 0, 10000, 20),
+    perKmMultiplier: clampFiniteNumber(input.perKmMultiplier, 0, 20, 1.0),
+    roundFareToNearest5: input.roundFareToNearest5 === undefined || input.roundFareToNearest5 === null ? true : Boolean(input.roundFareToNearest5),
+    quickDestinations: safeQuickDestinations,
+    placeCategories: safePlaceCategories,
+  };
+}
+
 
 
 

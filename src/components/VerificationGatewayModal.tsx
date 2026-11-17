@@ -210,7 +210,7 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
   const engine = driver.engineNumber || `ENG-${driver.category === 'bike' ? 'HONDA' : driver.category === 'cng' ? 'BAJAJ' : driver.category === 'ambulance' ? 'TOYOTA' : 'EV'}-${bengaliToEnglishDigits(regLast4)}-M`;
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-[999999] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-3xl max-w-lg w-full border border-slate-200 shadow-2xl overflow-hidden my-auto animate-in zoom-in-95 duration-200 max-h-[92vh] flex flex-col">
         
         {/* ============================================================== */}

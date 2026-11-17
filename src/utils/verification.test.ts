@@ -4,6 +4,9 @@ import {
   checkAllVerificationsPassed,
   getDriverVerificationStatus,
   getCompletedVerificationCount,
+  isDriverDashboardUnlocked,
+  getDriverCockpitStage,
+  canOpenAdminVerificationGateway,
   validateVerificationOtp,
   generateDriverVerificationSuccessMessage
 } from './verification';
@@ -14,6 +17,70 @@ test('checkAllVerificationsPassed returns true only when all 3 are true', () => 
   assert.equal(checkAllVerificationsPassed({ licenseVerified: false, phoneVerified: true, nidVerified: true }), false);
   assert.equal(checkAllVerificationsPassed({ licenseVerified: true, phoneVerified: true, nidVerified: false }), false);
   assert.equal(checkAllVerificationsPassed({}), false);
+});
+
+test('isDriverDashboardUnlocked and getDriverCockpitStage lock out pending drivers until 3/3 verified', () => {
+  assert.equal(getDriverCockpitStage({ isRegistered: false, phone: '' }), 'unregistered');
+  assert.equal(
+    getDriverCockpitStage({
+      isRegistered: true,
+      phone: '01700000000',
+      licenseVerified: false,
+      phoneVerified: false,
+      nidVerified: false,
+      verificationStatus: 'pending'
+    }),
+    'pending_verification'
+  );
+  assert.equal(
+    isDriverDashboardUnlocked({
+      isRegistered: true,
+      phone: '01700000000',
+      licenseVerified: true,
+      phoneVerified: true,
+      nidVerified: false,
+      verificationStatus: 'pending'
+    }),
+    false
+  );
+  assert.equal(
+    isDriverDashboardUnlocked({
+      isRegistered: true,
+      phone: '01700000000',
+      licenseVerified: true,
+      phoneVerified: true,
+      nidVerified: true,
+      verificationStatus: 'pending'
+    }),
+    false
+  );
+  assert.equal(
+    getDriverCockpitStage({
+      isRegistered: true,
+      phone: '01700000000',
+      licenseVerified: true,
+      phoneVerified: true,
+      nidVerified: true,
+      verificationStatus: 'verified'
+    }),
+    'verified_dashboard'
+  );
+  assert.equal(
+    isDriverDashboardUnlocked({
+      isRegistered: true,
+      phone: '01700000000',
+      licenseVerified: true,
+      phoneVerified: true,
+      nidVerified: true,
+      verificationStatus: 'verified'
+    }),
+    true
+  );
+});
+
+test('canOpenAdminVerificationGateway allows only authenticated admins', () => {
+  assert.equal(canOpenAdminVerificationGateway(false), false);
+  assert.equal(canOpenAdminVerificationGateway(true), true);
 });
 
 test('getDriverVerificationStatus returns verified or pending', () => {

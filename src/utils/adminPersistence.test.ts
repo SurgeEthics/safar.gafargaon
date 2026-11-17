@@ -14,6 +14,7 @@ import {
   removePlaceCategory,
   buildDynamicAutocompletePlaces,
   buildSeparatedMapAdminEntry,
+  buildAppSettingsFirestorePayload,
 } from './adminPersistence';
 
 test('stripUndefinedFields removes undefined keys recursively without mutating defined falsy values', () => {
@@ -310,4 +311,32 @@ test('buildSeparatedMapAdminEntry enforces strict 1-to-1 separation between Stan
   }
 });
 
+test('buildAppSettingsFirestorePayload produces non-null schema-compliant payload for settings/app_config', () => {
+  const longNotice = 'আসসালামু আলাইকুম '.repeat(80); // > 1000 chars
+  const payload = buildAppSettingsFirestorePayload({
+    primaryColor: null,
+    customHexColor: undefined,
+    announcementNotice: longNotice,
+    headerHotlineText: 'জরুরি হটলাইন: ৯৯৯',
+    customAppUrl: null,
+    showLiveMapWidget: undefined,
+    baseFareMinimum: -50,
+    perKmMultiplier: 25,
+    quickDestinations: ['রেলস্টেশন', '', null as unknown as string, 'হাসপাতাল'],
+    placeCategories: null,
+  });
 
+  assert.equal(payload.primaryColor, 'emerald');
+  assert.equal(payload.customHexColor, '#059669');
+  assert.equal(payload.customAppUrl, '');
+  assert.equal(payload.showLiveMapWidget, true);
+  assert.equal(payload.baseFareMinimum, 0);
+  assert.equal(payload.perKmMultiplier, 20);
+  assert.ok(payload.announcementNotice.length <= 1000);
+  assert.deepEqual(payload.quickDestinations, ['রেলস্টেশন', 'হাসপাতাল']);
+  assert.deepEqual(payload.placeCategories, []);
+  for (const val of Object.values(payload)) {
+    assert.notEqual(val, null);
+    assert.notEqual(val, undefined);
+  }
+});

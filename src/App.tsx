@@ -96,9 +96,16 @@ import { AutoMarqueeText } from './components/AutoMarqueeText';
 import { PauseMarqueeText } from './components/PauseMarqueeText';
 import { collection, doc, setDoc, getDoc, getDocs, getDocFromServer, getDocsFromServer, onSnapshot, updateDoc, deleteDoc, query, where, orderBy, limit, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { auth, db, signInWithGooglePopup, formatGoogleAuthError, signOutFirebase, getAuthIdToken, handleFirestoreError, OperationType } from './lib/firebase';
-import { stripUndefinedFields, mergeRemoteSettingsWithDefaults, shouldSeedDefaultCollection, computeStandVehicleTypesSummary, resolveVehicleCategoryMeta, buildDynamicAutocompletePlaces } from './utils/adminPersistence';
+import { auth, db, signInWithGooglePopup, formatGoogleAuthError, isFirebaseAuthError, signOutFirebase, getAuthIdToken, handleFirestoreError, OperationType } from './lib/firebase';
+import { stripUndefinedFields, mergeRemoteSettingsWithDefaults, shouldSeedDefaultCollection, computeStandVehicleTypesSummary, resolveVehicleCategoryMeta, buildDynamicAutocompletePlaces, buildAppSettingsFirestorePayload } from './utils/adminPersistence';
 import { SUPER_ADMIN_EMAIL, sanitizePlainText, validateSafeExternalUrl, isValidBdCoordinate, clampFiniteNumber, createRateLimiter, stripPiiFields } from './utils/security';
+import {
+  checkAllVerificationsPassed,
+  getCompletedVerificationCount,
+  getDriverCockpitStage,
+  isDriverDashboardUnlocked,
+  canOpenAdminVerificationGateway
+} from './utils/verification';
 
 import { LocationAutocomplete } from './components/LocationAutocomplete';
 import { GAFARGAON_PLACES, resolveLocationCoordinates, GafargaonPlace } from './data/gafargaonPlaces';
@@ -1527,6 +1534,10 @@ export default function App() {
             return;
           }
           const data = docSnap.data();
+          const licV = Boolean(data.licenseVerified);
+          const phoneV = Boolean(data.phoneVerified);
+          const nidV = Boolean(data.nidVerified);
+          const all3 = licV && phoneV && nidV && (data.verificationStatus ? data.verificationStatus === 'verified' : Boolean(data.isVerified));
           firestoreDrivers.push({
             id: docSnap.id,
             ownerUid: data.ownerUid || '',
@@ -1548,10 +1559,10 @@ export default function App() {
             nidFrontPhoto: data.nidFrontPhoto || '',
             nidBackPhoto: data.nidBackPhoto || '',
             nidNumber: data.nidNumber || '',
-            nidVerified: data.nidVerified ?? false,
-            licenseVerified: data.licenseVerified ?? false,
-            phoneVerified: data.phoneVerified ?? false,
-            verificationStatus: data.verificationStatus || (data.isVerified ? 'verified' : 'pending'),
+            nidVerified: nidV,
+            licenseVerified: licV,
+            phoneVerified: phoneV,
+            verificationStatus: all3 ? 'verified' : 'pending',
             regAppId: data.regAppId || `SAFAR-REG-${docSnap.id.slice(-4)}`,
             registeredAt: data.registeredAt || 'অনলাইন',
             standName: data.standName || 'গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড',
@@ -1560,7 +1571,7 @@ export default function App() {
             rating: typeof data.rating === 'number' ? data.rating : 5.0,
             totalTrips: typeof data.totalTrips === 'number' ? data.totalTrips : 0,
             avatarBg: data.avatarBg || 'bg-emerald-700',
-            isOnline: data.isOnline ?? true,
+            isOnline: all3 ? (data.isOnline ?? true) : false,
             approxSpeedKmh: data.approxSpeedKmh || 30
           });
         });
@@ -2131,16 +2142,31 @@ export default function App() {
       }
       newSettings = { ...newSettings, customAppUrl: urlCheck.normalizedUrl };
     }
-    const sanitizedSettings: AppCustomSettings = stripUndefinedFields({
+    const firestorePayload = buildAppSettingsFirestorePayload({
       ...newSettings,
-      headerHotlineText: sanitizePlainText(newSettings.headerHotlineText || '', 500),
-      announcementNotice: sanitizePlainText(newSettings.announcementNotice || '', 1000),
       customAppUrl: newSettings.customAppUrl || '',
     });
-    setAppCustomSettings(sanitizedSettings);
-    try {
-      localStorage.setItem('safar_custom_settings_v3', JSON.stringify(sanitizedSettings));
-    } catch {}
+    const sanitizedSettings: AppCustomSettings = {
+      ...newSettings,
+      primaryColor: firestorePayload.primaryColor as AppCustomSettings['primaryColor'],
+      customHexColor: firestorePayload.customHexColor,
+      fontFamily: firestorePayload.fontFamily,
+      fontSizeMode: firestorePayload.fontSizeMode as AppCustomSettings['fontSizeMode'],
+      cardRadius: firestorePayload.cardRadius as AppCustomSettings['cardRadius'],
+      densityMode: firestorePayload.densityMode as AppCustomSettings['densityMode'],
+      headerHotlineText: firestorePayload.headerHotlineText,
+      announcementNotice: firestorePayload.announcementNotice,
+      customAppUrl: firestorePayload.customAppUrl,
+      showLiveMapWidget: firestorePayload.showLiveMapWidget,
+      showQuickChipsWidget: firestorePayload.showQuickChipsWidget,
+      showHotlineTicker: firestorePayload.showHotlineTicker,
+      showDriverStatsRow: firestorePayload.showDriverStatsRow,
+      baseFareMinimum: firestorePayload.baseFareMinimum,
+      perKmMultiplier: firestorePayload.perKmMultiplier,
+      roundFareToNearest5: firestorePayload.roundFareToNearest5,
+      quickDestinations: firestorePayload.quickDestinations,
+      placeCategories: firestorePayload.placeCategories.length > 0 ? (firestorePayload.placeCategories as any) : newSettings.placeCategories,
+    };
     if (!isFirebaseAdmin) {
       showAdminToastMessage('অ্যাডমিন Google সাইন-ইন ছাড়া ক্লাউড সেটিংস পরিবর্তন অনুমোদিত নয়');
       return false;
@@ -2148,34 +2174,22 @@ export default function App() {
     try {
       await setDoc(
         doc(db, 'settings', 'app_config'),
-        stripUndefinedFields({
-          primaryColor: sanitizedSettings.primaryColor,
-          customHexColor: sanitizedSettings.customHexColor,
-          fontFamily: sanitizedSettings.fontFamily,
-          fontSizeMode: sanitizedSettings.fontSizeMode,
-          cardRadius: sanitizedSettings.cardRadius,
-          densityMode: sanitizedSettings.densityMode,
-          headerHotlineText: sanitizedSettings.headerHotlineText,
-          announcementNotice: sanitizedSettings.announcementNotice,
-          customAppUrl: sanitizedSettings.customAppUrl,
-          showLiveMapWidget: sanitizedSettings.showLiveMapWidget,
-          showQuickChipsWidget: sanitizedSettings.showQuickChipsWidget,
-          showHotlineTicker: sanitizedSettings.showHotlineTicker,
-          showDriverStatsRow: sanitizedSettings.showDriverStatsRow,
-          baseFareMinimum: clampFiniteNumber(sanitizedSettings.baseFareMinimum, 0, 10000, 20),
-          perKmMultiplier: clampFiniteNumber(sanitizedSettings.perKmMultiplier, 0, 20, 1.0),
-          roundFareToNearest5: Boolean(sanitizedSettings.roundFareToNearest5),
-          quickDestinations: Array.isArray(sanitizedSettings.quickDestinations) ? sanitizedSettings.quickDestinations.slice(0, 30) : [],
-          placeCategories: Array.isArray(sanitizedSettings.placeCategories) ? sanitizedSettings.placeCategories.slice(0, 40) : undefined,
+        {
+          ...firestorePayload,
           updatedAt: serverTimestamp()
-        }),
+        },
         { merge: true }
       );
+      setAppCustomSettings(sanitizedSettings);
+      try {
+        localStorage.setItem('safar_custom_settings_v3', JSON.stringify(sanitizedSettings));
+      } catch {}
       showAdminToastMessage('অ্যাপ কাস্টমাইজেশন, জরুরি ঘোষণা ও উইজেট সেটিংস ফায়ারস্টোরে স্থায়ীভাবে সেভ হয়েছে!');
       return true;
-    } catch (err) {
+    } catch (err: any) {
       handleFirestoreError(err, 'write', 'settings/app_config');
-      showAdminToastMessage('ক্লাউড ফায়ারস্টোরে সেভ করতে সমস্যা হয়েছে — অনুগ্রহ করে পুনরায় চেষ্টা করুন');
+      const errCode = typeof err?.code === 'string' ? ` (${err.code})` : '';
+      showAdminToastMessage(`ক্লাউড ফায়ারস্টোরে সেভ করতে সমস্যা হয়েছে${errCode} — অনুগ্রহ করে পুনরায় চেষ্টা করুন`);
       return false;
     }
   };
@@ -2226,6 +2240,7 @@ export default function App() {
   const [statusCheckResult, setStatusCheckResult] = useState<Driver | null>(null);
   const [statusCheckError, setStatusCheckError] = useState<string | null>(null);
   const [formValidationNotice, setFormValidationNotice] = useState<string | null>(null);
+  const [isSubmittingDriverReg, setIsSubmittingDriverReg] = useState(false);
 
   const [registerForm, setRegisterForm] = useState({
     name: '',
@@ -2484,11 +2499,16 @@ export default function App() {
   const hydrateAuthenticatedDriverByUid = useCallback(async (uid: string) => {
     if (!uid) return null;
     try {
-      const dq = query(collection(db, 'drivers'), where('ownerUid', '==', uid), limit(1));
+      const dq = query(collection(db, 'drivers'), where('ownerUid', '==', uid));
       const dSnap = await fetchDocWithTimeout(getDocs(dq), 3500);
       if (!dSnap || dSnap.empty) return null;
 
-      const dDoc = dSnap.docs[0];
+      const sortedDocs = [...dSnap.docs].sort((a, b) => {
+        const numA = parseInt(a.id.match(/\d{10,}/)?.[0] || '0', 10) || 0;
+        const numB = parseInt(b.id.match(/\d{10,}/)?.[0] || '0', 10) || 0;
+        return numB - numA;
+      });
+      const dDoc = sortedDocs[0];
       const pub = dDoc.data();
       let kyc: Record<string, any> = {};
       try {
@@ -2500,6 +2520,18 @@ export default function App() {
 
       const todayStr = getTodayDateString();
       const isSameDay = pub.todayDate === todayStr;
+      const licV = Boolean(pub.licenseVerified);
+      const phoneV = Boolean(pub.phoneVerified);
+      const nidV = Boolean(pub.nidVerified);
+      const all3Verified = checkAllVerificationsPassed({
+        licenseVerified: licV,
+        phoneVerified: phoneV,
+        nidVerified: nidV
+      }) && (pub.verificationStatus ? pub.verificationStatus === 'verified' : Boolean(pub.isVerified));
+      const resolvedStatus: 'verified' | 'pending' = all3Verified ? 'verified' : 'pending';
+      if (!all3Verified) {
+        setIsDriverOnline(false);
+      }
       const hydratedDriverProfile = {
         id: dDoc.id,
         ownerUid: uid,
@@ -2517,9 +2549,13 @@ export default function App() {
         totalTrips: typeof pub.totalTrips === 'number' ? pub.totalTrips : 0,
         driverPhoto: pub.driverPhoto || pub.photoUrl || '',
         isRegistered: true,
-        verificationStatus: pub.verificationStatus || 'pending',
-        isVerified: Boolean(pub.isVerified),
-        isOnline: pub.isOnline ?? true,
+        regAppId: pub.regAppId || '',
+        licenseVerified: licV,
+        phoneVerified: phoneV,
+        nidVerified: nidV,
+        verificationStatus: resolvedStatus,
+        isVerified: all3Verified,
+        isOnline: all3Verified ? (pub.isOnline ?? true) : false,
         lat: typeof pub.lat === 'number' ? pub.lat : undefined,
         lng: typeof pub.lng === 'number' ? pub.lng : undefined,
       };
@@ -2538,6 +2574,11 @@ export default function App() {
               manufacturingYear: kyc.manufacturingYear || drv.manufacturingYear,
               chassisNumber: kyc.chassisNumber || drv.chassisNumber,
               engineNumber: kyc.engineNumber || drv.engineNumber,
+              licenseVerified: licV,
+              phoneVerified: phoneV,
+              nidVerified: nidV,
+              verificationStatus: resolvedStatus,
+              isOnline: all3Verified ? (pub.isOnline ?? drv.isOnline) : false,
             }
           : drv
       )));
@@ -2584,8 +2625,16 @@ export default function App() {
           totalTrips: 0,
           todayEarnings: 0,
           driverPhoto: '',
-          isRegistered: false
+          isRegistered: false,
+          regAppId: '',
+          licenseVerified: false,
+          phoneVerified: false,
+          nidVerified: false,
+          isVerified: false,
+          verificationStatus: 'pending',
+          isOnline: false
         });
+        setIsDriverOnline(false);
         return;
       }
 
@@ -2608,50 +2657,54 @@ export default function App() {
         setShowAdminDashboard(false);
       }
 
-      // 2. Hydrate / Ensure User Profile document (`/users/${user.uid}`)
+      // 2. Hydrate / Ensure User Profile document (`/users/${user.uid}`) — never block login on Firestore sync
+      const safeEmail = sanitizePlainText(user.email || '', 150);
+      const safePhoto = typeof user.photoURL === 'string' ? user.photoURL.slice(0, 500) : '';
+      let existingData: Record<string, any> | null = null;
       try {
         const userRef = doc(db, 'users', user.uid);
-        const uSnap = await fetchDocWithTimeout(getDoc(userRef), 3000);
-        const existingData = uSnap && uSnap.exists() ? uSnap.data() : null;
-        const resolvedName = sanitizePlainText(existingData?.name || user.displayName || 'সম্মানিত যাত্রী', 100) || 'সম্মানিত যাত্রী';
-        const resolvedPhone = sanitizePlainText(existingData?.phone || '', 20);
-        const resolvedHome = sanitizePlainText(existingData?.homeLocation || 'গফরগাঁও পৌরসভা', 180);
-        const resolvedEmergency = sanitizePlainText(existingData?.emergencyContact || '', 80);
-        const resolvedRole = existingData?.role === 'driver' ? 'driver' : 'passenger';
+        const uSnap = await fetchDocWithTimeout(getDoc(userRef), 2500);
+        existingData = uSnap && uSnap.exists() ? uSnap.data() : null;
+      } catch {}
 
-        if (!existingData) {
-          await setDoc(userRef, stripUndefinedFields({
-            uid: user.uid,
-            name: resolvedName,
-            email: user.email || '',
-            phone: resolvedPhone,
-            homeLocation: resolvedHome,
-            emergencyContact: resolvedEmergency,
-            photoUrl: user.photoURL || '',
-            role: resolvedRole,
-            updatedAt: serverTimestamp()
-          }));
-        }
+      const resolvedName = sanitizePlainText(existingData?.name || user.displayName || 'সম্মানিত যাত্রী', 100) || 'সম্মানিত যাত্রী';
+      const resolvedPhone = sanitizePlainText(existingData?.phone || '', 20);
+      const resolvedHome = sanitizePlainText(existingData?.homeLocation || 'গফরগাঁও পৌরসভা', 180) || 'গফরগাঁও পৌরসভা';
+      const resolvedEmergency = sanitizePlainText(existingData?.emergencyContact || '', 80);
+      const resolvedRole = existingData?.role === 'driver' ? 'driver' : 'passenger';
 
-        const nextProfile = {
+      const nextProfile = {
+        uid: user.uid,
+        email: safeEmail,
+        photoUrl: safePhoto || (typeof existingData?.photoUrl === 'string' ? existingData.photoUrl.slice(0, 500) : ''),
+        name: resolvedName,
+        phone: resolvedPhone,
+        homeLocation: resolvedHome,
+        emergencyContact: resolvedEmergency,
+        isLoggedIn: true
+      };
+      setPassengerProfile(nextProfile);
+      setEditProfileForm({
+        name: nextProfile.name,
+        phone: nextProfile.phone,
+        homeLocation: nextProfile.homeLocation,
+        emergencyContact: nextProfile.emergencyContact
+      });
+
+      if (!existingData) {
+        setDoc(doc(db, 'users', user.uid), stripUndefinedFields({
           uid: user.uid,
-          email: user.email || '',
-          photoUrl: user.photoURL || existingData?.photoUrl || '',
           name: resolvedName,
+          email: safeEmail,
           phone: resolvedPhone,
           homeLocation: resolvedHome,
           emergencyContact: resolvedEmergency,
-          isLoggedIn: true
-        };
-        setPassengerProfile(nextProfile);
-        setEditProfileForm({
-          name: nextProfile.name,
-          phone: nextProfile.phone,
-          homeLocation: nextProfile.homeLocation,
-          emergencyContact: nextProfile.emergencyContact
+          photoUrl: nextProfile.photoUrl,
+          role: resolvedRole,
+          updatedAt: serverTimestamp()
+        }), { merge: true }).catch((err) => {
+          console.warn('Firestore user profile bootstrap warning:', err);
         });
-      } catch (err) {
-        console.warn('Firestore user profile hydration warning:', err);
       }
 
       // 3. Load authenticated driver profile owned by this Google UID
@@ -2662,7 +2715,7 @@ export default function App() {
   }, [hydrateAuthenticatedDriverByUid]);
 
   // Compulsory Google Sign-In for Passengers
-  const handlePassengerGoogleSignIn = async () => {
+  const handlePassengerGoogleSignIn = async (forceAccountPicker = false) => {
     if (!authActionRateLimiter.consume().allowed) {
       setPassengerAuthError('অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।');
       return;
@@ -2670,38 +2723,40 @@ export default function App() {
     setPassengerAuthError(null);
     setIsPassengerAuthLoading(true);
     try {
-      const user = await signInWithGooglePopup();
+      let user = !forceAccountPicker && auth.currentUser?.emailVerified ? auth.currentUser : null;
+      if (!user) {
+        try {
+          user = await signInWithGooglePopup();
+        } catch (authErr: any) {
+          setPassengerAuthError(formatGoogleAuthError(authErr));
+          return;
+        }
+      }
       if (!user || !user.emailVerified) {
         setPassengerAuthError('ভেরিফাইড Google অ্যাকাউন্ট দিয়ে সাইন-ইন করা আবশ্যক।');
         return;
       }
 
-      const userRef = doc(db, 'users', user.uid);
-      const uSnap = await fetchDocWithTimeout(getDoc(userRef), 3000);
-      const existingData = uSnap && uSnap.exists() ? uSnap.data() : null;
+      const safeEmail = sanitizePlainText(user.email || '', 150);
+      const safePhoto = typeof user.photoURL === 'string' ? user.photoURL.slice(0, 500) : '';
+      let existingData: Record<string, any> | null = null;
+      try {
+        const uSnap = await fetchDocWithTimeout(getDoc(doc(db, 'users', user.uid)), 2500);
+        existingData = uSnap && uSnap.exists() ? uSnap.data() : null;
+      } catch {}
+
       const resolvedProfile = {
         uid: user.uid,
-        email: user.email || '',
-        photoUrl: user.photoURL || existingData?.photoUrl || '',
+        email: safeEmail,
+        photoUrl: safePhoto || (typeof existingData?.photoUrl === 'string' ? existingData.photoUrl.slice(0, 500) : ''),
         name: sanitizePlainText(existingData?.name || user.displayName || 'সম্মানিত যাত্রী', 100) || 'সম্মানিত যাত্রী',
         phone: sanitizePlainText(existingData?.phone || '', 20),
-        homeLocation: sanitizePlainText(existingData?.homeLocation || 'গফরগাঁও পৌরসভা', 180),
+        homeLocation: sanitizePlainText(existingData?.homeLocation || 'গফরগাঁও পৌরসভা', 180) || 'গফরগাঁও পৌরসভা',
         emergencyContact: sanitizePlainText(existingData?.emergencyContact || '', 80),
         isLoggedIn: true
       };
 
-      await setDoc(userRef, stripUndefinedFields({
-        uid: user.uid,
-        name: resolvedProfile.name,
-        email: resolvedProfile.email,
-        phone: resolvedProfile.phone,
-        homeLocation: resolvedProfile.homeLocation,
-        emergencyContact: resolvedProfile.emergencyContact,
-        photoUrl: resolvedProfile.photoUrl,
-        role: existingData?.role === 'driver' ? 'driver' : 'passenger',
-        updatedAt: serverTimestamp()
-      }), { merge: true });
-
+      setFirebaseUser(user);
       setPassengerProfile(resolvedProfile);
       setEditProfileForm({
         name: resolvedProfile.name,
@@ -2709,7 +2764,24 @@ export default function App() {
         homeLocation: resolvedProfile.homeLocation,
         emergencyContact: resolvedProfile.emergencyContact
       });
-      await loadPassengerTrips(user.uid);
+
+      try {
+        await setDoc(doc(db, 'users', user.uid), stripUndefinedFields({
+          uid: user.uid,
+          name: resolvedProfile.name,
+          email: resolvedProfile.email,
+          phone: resolvedProfile.phone,
+          homeLocation: resolvedProfile.homeLocation,
+          emergencyContact: resolvedProfile.emergencyContact,
+          photoUrl: resolvedProfile.photoUrl,
+          role: existingData?.role === 'driver' ? 'driver' : 'passenger',
+          updatedAt: serverTimestamp()
+        }), { merge: true });
+      } catch (syncErr) {
+        console.warn('Passenger Firestore profile sync warning:', syncErr);
+      }
+
+      await loadPassengerTrips(user.uid).catch(() => {});
       setProfileSaveToast(true);
       setTimeout(() => setProfileSaveToast(false), 3000);
 
@@ -2720,7 +2792,11 @@ export default function App() {
       }
       showAdminToastMessage(`🎉 স্বাগতম ${resolvedProfile.name}! Google অ্যাকাউন্ট দিয়ে নিরাপদ সাইন-ইন সম্পন্ন হয়েছে`);
     } catch (err: any) {
-      setPassengerAuthError(formatGoogleAuthError(err));
+      setPassengerAuthError(
+        isFirebaseAuthError(err)
+          ? formatGoogleAuthError(err)
+          : 'সাইন-ইন পরবর্তী তথ্য লোড করতে সাময়িক সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
     } finally {
       setIsPassengerAuthLoading(false);
     }
@@ -2729,7 +2805,8 @@ export default function App() {
   // Compulsory Google Sign-In for Drivers (Driver Cockpit & Driver Registration)
   const handleDriverGoogleSignIn = async (
     openRegisterIfUnregistered = false,
-    suppressNotRegisteredError = false
+    suppressNotRegisteredError = false,
+    forceAccountPicker = false
   ) => {
     if (!authActionRateLimiter.consume().allowed) {
       setDriverLoginError('অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।');
@@ -2738,35 +2815,56 @@ export default function App() {
     setDriverLoginError(null);
     setIsGoogleAuthLoading(true);
     try {
-      const user = await signInWithGooglePopup();
+      let user = !forceAccountPicker && auth.currentUser?.emailVerified ? auth.currentUser : null;
+      if (!user) {
+        try {
+          user = await signInWithGooglePopup();
+        } catch (authErr: any) {
+          setDriverLoginError(formatGoogleAuthError(authErr));
+          return;
+        }
+      }
       if (!user || !user.emailVerified) {
         setDriverLoginError('ভেরিফাইড Google অ্যাকাউন্ট দিয়ে সাইন-ইন করা আবশ্যক।');
         return;
       }
 
-      // Ensure `/users/{uid}` master record exists
-      const userRef = doc(db, 'users', user.uid);
-      const uSnap = await fetchDocWithTimeout(getDoc(userRef), 2500);
-      const uData = uSnap && uSnap.exists() ? uSnap.data() : null;
-      await setDoc(userRef, stripUndefinedFields({
-        uid: user.uid,
-        name: sanitizePlainText(uData?.name || user.displayName || 'নিবন্ধিত চালক', 100) || 'নিবন্ধিত চালক',
-        email: user.email || '',
-        phone: sanitizePlainText(uData?.phone || '', 20),
-        homeLocation: sanitizePlainText(uData?.homeLocation || 'গফরগাঁও', 180),
-        emergencyContact: sanitizePlainText(uData?.emergencyContact || '', 80),
-        photoUrl: user.photoURL || uData?.photoUrl || '',
-        role: 'driver',
-        updatedAt: serverTimestamp()
-      }), { merge: true });
+      setFirebaseUser(user);
+      const safeEmail = sanitizePlainText(user.email || '', 150);
+      const safePhoto = typeof user.photoURL === 'string' ? user.photoURL.slice(0, 500) : '';
+
+      // Ensure `/users/{uid}` master record exists without blocking driver lookup
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const uSnap = await fetchDocWithTimeout(getDoc(userRef), 2000);
+        const uData = uSnap && uSnap.exists() ? uSnap.data() : null;
+        await setDoc(userRef, stripUndefinedFields({
+          uid: user.uid,
+          name: sanitizePlainText(uData?.name || user.displayName || 'নিবন্ধিত চালক', 100) || 'নিবন্ধিত চালক',
+          email: safeEmail,
+          phone: sanitizePlainText(uData?.phone || '', 20),
+          homeLocation: sanitizePlainText(uData?.homeLocation || 'গফরগাঁও', 180) || 'গফরগাঁও',
+          emergencyContact: sanitizePlainText(uData?.emergencyContact || '', 80),
+          photoUrl: safePhoto || (typeof uData?.photoUrl === 'string' ? uData.photoUrl.slice(0, 500) : ''),
+          role: 'driver',
+          updatedAt: serverTimestamp()
+        }), { merge: true });
+      } catch (syncErr) {
+        console.warn('Driver user record sync warning:', syncErr);
+      }
 
       const hydrated = await hydrateAuthenticatedDriverByUid(user.uid);
       if (hydrated) {
         setUserRole('driver');
-        showAdminToastMessage(`🎉 স্বাগতম ${hydrated.name}! আপনার Google-যাচাইকৃত চালক ড্যাশবোর্ড সক্রিয় হয়েছে`);
+        if (isDriverDashboardUnlocked(hydrated)) {
+          showAdminToastMessage(`🎉 স্বাগতম ${hydrated.name}! আপনার ৩/৩ ভেরিফাইড চালক ড্যাশবোর্ড সক্রিয় হয়েছে`);
+        } else {
+          const doneCount = getCompletedVerificationCount(hydrated);
+          showAdminToastMessage(`⏳ স্বাগতম ${hydrated.name}! আপনার আবেদন পেন্ডিং রয়েছে (${doneCount}/৩ যাচাই সম্পন্ন — ৩/৩ শেষ হলে ড্যাশবোর্ড খুলবে)`);
+        }
       } else {
         if (!suppressNotRegisteredError) {
-          setDriverLoginError('এই Google অ্যাকাউন্টের অধীনে কোনো নিবন্ধিত চালক প্রোফাইল পাওয়া যায়নি। নিচের ফরমে নিবন্ধন সম্পন্ন করুন।');
+          setDriverLoginError(`এই Google অ্যাকাউন্ট (${safeEmail}) দিয়ে এখনও কোনো চালক প্রোফাইল নিবন্ধিত নেই। "এখনই চালক নিবন্ধন করুন" বাটনে ক্লিক করে যুক্ত হন অথবা অন্য অ্যাকাউন্ট ব্যবহার করুন।`);
         }
         setRegisterForm(prev => ({
           ...prev,
@@ -2780,7 +2878,11 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      setDriverLoginError(formatGoogleAuthError(err));
+      setDriverLoginError(
+        isFirebaseAuthError(err)
+          ? formatGoogleAuthError(err)
+          : 'চালক প্রোফাইল যাচাই করতে সাময়িক সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
     } finally {
       setIsGoogleAuthLoading(false);
     }
@@ -2850,6 +2952,9 @@ export default function App() {
 
   const handlePassengerLogout = async () => {
     await signOutFirebase().catch(() => {});
+    setFirebaseUser(null);
+    setPassengerAuthError(null);
+    setDriverLoginError(null);
     setPassengerProfile({
       uid: '',
       email: '',
@@ -2919,7 +3024,7 @@ export default function App() {
 
 
   // Driver Cockpit States (Authenticated strictly via Firebase Google UID ownership)
-  const [isDriverOnline, setIsDriverOnline] = useState(true);
+  const [isDriverOnline, setIsDriverOnline] = useState(false);
   const [driverProfile, setDriverProfile] = useState<{
     id?: string;
     ownerUid?: string;
@@ -2937,6 +3042,10 @@ export default function App() {
     todayEarnings: number;
     driverPhoto?: string;
     isRegistered?: boolean;
+    regAppId?: string;
+    licenseVerified?: boolean;
+    phoneVerified?: boolean;
+    nidVerified?: boolean;
     verificationStatus?: string;
     isVerified?: boolean;
     isOnline?: boolean;
@@ -2958,7 +3067,14 @@ export default function App() {
     totalTrips: 0,
     todayEarnings: 0,
     driverPhoto: '',
-    isRegistered: false
+    isRegistered: false,
+    regAppId: '',
+    licenseVerified: false,
+    phoneVerified: false,
+    nidVerified: false,
+    verificationStatus: 'pending',
+    isVerified: false,
+    isOnline: false
   });
 
   // Dynamic Driver Reviews & Ratings (Loaded from LocalStorage & Firestore)
@@ -3026,6 +3142,17 @@ export default function App() {
         const validTodayEarnings = isSameDay && typeof data.todayEarnings === 'number' ? data.todayEarnings : 0;
         const validTotalTrips = typeof data.totalTrips === 'number' ? data.totalTrips : prevOrZero(data.todayTrips);
 
+        const licV = Boolean(data.licenseVerified);
+        const phoneV = Boolean(data.phoneVerified);
+        const nidV = Boolean(data.nidVerified);
+        const all3Verified = checkAllVerificationsPassed({
+          licenseVerified: licV,
+          phoneVerified: phoneV,
+          nidVerified: nidV
+        }) && (data.verificationStatus ? data.verificationStatus === 'verified' : Boolean(data.isVerified));
+        if (!all3Verified) {
+          setIsDriverOnline(false);
+        }
         setDriverProfile(prev => ({
           ...prev,
           ownerUid: data.ownerUid || prev.ownerUid,
@@ -3034,9 +3161,13 @@ export default function App() {
           todayDate: currentToday,
           todayTrips: validTodayTrips,
           todayEarnings: validTodayEarnings,
-          verificationStatus: data.verificationStatus || prev.verificationStatus,
-          isVerified: data.isVerified ?? prev.isVerified,
-          isOnline: data.isOnline ?? prev.isOnline,
+          regAppId: data.regAppId || prev.regAppId,
+          licenseVerified: licV,
+          phoneVerified: phoneV,
+          nidVerified: nidV,
+          verificationStatus: all3Verified ? 'verified' : 'pending',
+          isVerified: all3Verified,
+          isOnline: all3Verified ? (data.isOnline ?? prev.isOnline) : false,
         }));
 
         // Only driver owner or Admin can perform rollover update with serverTimestamp
@@ -3094,6 +3225,9 @@ export default function App() {
       } catch {}
     }
     await signOutFirebase().catch(() => {});
+    setFirebaseUser(null);
+    setDriverLoginError(null);
+    setPassengerAuthError(null);
     setDriverProfile({
       id: '',
       ownerUid: '',
@@ -3108,8 +3242,16 @@ export default function App() {
       todayTrips: 0,
       todayEarnings: 0,
       driverPhoto: '',
-      isRegistered: false
+      isRegistered: false,
+      regAppId: '',
+      licenseVerified: false,
+      phoneVerified: false,
+      nidVerified: false,
+      verificationStatus: 'pending',
+      isVerified: false,
+      isOnline: false
     });
+    setIsDriverOnline(false);
     try {
       localStorage.removeItem('safar_active_driver_profile_v6');
     } catch {}
@@ -3899,7 +4041,7 @@ export default function App() {
       plateNumber: driverProfile.plateNumber,
       standName: driverProfile.standName,
       rating: driverProfile.rating,
-      isOnline: isDriverOnline
+      isOnline: isDriverDashboardUnlocked(driverProfile) ? isDriverOnline : false
     } : undefined,
     passengerDetails: userRole === 'passenger' ? {
       pickupPoint: passengerPickup,
@@ -4534,6 +4676,12 @@ export default function App() {
       return;
     }
 
+    if (!isDriverDashboardUnlocked(driverProfile)) {
+      setUserRole('driver');
+      showAdminToastMessage('৩/৩টি নিরাপত্তা যাচাইকরণ (BRTA, WhatsApp ও NID) অ্যাডমিন কর্তৃক সম্পন্ন না হওয়া পর্যন্ত ট্রিপ গ্রহণ বন্ধ থাকবে');
+      return;
+    }
+
     isAcceptingRef.current[requestId] = true;
 
     setUserRole('driver');
@@ -4610,8 +4758,9 @@ export default function App() {
       driverPhoto,
       licenseType: 'পেশাদার (Professional)',
       nidNumber: '',
-      nidVerified: true,
-      licenseVerified: true,
+      nidVerified: Boolean(driverProfile.nidVerified),
+      licenseVerified: Boolean(driverProfile.licenseVerified),
+      phoneVerified: Boolean(driverProfile.phoneVerified),
       standName: driverProfile.standName || 'গফরগাঁও',
       avatarBg: 'bg-emerald-600',
       approxSpeedKmh: 25
@@ -5472,11 +5621,16 @@ export default function App() {
   // Handle Driver Registration Submit with Compulsory Google Sign-In & KYC Vault Split
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingDriverReg) return;
     setFormValidationNotice(null);
 
-    if (!firebaseUser?.uid || !firebaseUser?.emailVerified) {
+    const activeUser =
+      (auth.currentUser?.emailVerified ? auth.currentUser : null) ||
+      (firebaseUser?.emailVerified ? firebaseUser : null);
+
+    if (!activeUser?.uid || !activeUser?.emailVerified) {
       setFormValidationNotice('চালক নিবন্ধন সম্পন্ন করতে প্রথমে Google অ্যাকাউন্ট দিয়ে সাইন-ইন করা বাধ্যতামূলক।');
-      handleDriverGoogleSignIn(false);
+      handleDriverGoogleSignIn(false, true, true);
       return;
     }
 
@@ -5500,7 +5654,7 @@ export default function App() {
       return;
     }
 
-    const uid = firebaseUser.uid;
+    const uid = activeUser.uid;
     const catObj = categories.find(c => c.id === registerForm.category) || VEHICLE_CATEGORIES.find(c => c.id === registerForm.category);
     const targetStand = stands.find(s => s.bengaliName === registerForm.standName) || stands[0];
     const newRegAppId = `SAFAR-REG-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -5542,16 +5696,43 @@ export default function App() {
       rating: 5.0,
       totalTrips: 0,
       avatarBg: 'bg-emerald-700',
-      isOnline: true,
+      isOnline: false,
       approxSpeedKmh: registerForm.category === 'bike' ? 35 : registerForm.category === 'cng' ? 28 : 25
     };
 
-    setDrivers(prev => [newDriver, ...prev]);
+    setIsSubmittingDriverReg(true);
+    try {
+      // Master public document MUST be persisted in Firestore before private/kyc subdocument
+      await setDoc(doc(db, 'drivers', newDriver.id), buildDriverPublicPayload(newDriver, uid));
+      await setDoc(doc(db, 'drivers', newDriver.id, 'private', 'kyc'), buildDriverPrivateKycPayload(newDriver, uid));
+      await setDoc(doc(db, 'users', uid), stripUndefinedFields({
+        uid,
+        name: newDriver.name,
+        email: activeUser.email || '',
+        phone: newDriver.phone,
+        homeLocation: newDriver.standName,
+        photoUrl: activeUser.photoURL || '',
+        role: 'driver',
+        updatedAt: serverTimestamp(),
+      }), { merge: true }).catch((uErr) => {
+        console.warn('Secondary user profile role sync warning:', uErr);
+      });
+    } catch (err: any) {
+      handleFirestoreError(err, 'create', `drivers/${newDriver.id}`);
+      const code = typeof err?.code === 'string' ? ` (${err.code})` : '';
+      setFormValidationNotice(`ডাটাবেসে আবেদন সংরক্ষণ করা যায়নি${code}। অনুগ্রহ করে ইন্টারনেট সংযোগ ও Google সাইন-ইন যাচাই করে আবার চেষ্টা করুন।`);
+      showAdminToastMessage(`⚠️ নিবন্ধন ডাটাবেসে পাঠানো যায়নি${code}`);
+      setIsSubmittingDriverReg(false);
+      return;
+    }
+
+    setDrivers(prev => [newDriver, ...prev.filter(d => d.id !== newDriver.id)]);
     setActiveSubmittedDriverId(newDriver.id);
     try {
       localStorage.setItem('safar_last_reg_driver_id', newDriver.id);
     } catch {}
 
+    setIsDriverOnline(false);
     setDriverProfile({
       id: newDriver.id,
       ownerUid: uid,
@@ -5569,32 +5750,18 @@ export default function App() {
       totalTrips: 0,
       driverPhoto: newDriver.driverPhoto || '',
       isRegistered: true,
+      regAppId: newRegAppId,
+      licenseVerified: false,
+      phoneVerified: false,
+      nidVerified: false,
       verificationStatus: 'pending',
       isVerified: false,
-      isOnline: true,
+      isOnline: false,
     });
 
     setRegisterModalTab('status_check');
     setStatusCheckResult(newDriver);
-    showAdminToastMessage(`আবেদন রেফারেন্স: ${newRegAppId} - যাচাইকরণ পেন্ডিং রয়েছে`);
-
-    try {
-      // Master public document MUST be created before private/kyc subdocument
-      await setDoc(doc(db, 'drivers', newDriver.id), buildDriverPublicPayload(newDriver, uid));
-      await setDoc(doc(db, 'drivers', newDriver.id, 'private', 'kyc'), buildDriverPrivateKycPayload(newDriver, uid));
-      await setDoc(doc(db, 'users', uid), stripUndefinedFields({
-        uid,
-        name: newDriver.name,
-        email: firebaseUser.email || '',
-        phone: newDriver.phone,
-        homeLocation: newDriver.standName,
-        photoUrl: firebaseUser.photoURL || '',
-        role: 'driver',
-        updatedAt: serverTimestamp(),
-      }), { merge: true });
-    } catch (err) {
-      handleFirestoreError(err, 'create', `drivers/${newDriver.id}`);
-    }
+    showAdminToastMessage(`✅ আবেদন অ্যাডমিন প্যানেলে পাঠানো হয়েছে! রেফারেন্স: ${newRegAppId} (যাচাই পেন্ডিং)`);
 
     setRegisterForm({
       name: '',
@@ -5620,6 +5787,7 @@ export default function App() {
     setDriverPhotoSizeKb(null);
     setNidFrontSizeKb(null);
     setNidBackSizeKb(null);
+    setIsSubmittingDriverReg(false);
   };
 
   // Search driver application verification status by Application ID or Phone
@@ -5964,17 +6132,13 @@ export default function App() {
   // ADMIN CONTROL PANEL HANDLERS (COMPULSORY GOOGLE SUPER ADMIN + HASHED PIN)
   // =========================================================================
 
-  // Hydrate Admin private KYC records (`/drivers/{id}/private/kyc`) once authenticated as Super Admin
-  const adminKycHydratedRef = useRef(false);
-  useEffect(() => {
-    if (!isAdminLoggedIn || !isFirebaseAdmin) {
-      adminKycHydratedRef.current = false;
-      return;
-    }
-    if (adminKycHydratedRef.current || drivers.length === 0) return;
-    adminKycHydratedRef.current = true;
-
-    drivers.forEach((drv) => {
+  // Hydrate Admin private KYC records (`/drivers/{id}/private/kyc`) for any newly added driver while Admin is active
+  const hydratedAdminKycIdsRef = useRef<Set<string>>(new Set());
+  const hydrateDriversKycForAdmin = useCallback((driverList: Driver[], forceAll = false) => {
+    if (!isAdminLoggedIn || !isFirebaseAdmin) return;
+    driverList.forEach((drv) => {
+      if (!forceAll && hydratedAdminKycIdsRef.current.has(drv.id)) return;
+      hydratedAdminKycIdsRef.current.add(drv.id);
       getDoc(doc(db, 'drivers', drv.id, 'private', 'kyc'))
         .then((kSnap) => {
           if (kSnap.exists()) {
@@ -6002,9 +6166,95 @@ export default function App() {
             );
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          hydratedAdminKycIdsRef.current.delete(drv.id);
+        });
     });
-  }, [isAdminLoggedIn, isFirebaseAdmin, drivers.length]);
+  }, [isAdminLoggedIn, isFirebaseAdmin]);
+
+  useEffect(() => {
+    if (!isAdminLoggedIn || !isFirebaseAdmin) {
+      hydratedAdminKycIdsRef.current.clear();
+      return;
+    }
+    if (drivers.length === 0) return;
+    hydrateDriversKycForAdmin(drivers, false);
+  }, [isAdminLoggedIn, isFirebaseAdmin, drivers, hydrateDriversKycForAdmin]);
+
+  const handleRefreshDriversFromServer = async () => {
+    if (!isFirebaseAdmin) {
+      showAdminToastMessage('অনুমোদিত অ্যাডমিন Google সাইন-ইন আবশ্যক');
+      return;
+    }
+    try {
+      const serverSnap = await getDocsFromServer(collection(db, 'drivers'));
+      const deletedIds: string[] = JSON.parse(localStorage.getItem('safar_deleted_driver_ids_v1') || '[]');
+      const remoteDrivers: Driver[] = [];
+      serverSnap.forEach((docSnap) => {
+        if (docSnap.id === 'drv-1793153816766' || deletedIds.includes(docSnap.id)) return;
+        const data = docSnap.data();
+        const licV = Boolean(data.licenseVerified);
+        const phoneV = Boolean(data.phoneVerified);
+        const nidV = Boolean(data.nidVerified);
+        const all3 = licV && phoneV && nidV && (data.verificationStatus ? data.verificationStatus === 'verified' : Boolean(data.isVerified));
+        remoteDrivers.push({
+          id: docSnap.id,
+          ownerUid: data.ownerUid || '',
+          name: data.name || data.nameBn || 'চালক',
+          phone: data.phone || '',
+          category: data.category || 'cng',
+          categoryBengali: data.categoryBengali || 'যানবাহন',
+          vehicleModel: data.vehicleModel || 'বাহন',
+          plateNumber: data.plateNumber || data.licensePlate || '',
+          licenseNumber: data.licenseNumber || '',
+          firstIssueDate: data.firstIssueDate || '',
+          licenseType: data.licenseType || 'পেশাদার (Professional)',
+          regLastFour: data.regLastFour || (data.plateNumber ? data.plateNumber.replace(/[^0-9]/g, '').slice(-4) : '') || '',
+          manufacturingYear: data.manufacturingYear || '',
+          chassisNumber: data.chassisNumber || '',
+          engineNumber: data.engineNumber || '',
+          taxTokenReceiptPhoto: data.taxTokenReceiptPhoto || '',
+          driverPhoto: data.driverPhoto || data.photoUrl || '',
+          nidFrontPhoto: data.nidFrontPhoto || '',
+          nidBackPhoto: data.nidBackPhoto || '',
+          nidNumber: data.nidNumber || '',
+          nidVerified: nidV,
+          licenseVerified: licV,
+          phoneVerified: phoneV,
+          verificationStatus: all3 ? 'verified' : 'pending',
+          regAppId: data.regAppId || `SAFAR-REG-${docSnap.id.slice(-4)}`,
+          registeredAt: data.registeredAt || 'অনলাইন',
+          standName: data.standName || 'গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড',
+          lat: typeof data.lat === 'number' ? data.lat : 24.4536,
+          lng: typeof data.lng === 'number' ? data.lng : 90.5479,
+          rating: typeof data.rating === 'number' ? data.rating : 5.0,
+          totalTrips: typeof data.totalTrips === 'number' ? data.totalTrips : 0,
+          avatarBg: data.avatarBg || 'bg-emerald-700',
+          isOnline: all3 ? (data.isOnline ?? true) : false,
+          approxSpeedKmh: data.approxSpeedKmh || 30,
+        });
+      });
+
+      hydratedAdminKycIdsRef.current.clear();
+      setDrivers((prev) => {
+        const prevMap = new Map<string, Driver>(prev.map((d) => [d.id, d]));
+        const merged = remoteDrivers.map((rd) => {
+          const ex = prevMap.get(rd.id);
+          return ex ? { ...rd, phone: rd.phone || ex.phone, licenseNumber: rd.licenseNumber || ex.licenseNumber, nidNumber: rd.nidNumber || ex.nidNumber } : rd;
+        });
+        for (const initD of INITIAL_DRIVERS) {
+          if (initD.id === 'drv-1793153816766' || deletedIds.includes(initD.id)) continue;
+          if (!merged.some((m) => m.id === initD.id)) merged.push(initD);
+        }
+        return merged;
+      });
+      hydrateDriversKycForAdmin(remoteDrivers, true);
+      showAdminToastMessage(`✅ সার্ভার থেকে ${remoteDrivers.length} জন চালকের লাইভ ডাটা ও KYC সিঙ্ক হয়েছে!`);
+    } catch (err: any) {
+      handleFirestoreError(err, 'list', 'drivers');
+      showAdminToastMessage('সার্ভার থেকে চালকের তালিকা সিঙ্ক করতে সমস্যা হয়েছে');
+    }
+  };
 
   // Step-2 Secondary PIN Verification (Requires Verified Google Super Admin First)
   const handleAdminLogin = async (e: React.FormEvent) => {
@@ -6246,58 +6496,70 @@ export default function App() {
   const [verifyingDriverTarget, setVerifyingDriverTarget] = useState<Driver | null>(null);
   const [successModalDriver, setSuccessModalDriver] = useState<Driver | null>(null);
 
+  const closeRegistrationModal = () => {
+    setIsRegisterModalOpen(false);
+    if (!canOpenAdminVerificationGateway(isFirebaseAdmin)) {
+      setVerificationGateType(null);
+      setVerifyingDriverTarget(null);
+    }
+  };
+
   const handleOpenVerificationGate = (driver: Driver, gateType: 'brta' | 'wa' | 'nid') => {
+    if (!canOpenAdminVerificationGateway(isFirebaseAdmin)) {
+      showAdminToastMessage('যাচাইকরণ গেটওয়ে শুধুমাত্র অনুমোদিত অ্যাডমিন প্যানেল থেকে ব্যবহারযোগ্য');
+      return;
+    }
     setVerifyingDriverTarget(driver);
     setVerificationGateType(gateType);
   };
 
-  const handleApproveVerificationGate = (driverId: string, gateType: 'brta' | 'wa' | 'nid') => {
-    if (!isFirebaseAdmin) {
+  const handleApproveVerificationGate = async (driverId: string, gateType: 'brta' | 'wa' | 'nid') => {
+    if (!isFirebaseAdmin || !firebaseUser?.uid) {
       showAdminToastMessage('যাচাইকরণ অনুমোদনের জন্য অনুমোদিত অ্যাডমিন Google সাইন-ইন আবশ্যক');
       return;
     }
-    let newlyFullyVerifiedDriver: Driver | null = null;
-
-    setDrivers(prev => prev.map(d => {
-      if (d.id !== driverId) return d;
-      const nextLic = gateType === 'brta' ? true : Boolean(d.licenseVerified);
-      const nextPhone = gateType === 'wa' ? true : Boolean(d.phoneVerified);
-      const nextNid = gateType === 'nid' ? true : Boolean(d.nidVerified);
-      const all3 = nextLic && nextPhone && nextNid;
-      const updated: Driver = {
-        ...d,
-        licenseVerified: nextLic,
-        phoneVerified: nextPhone,
-        nidVerified: nextNid,
-        verificationStatus: all3 ? 'verified' : 'pending',
-        isOnline: all3 ? true : d.isOnline
-      };
-      if (all3) {
-        newlyFullyVerifiedDriver = updated;
-      }
-      return updated;
-    }));
-
     const targetDrv = drivers.find(d => d.id === driverId);
-    if (targetDrv) {
-      const nextLic = gateType === 'brta' ? true : Boolean(targetDrv.licenseVerified);
-      const nextPhone = gateType === 'wa' ? true : Boolean(targetDrv.phoneVerified);
-      const nextNid = gateType === 'nid' ? true : Boolean(targetDrv.nidVerified);
-      const all3 = nextLic && nextPhone && nextNid;
-      updateDoc(doc(db, 'drivers', driverId), {
+    if (!targetDrv) {
+      showAdminToastMessage('চালকের রেকর্ড খুঁজে পাওয়া যায়নি');
+      return;
+    }
+
+    const nextLic = gateType === 'brta' ? true : Boolean(targetDrv.licenseVerified);
+    const nextPhone = gateType === 'wa' ? true : Boolean(targetDrv.phoneVerified);
+    const nextNid = gateType === 'nid' ? true : Boolean(targetDrv.nidVerified);
+    const all3 = nextLic && nextPhone && nextNid;
+    const preservedOwnerUid = targetDrv.ownerUid || firebaseUser.uid;
+    const updatedDriver: Driver = {
+      ...targetDrv,
+      ownerUid: preservedOwnerUid,
+      licenseVerified: nextLic,
+      phoneVerified: nextPhone,
+      nidVerified: nextNid,
+      verificationStatus: all3 ? 'verified' : 'pending',
+      isOnline: all3 ? true : false
+    };
+
+    setDrivers(prev => prev.map(d => (d.id === driverId ? updatedDriver : d)));
+
+    if (driverProfile.id === driverId) {
+      setDriverProfile(prev => ({
+        ...prev,
         licenseVerified: nextLic,
         phoneVerified: nextPhone,
         nidVerified: nextNid,
         isVerified: all3,
         verificationStatus: all3 ? 'verified' : 'pending',
-        isOnline: all3 ? true : Boolean(targetDrv.isOnline),
-        updatedAt: serverTimestamp()
-      }).catch(err => console.warn('Firestore verify gate error:', err));
+        isOnline: all3 ? true : false
+      }));
+      setIsDriverOnline(all3);
     }
 
-    if (newlyFullyVerifiedDriver) {
-      const fullDriver = newlyFullyVerifiedDriver as Driver;
-      setSuccessModalDriver(fullDriver);
+    if (statusCheckResult && statusCheckResult.id === driverId) {
+      setStatusCheckResult(updatedDriver);
+    }
+
+    if (all3) {
+      setSuccessModalDriver(updatedDriver);
       try {
         confetti({
           particleCount: 100,
@@ -6308,67 +6570,81 @@ export default function App() {
       } catch {}
     }
 
-    if (statusCheckResult && statusCheckResult.id === driverId) {
-      setStatusCheckResult(prev => {
-        if (!prev) return null;
-        const nextLic = gateType === 'brta' ? true : prev.licenseVerified;
-        const nextPhone = gateType === 'wa' ? true : prev.phoneVerified;
-        const nextNid = gateType === 'nid' ? true : prev.nidVerified;
-        const all3 = Boolean(nextLic && nextPhone && nextNid);
-        return {
-          ...prev,
-          licenseVerified: nextLic,
-          phoneVerified: nextPhone,
-          nidVerified: nextNid,
-          verificationStatus: all3 ? 'verified' : 'pending',
-          isOnline: all3 ? true : prev.isOnline
-        };
-      });
-    }
-
     const typeNames: Record<string, string> = {
       brta: 'বিআরটিএ ড্রাইভিং লাইসেন্স ও মোটরযান',
       wa: 'হোয়াটসঅ্যাপ ও ফোন নম্বর',
       nid: 'জাতীয় পরিচয়পত্র (NID)'
     };
     showAdminToastMessage(`${typeNames[gateType]} সফলভাবে যাচাই ও অনুমোদন হয়েছে!`);
+
+    try {
+      await setDoc(
+        doc(db, 'drivers', driverId),
+        buildDriverPublicPayload(updatedDriver, preservedOwnerUid),
+        { merge: true }
+      );
+    } catch (err: any) {
+      handleFirestoreError(err, 'update', `drivers/${driverId}`);
+      showAdminToastMessage(`⚠️ ডাটাবেজে অনুমোদন সেভ হয়নি (${err?.code || 'error'})`);
+    }
   };
 
-  const handleRevokeVerificationGate = (driverId: string, gateType: 'brta' | 'wa' | 'nid') => {
-    if (!isFirebaseAdmin) {
+  const handleRevokeVerificationGate = async (driverId: string, gateType: 'brta' | 'wa' | 'nid') => {
+    if (!isFirebaseAdmin || !firebaseUser?.uid) {
       showAdminToastMessage('অনুমোদন প্রত্যাহারের জন্য অনুমোদিত অ্যাডমিন Google সাইন-ইন আবশ্যক');
       return;
     }
-    setDrivers(prev => prev.map(d => {
-      if (d.id !== driverId) return d;
-      const nextLic = gateType === 'brta' ? false : d.licenseVerified;
-      const nextPhone = gateType === 'wa' ? false : d.phoneVerified;
-      const nextNid = gateType === 'nid' ? false : d.nidVerified;
-      return {
-        ...d,
-        licenseVerified: nextLic,
-        phoneVerified: nextPhone,
-        nidVerified: nextNid,
-        verificationStatus: 'pending'
-      };
-    }));
-
     const targetDrv = drivers.find(d => d.id === driverId);
-    if (targetDrv) {
-      const nextLic = gateType === 'brta' ? false : Boolean(targetDrv.licenseVerified);
-      const nextPhone = gateType === 'wa' ? false : Boolean(targetDrv.phoneVerified);
-      const nextNid = gateType === 'nid' ? false : Boolean(targetDrv.nidVerified);
-      updateDoc(doc(db, 'drivers', driverId), {
+    if (!targetDrv) {
+      showAdminToastMessage('চালকের রেকর্ড খুঁজে পাওয়া যায়নি');
+      return;
+    }
+
+    const nextLic = gateType === 'brta' ? false : Boolean(targetDrv.licenseVerified);
+    const nextPhone = gateType === 'wa' ? false : Boolean(targetDrv.phoneVerified);
+    const nextNid = gateType === 'nid' ? false : Boolean(targetDrv.nidVerified);
+    const preservedOwnerUid = targetDrv.ownerUid || firebaseUser.uid;
+    const updatedDriver: Driver = {
+      ...targetDrv,
+      ownerUid: preservedOwnerUid,
+      licenseVerified: nextLic,
+      phoneVerified: nextPhone,
+      nidVerified: nextNid,
+      verificationStatus: 'pending',
+      isOnline: false
+    };
+
+    setDrivers(prev => prev.map(d => (d.id === driverId ? updatedDriver : d)));
+
+    if (driverProfile.id === driverId) {
+      setDriverProfile(prev => ({
+        ...prev,
         licenseVerified: nextLic,
         phoneVerified: nextPhone,
         nidVerified: nextNid,
         isVerified: false,
         verificationStatus: 'pending',
-        updatedAt: serverTimestamp()
-      }).catch(err => console.warn('Firestore revoke gate error:', err));
+        isOnline: false
+      }));
+      setIsDriverOnline(false);
+    }
+
+    if (statusCheckResult && statusCheckResult.id === driverId) {
+      setStatusCheckResult(updatedDriver);
     }
 
     showAdminToastMessage('অনুমোদন প্রত্যাহার করে পেন্ডিং করা হয়েছে');
+
+    try {
+      await setDoc(
+        doc(db, 'drivers', driverId),
+        buildDriverPublicPayload(updatedDriver, preservedOwnerUid),
+        { merge: true }
+      );
+    } catch (err: any) {
+      handleFirestoreError(err, 'update', `drivers/${driverId}`);
+      showAdminToastMessage(`⚠️ ডাটাবেজে পেন্ডিং আপডেট সেভ হয়নি (${err?.code || 'error'})`);
+    }
   };
 
   // Quick fallback toggles
@@ -6387,89 +6663,172 @@ export default function App() {
     if (drv) handleOpenVerificationGate(drv, 'nid');
   };
 
-  // Execute full 3-tier approval with driver SMS notification and celebration
-  const handleExecuteFullApproval = (driverId: string) => {
-    if (!isFirebaseAdmin) {
+  // Execute full 3-tier approval with driver notification, celebration & full Firestore sync
+  const handleExecuteFullApproval = async (driverId: string) => {
+    if (!isFirebaseAdmin || !firebaseUser?.uid) {
       showAdminToastMessage('অনুমোদিত অ্যাডমিন Google সাইন-ইন আবশ্যক');
       return;
     }
-    let targetDrv: Driver | null = null;
-    setDrivers(prev => prev.map(d => {
-      if (d.id !== driverId) return d;
-      const updated: Driver = {
-        ...d,
+    const existingDrv = drivers.find(d => d.id === driverId);
+    if (!existingDrv) {
+      showAdminToastMessage('চালকের রেকর্ড খুঁজে পাওয়া যায়নি');
+      return;
+    }
+
+    const preservedOwnerUid = existingDrv.ownerUid || firebaseUser.uid;
+    const updatedDriver: Driver = {
+      ...existingDrv,
+      ownerUid: preservedOwnerUid,
+      licenseVerified: true,
+      phoneVerified: true,
+      nidVerified: true,
+      verificationStatus: 'verified',
+      isOnline: true
+    };
+
+    setDrivers(prev => prev.map(d => (d.id === driverId ? updatedDriver : d)));
+
+    if (driverProfile.id === driverId) {
+      setDriverProfile(prev => ({
+        ...prev,
         licenseVerified: true,
         phoneVerified: true,
         nidVerified: true,
-        verificationStatus: 'verified',
-        isOnline: true
-      };
-      targetDrv = updated;
-      return updated;
-    }));
-
-    if (targetDrv) {
-      setSuccessModalDriver(targetDrv);
-      showAdminToastMessage('৩-স্তরের পূর্ণ যাচাইকরণ সম্পন্ন ও চালকের ফোনে নোটিফিকেশন পাঠানো হয়েছে!');
-
-      updateDoc(doc(db, 'drivers', driverId), {
         isVerified: true,
         verificationStatus: 'verified',
-        licenseVerified: true,
-        nidVerified: true,
-        phoneVerified: true,
-        isOnline: true,
-        updatedAt: serverTimestamp()
-      }).catch(err => console.warn('Firestore update error:', err));
+        isOnline: true
+      }));
+      setIsDriverOnline(true);
+    }
+
+    if (statusCheckResult && statusCheckResult.id === driverId) {
+      setStatusCheckResult(updatedDriver);
+    }
+
+    setSuccessModalDriver(updatedDriver);
+    try {
+      confetti({
+        particleCount: 100,
+        spread: 80,
+        origin: { y: 0.6 }
+      });
+      sounds.playTripCompletedFanfare();
+    } catch {}
+    showAdminToastMessage('৩-স্তরের পূর্ণ যাচাইকরণ সম্পন্ন ও চালক অনুমোদিত হয়েছে!');
+
+    try {
+      await setDoc(
+        doc(db, 'drivers', driverId),
+        buildDriverPublicPayload(updatedDriver, preservedOwnerUid),
+        { merge: true }
+      );
+    } catch (err: any) {
+      handleFirestoreError(err, 'update', `drivers/${driverId}`);
+      showAdminToastMessage(`⚠️ ডাটাবেজে ৩/৩ অনুমোদন সেভ হয়নি (${err?.code || 'error'})`);
     }
   };
 
   // 3-Pillar Full Approval Handler
   const handleApproveAllDriver = (driverId: string) => {
-    handleExecuteFullApproval(driverId);
+    void handleExecuteFullApproval(driverId);
   };
 
   // Revoke All Verifications (Set Pending)
-  const handleRevokeDriver = (driverId: string) => {
-    if (!isFirebaseAdmin) {
+  const handleRevokeDriver = async (driverId: string) => {
+    if (!isFirebaseAdmin || !firebaseUser?.uid) {
       showAdminToastMessage('অনুমোদিত অ্যাডমিন Google সাইন-ইন আবশ্যক');
       return;
     }
-    setDrivers(prev => prev.map(d =>
-      d.id === driverId
-        ? { ...d, licenseVerified: false, phoneVerified: false, nidVerified: false, verificationStatus: 'pending' }
-        : d
-    ));
+    const existingDrv = drivers.find(d => d.id === driverId);
+    if (!existingDrv) {
+      showAdminToastMessage('চালকের রেকর্ড খুঁজে পাওয়া যায়নি');
+      return;
+    }
+
+    const preservedOwnerUid = existingDrv.ownerUid || firebaseUser.uid;
+    const updatedDriver: Driver = {
+      ...existingDrv,
+      ownerUid: preservedOwnerUid,
+      licenseVerified: false,
+      phoneVerified: false,
+      nidVerified: false,
+      verificationStatus: 'pending',
+      isOnline: false
+    };
+
+    setDrivers(prev => prev.map(d => (d.id === driverId ? updatedDriver : d)));
+
+    if (driverProfile.id === driverId) {
+      setDriverProfile(prev => ({
+        ...prev,
+        licenseVerified: false,
+        phoneVerified: false,
+        nidVerified: false,
+        isVerified: false,
+        verificationStatus: 'pending',
+        isOnline: false
+      }));
+      setIsDriverOnline(false);
+    }
+
+    if (statusCheckResult && statusCheckResult.id === driverId) {
+      setStatusCheckResult(updatedDriver);
+    }
+
     showAdminToastMessage('চালকের সকল অনুমোদন পেন্ডিং করা হয়েছে');
 
-    updateDoc(doc(db, 'drivers', driverId), {
-      isVerified: false,
-      verificationStatus: 'pending',
-      licenseVerified: false,
-      nidVerified: false,
-      phoneVerified: false,
-      updatedAt: serverTimestamp()
-    }).catch(err => console.warn('Firestore revoke error:', err));
+    try {
+      await setDoc(
+        doc(db, 'drivers', driverId),
+        buildDriverPublicPayload(updatedDriver, preservedOwnerUid),
+        { merge: true }
+      );
+    } catch (err: any) {
+      handleFirestoreError(err, 'update', `drivers/${driverId}`);
+      showAdminToastMessage(`⚠️ ডাটাবেজে পেন্ডিং স্ট্যাটাস সেভ হয়নি (${err?.code || 'error'})`);
+    }
   };
 
-  // Toggle Driver Online Status
-  const handleToggleDriverOnline = (driverId: string) => {
-    if (!isFirebaseAdmin) {
+  // Toggle Driver Online Status (Strictly requires 3/3 verification)
+  const handleToggleDriverOnline = async (driverId: string) => {
+    if (!isFirebaseAdmin || !firebaseUser?.uid) {
       showAdminToastMessage('অনুমোদিত অ্যাডমিন Google সাইন-ইন আবশ্যক');
       return;
     }
-    setDrivers(prev => prev.map(d => {
-      if (d.id === driverId) {
-        const nextOnline = !d.isOnline;
-        updateDoc(doc(db, 'drivers', driverId), {
-          isOnline: nextOnline,
-          updatedAt: serverTimestamp()
-        }).catch(err => console.warn('Firestore driver online toggle error:', err));
-        return { ...d, isOnline: nextOnline };
-      }
-      return d;
-    }));
-    showAdminToastMessage('চালকের সক্রিয়তা স্ট্যাটাস পরিবর্তন হয়েছে');
+    const existingDrv = drivers.find(d => d.id === driverId);
+    if (!existingDrv) return;
+
+    const isAll3 = Boolean(existingDrv.licenseVerified && existingDrv.phoneVerified && existingDrv.nidVerified);
+    if (!isAll3 && !existingDrv.isOnline) {
+      showAdminToastMessage('⚠️ ৩/৩ যাচাই সম্পন্ন না হলে চালককে অনলাইন করা যাবে না!');
+      return;
+    }
+
+    const nextOnline = !existingDrv.isOnline;
+    const preservedOwnerUid = existingDrv.ownerUid || firebaseUser.uid;
+    const updatedDriver: Driver = {
+      ...existingDrv,
+      ownerUid: preservedOwnerUid,
+      isOnline: nextOnline
+    };
+
+    setDrivers(prev => prev.map(d => (d.id === driverId ? updatedDriver : d)));
+    if (driverProfile.id === driverId) {
+      setDriverProfile(prev => ({ ...prev, isOnline: nextOnline }));
+      setIsDriverOnline(nextOnline);
+    }
+    showAdminToastMessage(nextOnline ? 'চালক অনলাইন করা হয়েছে' : 'চালক অফলাইন করা হয়েছে');
+
+    try {
+      await setDoc(
+        doc(db, 'drivers', driverId),
+        buildDriverPublicPayload(updatedDriver, preservedOwnerUid),
+        { merge: true }
+      );
+    } catch (err: any) {
+      handleFirestoreError(err, 'update', `drivers/${driverId}`);
+      showAdminToastMessage(`⚠️ অনলাইন স্ট্যাটাস সেভ হয়নি (${err?.code || 'error'})`);
+    }
   };
 
   // Delete Driver
@@ -7611,9 +7970,19 @@ export default function App() {
         {/* ============================================================== */}
         {/* DRIVER COCKPIT WORKSPACE (SHOWN WHEN USERROLE === 'DRIVER')     */}
         {/* ============================================================== */}
-        {userRole === 'driver' && (
+        {userRole === 'driver' && (() => {
+          const cockpitStage = getDriverCockpitStage(driverProfile);
+          const matchedRegistryDriver = driverProfile.id ? drivers.find(d => d.id === driverProfile.id) : null;
+          const liveFlags = {
+            licenseVerified: Boolean(matchedRegistryDriver?.licenseVerified ?? driverProfile.licenseVerified),
+            phoneVerified: Boolean(matchedRegistryDriver?.phoneVerified ?? driverProfile.phoneVerified),
+            nidVerified: Boolean(matchedRegistryDriver?.nidVerified ?? driverProfile.nidVerified),
+          };
+          const completedSteps = getCompletedVerificationCount(liveFlags);
+
+          return (
           <section className="max-w-7xl mx-auto w-full px-3 sm:px-4 lg:px-6 pt-3 pb-2 animate-in fade-in">
-            {!driverProfile.isRegistered || !driverProfile.phone ? (
+            {cockpitStage === 'unregistered' ? (
               /* UNREGISTERED DRIVER ONBOARDING & LOGIN PROMPT */
               <div className="bg-gradient-to-br from-amber-50 via-white to-amber-100/70 rounded-3xl border-2 border-amber-300 p-5 sm:p-8 shadow-lg max-w-2xl mx-auto my-4 text-center space-y-5 animate-in fade-in">
                 <div className="w-16 h-16 mx-auto rounded-3xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-md">
@@ -7658,15 +8027,24 @@ export default function App() {
                   <span className="text-xs font-bold text-slate-800 block">
                     ইতিমধ্যে নিবন্ধিত চালক? আপনার Google অ্যাকাউন্ট দিয়ে ড্যাশবোর্ড খুলুন:
                   </span>
-                  {firebaseUser?.uid && firebaseUser?.emailVerified ? (
-                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-900 font-semibold">
-                      Google সাইন-ইন সক্রিয়: <span className="font-mono font-bold">{firebaseUser.email}</span>
+                  {authReady && firebaseUser?.uid && firebaseUser?.emailVerified ? (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-900 font-semibold flex items-center justify-between gap-2 flex-wrap">
+                      <span className="truncate">
+                        Google সাইন-ইন সক্রিয়: <span className="font-mono font-bold">{firebaseUser.email}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleDriverLogout}
+                        className="px-2 py-0.5 rounded-lg bg-white border border-red-200 text-red-700 hover:bg-red-50 text-[10px] font-bold cursor-pointer shrink-0"
+                      >
+                        লগআউট
+                      </button>
                     </div>
                   ) : null}
                   <button
                     type="button"
                     disabled={isGoogleAuthLoading}
-                    onClick={() => handleDriverGoogleSignIn(false)}
+                    onClick={() => handleDriverGoogleSignIn(false, false, false)}
                     className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border-2 border-amber-400 text-slate-900 font-black rounded-xl text-xs sm:text-sm shadow-xs cursor-pointer transition active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60"
                   >
                     {isGoogleAuthLoading ? (
@@ -7677,20 +8055,175 @@ export default function App() {
                     ) : (
                       <>
                         <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                        <span>Google অ্যাকাউন্ট দিয়ে চালক লগইন</span>
+                        <span>
+                          {authReady && firebaseUser?.uid && firebaseUser?.emailVerified
+                            ? 'এই Google অ্যাকাউন্ট দিয়ে চালক লগইন'
+                            : 'Google অ্যাকাউন্ট দিয়ে চালক লগইন'}
+                        </span>
                       </>
                     )}
                   </button>
+                  {authReady && firebaseUser?.uid && firebaseUser?.emailVerified && (
+                    <button
+                      type="button"
+                      disabled={isGoogleAuthLoading}
+                      onClick={() => handleDriverGoogleSignIn(false, false, true)}
+                      className="w-full py-2 px-3 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold rounded-xl text-[11px] cursor-pointer transition disabled:opacity-60"
+                    >
+                      অন্য Google অ্যাকাউন্ট দিয়ে লগইন করুন
+                    </button>
+                  )}
                   {driverLoginError && (
-                    <p className="text-[11px] font-bold text-red-600 mt-1 flex items-center justify-center gap-1">
+                    <p className="text-[11px] font-bold text-red-600 mt-1 flex items-center justify-center gap-1 leading-relaxed">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                       <span>{driverLoginError}</span>
                     </p>
                   )}
                 </div>
               </div>
+            ) : cockpitStage === 'pending_verification' ? (
+              /* PENDING 3/3 VERIFICATION LOCK SCREEN (BLOCKS DASHBOARD UNTIL ALL 3 APPROVED BY ADMIN) */
+              <div className="bg-gradient-to-br from-amber-50 via-white to-orange-50 rounded-3xl border-2 border-amber-400 p-5 sm:p-7 shadow-lg max-w-2xl mx-auto my-4 space-y-5 animate-in fade-in">
+                <div className="flex flex-col sm:flex-row items-center sm:items-start justify-between gap-3 border-b border-amber-200 pb-4">
+                  <div className="flex items-center gap-3 text-center sm:text-left">
+                    <div className="w-14 h-14 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md shrink-0">
+                      <Clock className="w-7 h-7" />
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-center sm:justify-start gap-1.5 flex-wrap">
+                        <span className="bg-amber-200 text-amber-950 text-[10.5px] font-black px-2.5 py-0.5 rounded-full">
+                          ⏳ ভেরিফিকেশন পেন্ডিং ({toBengaliNumber(completedSteps)}/৩ সম্পন্ন)
+                        </span>
+                        {driverProfile.regAppId && (
+                          <span className="bg-slate-900 text-amber-300 font-mono text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            {driverProfile.regAppId}
+                          </span>
+                        )}
+                      </div>
+                      <h2 className="text-base sm:text-lg font-black text-slate-900 mt-1.5">
+                        {driverProfile.name} • {driverProfile.vehicleModel}
+                      </h2>
+                      <p className="text-xs text-slate-600">
+                        {driverProfile.plateNumber ? `প্লেট: ${driverProfile.plateNumber} | ` : ''}স্ট্যান্ড: {driverProfile.standName}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-amber-100/70 border border-amber-300 text-xs text-amber-950 space-y-1.5">
+                  <p className="font-black flex items-center gap-1.5">
+                    <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+                    <span>চালকের কন্ট্রোল ড্যাশবোর্ড বর্তমানে লক (পেন্ডিং) রয়েছে</span>
+                  </p>
+                  <p className="leading-relaxed text-amber-900">
+                    নিরাপত্তা নীতিমালা অনুযায়ী অ্যাডমিন প্যানেল থেকে আপনার ৩টি ধাপের সবকটি (১. BRTA লাইসেন্স, ২. হোয়াটসঅ্যাপ ও ফোন, ৩. জাতীয় পরিচয়পত্র NID) সফলভাবে যাচাই ও অনুমোদন সম্পন্ন হলেই কেবল চালকের কন্ট্রোল ড্যাশবোর্ড ও রাইড গ্রহণ সুবিধা চালু হবে।
+                  </p>
+                </div>
+
+                {/* Read-Only 3-Step Verification Progress Cards */}
+                <div className="space-y-2">
+                  <div className={`p-3 rounded-xl border flex items-center justify-between gap-2 ${
+                    liveFlags.licenseVerified ? 'bg-emerald-50 border-emerald-300 text-emerald-950' : 'bg-white border-amber-200 text-slate-800'
+                  }`}>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold">১. BRTA ড্রাইভিং লাইসেন্স ও মোটরযান</p>
+                      <p className="text-[10.5px] text-slate-500 font-mono truncate">{driverProfile.licenseNumber || 'যাচাইয়ের জন্য জমা দেওয়া হয়েছে'}</p>
+                    </div>
+                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-lg shrink-0 ${
+                      liveFlags.licenseVerified ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+                    }`}>
+                      {liveFlags.licenseVerified ? '✅ অনুমোদিত' : '⏳ পেন্ডিং'}
+                    </span>
+                  </div>
+
+                  <div className={`p-3 rounded-xl border flex items-center justify-between gap-2 ${
+                    liveFlags.phoneVerified ? 'bg-emerald-50 border-emerald-300 text-emerald-950' : 'bg-white border-amber-200 text-slate-800'
+                  }`}>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold">২. হোয়াটসঅ্যাপ ও সক্রিয় মোবাইল নম্বর</p>
+                      <p className="text-[10.5px] text-slate-500 font-mono truncate">{driverProfile.phone}</p>
+                    </div>
+                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-lg shrink-0 ${
+                      liveFlags.phoneVerified ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+                    }`}>
+                      {liveFlags.phoneVerified ? '✅ অনুমোদিত' : '⏳ পেন্ডিং'}
+                    </span>
+                  </div>
+
+                  <div className={`p-3 rounded-xl border flex items-center justify-between gap-2 ${
+                    liveFlags.nidVerified ? 'bg-emerald-50 border-emerald-300 text-emerald-950' : 'bg-white border-amber-200 text-slate-800'
+                  }`}>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold">৩. জাতীয় পরিচয়পত্র (NID) যাচাইকরণ</p>
+                      <p className="text-[10.5px] text-slate-500 truncate">অ্যাডমিন টিম নথিপত্র যাচাই করছেন</p>
+                    </div>
+                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-lg shrink-0 ${
+                      liveFlags.nidVerified ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+                    }`}>
+                      {liveFlags.nidVerified ? '✅ অনুমোদিত' : '⏳ পেন্ডিং'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-amber-200">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (firebaseUser?.uid) {
+                          const refreshed = await hydrateAuthenticatedDriverByUid(firebaseUser.uid);
+                          if (refreshed && isDriverDashboardUnlocked(refreshed)) {
+                            showAdminToastMessage('🎉 অভিনন্দন! ৩/৩ যাচাই সম্পন্ন — ড্যাশবোর্ড আনলক হয়েছে');
+                          } else {
+                            showAdminToastMessage('ভেরিফিকেশন এখনো পেন্ডিং রয়েছে (৩/৩ অ্যাডমিন অনুমোদনের অপেক্ষায়)');
+                          }
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer transition shadow-xs"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
+                      <span>লাইভ স্ট্যাটাস রিফ্রেশ</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (driverProfile.id) {
+                          setActiveSubmittedDriverId(driverProfile.id);
+                        }
+                        setRegisterModalTab('status_check');
+                        setIsRegisterModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-amber-50 border border-amber-300 text-amber-950 font-bold text-xs rounded-xl cursor-pointer transition"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-700" />
+                      <span>স্ট্যাটাস ট্র্যাকার</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setUserRole('passenger')}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold text-xs rounded-xl cursor-pointer transition"
+                    >
+                      <User className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>যাত্রী মোডে ফিরে যান</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleDriverLogout}
+                      className="inline-flex items-center gap-1 px-3 py-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold text-xs rounded-xl cursor-pointer transition"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>লগআউট</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             ) : (
-              /* REGISTERED DRIVER ACTIVE COCKPIT */
+              /* REGISTERED & 3/3 VERIFIED DRIVER ACTIVE COCKPIT */
               <>
                 {/* Driver Profile Bar */}
                 <div className="bg-gradient-to-r from-amber-500/15 via-emerald-500/10 to-blue-500/10 border border-amber-300 rounded-2xl p-3 sm:p-4 mb-3 shadow-xs">
@@ -7743,7 +8276,7 @@ export default function App() {
                           </span>
                           <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] px-2 py-0.5 rounded flex items-center gap-1">
                             <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                            BRTA লাইসেন্স ভেরিফাইড
+                            ৩/৩ ভেরিফাইড (BRTA • WA • NID)
                           </span>
                         </div>
                         <h2 className="text-sm sm:text-base font-extrabold text-slate-900 mt-1">
@@ -8324,7 +8857,8 @@ export default function App() {
               </>
             )}
           </section>
-        )}
+          );
+        })()}
 
         {/* ============================================================== */}
         {/* PASSENGER ONLY: CATEGORY MENU, LIVE MAP & ACTIVE DRIVERS LIST */}
@@ -9134,7 +9668,7 @@ export default function App() {
               </div>
               <button 
                 type="button"
-                onClick={() => setIsRegisterModalOpen(false)}
+                onClick={closeRegistrationModal}
                 className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
                 aria-label="বন্ধ করুন"
               >
@@ -9199,15 +9733,31 @@ export default function App() {
                   </div>
 
                   {/* Compulsory Google Sign-In Status Banner */}
-                  {firebaseUser?.uid && firebaseUser?.emailVerified ? (
-                    <div className="p-2.5 bg-emerald-50 text-emerald-900 border border-emerald-300 rounded-xl text-xs flex items-center justify-between gap-2">
+                  {authReady && firebaseUser?.uid && firebaseUser?.emailVerified ? (
+                    <div className="p-2.5 bg-emerald-50 text-emerald-900 border border-emerald-300 rounded-xl text-xs flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2 min-w-0">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                         <span className="truncate font-semibold">
                           Google যাচাইকৃত: <b className="font-mono">{firebaseUser.email}</b>
                         </span>
                       </div>
-                      <span className="bg-emerald-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full shrink-0">সংযুক্ত</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          disabled={isGoogleAuthLoading}
+                          onClick={() => handleDriverGoogleSignIn(false, true, true)}
+                          className="bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded-full cursor-pointer transition"
+                        >
+                          অ্যাকাউন্ট পরিবর্তন
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDriverLogout}
+                          className="bg-white hover:bg-red-50 text-red-600 border border-red-200 text-[10px] font-bold px-2 py-0.5 rounded-full cursor-pointer transition"
+                        >
+                          লগআউট
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="p-3 bg-amber-50 text-amber-950 border border-amber-300 rounded-xl text-xs space-y-2">
@@ -9221,7 +9771,7 @@ export default function App() {
                       <button
                         type="button"
                         disabled={isGoogleAuthLoading}
-                        onClick={() => handleDriverGoogleSignIn(false, true)}
+                        onClick={() => handleDriverGoogleSignIn(false, true, true)}
                         className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-amber-300 font-black rounded-lg text-xs cursor-pointer transition flex items-center justify-center gap-1.5 disabled:opacity-60"
                       >
                         <ShieldCheck className="w-3.5 h-3.5" />
@@ -9736,17 +10286,18 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setIsRegisterModalOpen(false)}
+                        onClick={closeRegistrationModal}
                         className="px-3 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-100 cursor-pointer"
                       >
                         বাতিল
                       </button>
                       <button
                         type="submit"
-                        className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-md cursor-pointer flex items-center gap-1.5"
+                        disabled={isSubmittingDriverReg}
+                        className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-bold shadow-md cursor-pointer flex items-center gap-1.5"
                       >
                         <CheckCircle className="w-3.5 h-3.5" />
-                        <span>আবেদন জমা দিন (যাচাইকরণে পাঠান)</span>
+                        <span>{isSubmittingDriverReg ? 'ডাটাবেসে পাঠানো হচ্ছে...' : 'আবেদন জমা দিন (যাচাইকরণে পাঠান)'}</span>
                       </button>
                     </div>
                   </div>
@@ -9885,7 +10436,7 @@ export default function App() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setIsRegisterModalOpen(false)}
+                                  onClick={closeRegistrationModal}
                                   className="w-full sm:w-auto px-4 py-2.5 bg-white border border-slate-300 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-100 cursor-pointer"
                                 >
                                   বন্ধ করুন
@@ -9904,12 +10455,12 @@ export default function App() {
                                     ⏳ আবেদন গৃহীত হয়েছে — ভেরিফিকেশন প্রক্রিয়াধীন রয়েছে
                                   </h4>
                                   <p className="text-xs text-amber-900 mt-0.5 leading-relaxed">
-                                    আপনার প্রদত্ত তথ্যসমূহ সফলভাবে কেন্দ্রীয় অ্যাডমিন প্যানেলে পাঠানো হয়েছে। নিরাপত্তা বিধি অনুসারে ৩টি ধাপের প্রতিটি আলাদাভাবে যাচাই শেষ না হওয়া পর্যন্ত অ্যাকাউন্ট পেন্ডিং থাকবে।
+                                    আপনার প্রদত্ত তথ্যসমূহ সফলভাবে কেন্দ্রীয় অ্যাডমিন প্যানেলে পাঠানো হয়েছে। নিরাপত্তা বিধি অনুসারে ৩টি ধাপের প্রতিটি অ্যাডমিন কর্তৃক আলাদাভাবে যাচাই শেষ না হওয়া পর্যন্ত অ্যাকাউন্ট পেন্ডিং থাকবে এবং ড্যাশবোর্ড বন্ধ থাকবে।
                                   </p>
                                 </div>
                               </div>
 
-                              {/* 3 Mandatory Progress Steps Tracker */}
+                              {/* 3 Mandatory Progress Steps Tracker (Read-Only for Drivers, Gateway only for Admin) */}
                               <div className="space-y-2 pt-1">
                                 <p className="text-xs font-bold text-slate-700">
                                   ৩টি আবশ্যিক নিরাপত্তা ধাপের লাইভ অবস্থা ({[targetDriver.licenseVerified, targetDriver.phoneVerified, targetDriver.nidVerified].filter(Boolean).length}/৩ সম্পন্ন):
@@ -9930,16 +10481,23 @@ export default function App() {
                                       <p className="text-[10px] text-slate-500 font-mono truncate">{targetDriver.licenseNumber || 'BRTA সুরক্ষিত ভল্ট'}</p>
                                     </div>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenVerificationGate(targetDriver, 'brta')}
-                                    className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border transition cursor-pointer flex items-center gap-1 ${
-                                      targetDriver.licenseVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200' : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200 animate-pulse'
-                                    }`}
-                                    title="ক্লিক করে BRTA লাইসেন্স ভেরিফিকেশন গেটওয়ে দেখুন"
-                                  >
-                                    {targetDriver.licenseVerified ? '✅ অনুমোদিত (গেটওয়ে)' : '⚡ সরকারি পোর্টালে যাচাই'}
-                                  </button>
+                                  {isFirebaseAdmin ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenVerificationGate(targetDriver, 'brta')}
+                                      className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border transition cursor-pointer flex items-center gap-1 ${
+                                        targetDriver.licenseVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200' : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                                      }`}
+                                    >
+                                      {targetDriver.licenseVerified ? '✅ অনুমোদিত (অ্যাডমিন)' : '⚡ অ্যাডমিন যাচাই'}
+                                    </button>
+                                  ) : (
+                                    <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border ${
+                                      targetDriver.licenseVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-900 border-amber-300'
+                                    }`}>
+                                      {targetDriver.licenseVerified ? '✅ অনুমোদিত' : '⏳ অ্যাডমিন যাচাই পেন্ডিং'}
+                                    </span>
+                                  )}
                                 </div>
 
                                 {/* Step 2: WhatsApp & Phone */}
@@ -9957,16 +10515,23 @@ export default function App() {
                                       <p className="text-[10px] text-slate-500 font-mono truncate">{targetDriver.phone || 'নম্বর সুরক্ষিত ভল্টে সংরক্ষিত'}</p>
                                     </div>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenVerificationGate(targetDriver, 'wa')}
-                                    className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border transition cursor-pointer flex items-center gap-1 ${
-                                      targetDriver.phoneVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200' : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200 animate-pulse'
-                                    }`}
-                                    title="ক্লিক করে WhatsApp ও OTP ভেরিফিকেশন গেটওয়ে দেখুন"
-                                  >
-                                    {targetDriver.phoneVerified ? '✅ অনুমোদিত (গেটওয়ে)' : '⚡ কল ও ওটিপি পাঠান'}
-                                  </button>
+                                  {isFirebaseAdmin ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenVerificationGate(targetDriver, 'wa')}
+                                      className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border transition cursor-pointer flex items-center gap-1 ${
+                                        targetDriver.phoneVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200' : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                                      }`}
+                                    >
+                                      {targetDriver.phoneVerified ? '✅ অনুমোদিত (অ্যাডমিন)' : '⚡ অ্যাডমিন যাচাই'}
+                                    </button>
+                                  ) : (
+                                    <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border ${
+                                      targetDriver.phoneVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-900 border-amber-300'
+                                    }`}>
+                                      {targetDriver.phoneVerified ? '✅ অনুমোদিত' : '⏳ অ্যাডমিন যাচাই পেন্ডিং'}
+                                    </span>
+                                  )}
                                 </div>
 
                                 {/* Step 3: NID */}
@@ -9984,16 +10549,23 @@ export default function App() {
                                       <p className="text-[10px] text-slate-500 font-mono truncate">{targetDriver.nidNumber || 'NID সুরক্ষিত ভল্টে সংরক্ষিত'}</p>
                                     </div>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenVerificationGate(targetDriver, 'nid')}
-                                    className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border transition cursor-pointer flex items-center gap-1 ${
-                                      targetDriver.nidVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200' : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200 animate-pulse'
-                                    }`}
-                                    title="ক্লিক করে নির্বাচন কমিশন NID ভেরিফিকেশন গেটওয়ে দেখুন"
-                                  >
-                                    {targetDriver.nidVerified ? '✅ অনুমোদিত (গেটওয়ে)' : '⚡ NID ডাটাবেস যাচাই'}
-                                  </button>
+                                  {isFirebaseAdmin ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenVerificationGate(targetDriver, 'nid')}
+                                      className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border transition cursor-pointer flex items-center gap-1 ${
+                                        targetDriver.nidVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200' : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                                      }`}
+                                    >
+                                      {targetDriver.nidVerified ? '✅ অনুমোদিত (অ্যাডমিন)' : '⚡ অ্যাডমিন যাচাই'}
+                                    </button>
+                                  ) : (
+                                    <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md shrink-0 border ${
+                                      targetDriver.nidVerified ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-900 border-amber-300'
+                                    }`}>
+                                      {targetDriver.nidVerified ? '✅ অনুমোদিত' : '⏳ অ্যাডমিন যাচাই পেন্ডিং'}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
@@ -10003,7 +10575,7 @@ export default function App() {
                                   <span>পরবর্তী করণীয়:</span>
                                 </p>
                                 <p className="leading-relaxed pl-4.5">
-                                  অ্যাডমিন টিম সাধারণত ৩০ মিনিটের মধ্যে আবেদন যাচাই সম্পন্ন করেন। যাচাই শেষ হওয়া মাত্র এই পেজে স্বয়ংক্রিয়ভাবে 'ভেরিফিকেশন সফল মেসেজ' দৃশ্যমান হবে।
+                                  অ্যাডমিন টিম ৩টি ধাপের সবকটি যাচাই ও অনুমোদন সম্পন্ন করলে এই পেজে স্বয়ংক্রিয়ভাবে 'ভেরিফিকেশন সফল মেসেজ' দৃশ্যমান হবে এবং চালকের কন্ট্রোল ড্যাশবোর্ড আনলক হবে।
                                 </p>
                               </div>
 
@@ -10017,7 +10589,7 @@ export default function App() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setIsRegisterModalOpen(false)}
+                                  onClick={closeRegistrationModal}
                                   className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
                                 >
                                   ঠিক আছে (বন্ধ করুন)
@@ -10292,14 +10864,14 @@ export default function App() {
                           <span>নিরাপদ OAuth ভেরিফিকেশন:</span>
                         </p>
                         <p className="text-[11px] text-emerald-800 leading-relaxed">
-                          ক্রেডেনশিয়াল চুরি রোধে পুরোনো পিন পদ্ধতি বাতিল করে সরাসরি Google Sign-In চালু করা হয়েছে। লগইনের পর আপনি আপনার মোবাইল নম্বর ও নিয়মিত ঠিকানা প্রোফাইলে সংযুক্ত করতে পারবেন।
+                          ক্রেডেনশিয়াল চুরি রোধে সরাসরি Google Sign-In চালু করা হয়েছে। লগইনের পর আপনি আপনার মোবাইল নম্বর ও নিয়মিত ঠিকানা প্রোফাইলে সংযুক্ত করতে পারবেন।
                         </p>
                       </div>
 
                       <button
                         type="button"
                         disabled={isPassengerAuthLoading}
-                        onClick={handlePassengerGoogleSignIn}
+                        onClick={() => handlePassengerGoogleSignIn(true)}
                         className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60"
                       >
                         {isPassengerAuthLoading ? (
@@ -10507,7 +11079,7 @@ export default function App() {
                       <span>স্বয়ংক্রিয় তথ্য সংরক্ষণ ও ভূমিকা:</span>
                     </div>
                     <p className="text-[11px] text-blue-800 leading-relaxed">
-                      এখানে যাত্রী তথ্য সংরক্ষণ করলে আপনার প্রতিটি রাইড হিস্টোরি ও বুকিং স্বয়ংক্রিয়ভাবে ব্রাউজারে সংরক্ষিত থাকবে। চালক হিসেবে গাড়ি চালাতে চাইলে হেডার থেকে <b>'চালক মোড'</b> নির্বাচন করুন বা <b>'চালক নিবন্ধন'</b> বাটনে ক্লিক করে বিআরটিএ লাইসেন্স দিয়ে যুক্ত হোন।
+                      এখানে আপনার প্রতিটি রাইড হিস্টোরি ও বুকিং স্বয়ংক্রিয়ভাবে সংরক্ষিত থাকবে। চালক হিসেবে গাড়ি চালাতে চাইলে হেডার থেকে <b>'চালক মোড'</b> নির্বাচন করুন বা <b>'চালক নিবন্ধন'</b> বাটনে ক্লিক করে বিআরটিএ লাইসেন্স দিয়ে যুক্ত হোন।
                     </p>
                   </div>
                 </div>
@@ -10854,30 +11426,20 @@ export default function App() {
         onOpenVerificationGate={handleOpenVerificationGate}
         onApproveAllDriver={handleApproveAllDriver}
         onRevokeDriver={handleRevokeDriver}
-        onToggleDriverOnline={(driverId) => {
-          if (!isFirebaseAdmin) {
-            showAdminToastMessage('শুধুমাত্র অনুমোদিত অ্যাডমিন চালকের স্ট্যাটাস পরিবর্তন করতে পারবেন।');
-            return;
-          }
-          setDrivers(prev => prev.map(d => {
-            if (d.id === driverId) {
-              const nextOnline = !d.isOnline;
-              updateDoc(doc(db, 'drivers', driverId), {
-                isOnline: nextOnline,
-                updatedAt: serverTimestamp()
-              }).catch(err => console.warn('Firestore driver online toggle error:', err));
-              return { ...d, isOnline: nextOnline };
-            }
-            return d;
-          }));
-          showAdminToastMessage('চালকের সক্রিয়তা স্ট্যাটাস পরিবর্তন হয়েছে');
-        }}
+        onRefreshDrivers={handleRefreshDriversFromServer}
+        onToggleDriverOnline={handleToggleDriverOnline}
         onSaveDriver={(driverData, isEdit) => {
           if (!isFirebaseAdmin || !firebaseUser?.uid) {
             showAdminToastMessage('শুধুমাত্র অনুমোদিত অ্যাডমিন চালকের তথ্য সংরক্ষণ করতে পারবেন।');
             return;
           }
-          const cleanDriver = stripUndefinedFields(driverData);
+          const rawClean = stripUndefinedFields(driverData);
+          const all3 = Boolean(rawClean.licenseVerified && rawClean.phoneVerified && rawClean.nidVerified);
+          const cleanDriver: Driver = {
+            ...rawClean,
+            verificationStatus: all3 ? 'verified' : 'pending',
+            isOnline: all3 ? Boolean(rawClean.isOnline) : false,
+          };
           const ownerUid = (cleanDriver as any).ownerUid || firebaseUser.uid;
           setDrivers(prev => {
             const next = isEdit
@@ -10901,7 +11463,10 @@ export default function App() {
                 { merge: true }
               )
             )
-            .catch(err => console.warn('Firestore driver save error:', err));
+            .catch((err: any) => {
+              handleFirestoreError(err, isEdit ? 'update' : 'create', `drivers/${cleanDriver.id}`);
+              showAdminToastMessage(`⚠️ ডাটাবেজে চালকের তথ্য সেভ হয়নি (${err?.code || 'error'})`);
+            });
           showAdminToastMessage(
             isEdit
               ? `চালক '${cleanDriver.name}' আপডেট ও ম্যাপে সিঙ্ক হয়েছে!`
@@ -12140,8 +12705,8 @@ export default function App() {
         </div>
       )}
 
-      {/* 10. DEDICATED VERIFICATION GATEWAY MODAL (BRTA, WhatsApp/Phone, NID) */}
-      {verificationGateType && verifyingDriverTarget && (
+      {/* 10. DEDICATED VERIFICATION GATEWAY MODAL (STRICTLY ADMIN-ONLY: BRTA, WhatsApp/Phone, NID) */}
+      {isFirebaseAdmin && verificationGateType && verifyingDriverTarget && (
         <VerificationGatewayModal
           type={verificationGateType}
           driver={verifyingDriverTarget}
@@ -12152,8 +12717,16 @@ export default function App() {
           onApprove={handleApproveVerificationGate}
           onRevoke={handleRevokeVerificationGate}
           onAllApproved={(drv) => {
-            const fullDrv = drivers.find(d => d.id === drv.id) || (drv as Driver);
-            setSuccessModalDriver(fullDrv);
+            const fullDrv = drivers.find(d => d.id === drv.id);
+            setSuccessModalDriver({
+              ...(fullDrv || {}),
+              ...(drv as Driver),
+              licenseVerified: true,
+              phoneVerified: true,
+              nidVerified: true,
+              verificationStatus: 'verified',
+              isOnline: true,
+            } as Driver);
           }}
         />
       )}

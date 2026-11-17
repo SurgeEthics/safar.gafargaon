@@ -93,6 +93,7 @@ export interface AdminControlPanelProps {
   onOpenVerificationGate?: (driver: Driver, gateType: 'brta' | 'wa' | 'nid') => void;
   onApproveAllDriver?: (driverId: string) => void;
   onRevokeDriver?: (driverId: string) => void;
+  onRefreshDrivers?: () => Promise<void> | void;
   onToggleDriverOnline: (driverId: string) => void;
   onSaveDriver?: (driver: Driver, isEdit: boolean) => void;
   onDeleteDriver: (driverId: string, name: string) => void;
@@ -135,6 +136,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   onOpenVerificationGate,
   onApproveAllDriver,
   onRevokeDriver,
+  onRefreshDrivers,
   onToggleDriverOnline,
   onSaveDriver,
   onDeleteDriver,
@@ -249,6 +251,8 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
 
   // Local Appearance Settings Draft
   const [settingsDraft, setSettingsDraft] = useState<AppCustomSettings>(customSettings);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const wasPanelOpenRef = React.useRef(false);
 
   // Hotlines Draft
   const [hotlinesDraft, setHotlinesDraft] = useState(hotlines);
@@ -324,9 +328,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     allVerified: true
   });
 
-  // Keep all drafts synchronized with live Firestore-backed props whenever updated or panel opens
+  // Sync draft when panel opens (do not wipe unsaved edits if background snapshot ticks while typing)
   useEffect(() => {
-    setSettingsDraft(customSettings);
+    if (isOpen && !wasPanelOpenRef.current) {
+      setSettingsDraft(customSettings);
+    }
+    wasPanelOpenRef.current = isOpen;
   }, [customSettings, isOpen]);
 
   useEffect(() => {
@@ -474,9 +481,16 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   // Backup JSON String
   const [backupJsonInput, setBackupJsonInput] = useState('');
 
-  // Driver search filter
+  // Driver search & verification status filters
   const [driverFilterQuery, setDriverFilterQuery] = useState('');
   const [driverCatFilter, setDriverCatFilter] = useState('all');
+  const [driverStatusFilter, setDriverStatusFilter] = useState<'all' | 'pending' | 'verified'>('all');
+  const [isRefreshingDrivers, setIsRefreshingDrivers] = useState(false);
+
+  const pendingDriversCount = useMemo(
+    () => drivers.filter((d) => !(d.licenseVerified && d.phoneVerified && d.nidVerified)).length,
+    [drivers]
+  );
 
   // Handle Save Stand
   const handleSubmitStand = (e: React.FormEvent) => {
@@ -523,25 +537,30 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   };
 
   // Apply Appearance Draft (with SSRF validation for customAppUrl)
-  const handleSaveAppearance = async () => {
-    const rawCustomUrl = (settingsDraft.customAppUrl || '').trim();
-    if (rawCustomUrl) {
-      const check = validateSafeExternalUrl(rawCustomUrl);
-      if (!check.ok || !check.normalizedUrl) {
-        showToast(`⚠️ ওয়েবসাইট URL অবৈধ: ${check.error || 'কেবল নিরাপদ HTTPS ডোমেইন অনুমোদিত'}`);
-        return;
+  const handleSaveAppearance = async (overrideDraft?: AppCustomSettings) => {
+    if (isSavingSettings) return;
+    const draftToSave = overrideDraft ?? settingsDraft;
+    const rawCustomUrl = (draftToSave.customAppUrl || '').trim();
+    setIsSavingSettings(true);
+    try {
+      let normalizedSettings: AppCustomSettings;
+      if (rawCustomUrl) {
+        const check = validateSafeExternalUrl(rawCustomUrl);
+        if (!check.ok || !check.normalizedUrl) {
+          showToast(`⚠️ ওয়েবসাইট URL অবৈধ: ${check.error || 'কেবল নিরাপদ HTTPS ডোমেইন অনুমোদিত'}`);
+          return;
+        }
+        normalizedSettings = { ...draftToSave, customAppUrl: check.normalizedUrl };
+      } else {
+        normalizedSettings = { ...draftToSave, customAppUrl: '' };
       }
-      const normalizedSettings = { ...settingsDraft, customAppUrl: check.normalizedUrl };
       setSettingsDraft(normalizedSettings);
       const savedOk = await onSaveCustomSettings(normalizedSettings);
       if (savedOk === false) return;
-    } else {
-      const normalizedSettings = { ...settingsDraft, customAppUrl: '' };
-      setSettingsDraft(normalizedSettings);
-      const savedOk = await onSaveCustomSettings(normalizedSettings);
-      if (savedOk === false) return;
+      showToast('🎉 অ্যাপের ডিজাইন, জরুরি ঘোষণা ও লেআউট স্থায়ীভাবে আপডেট হয়েছে!');
+    } finally {
+      setIsSavingSettings(false);
     }
-    showToast('🎉 অ্যাপের ডিজাইন, জরুরি ঘোষণা ও লেআউট স্থায়ীভাবে আপডেট হয়েছে!');
   };
 
   // Save Hotlines
@@ -685,7 +704,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       rating: editingDriver?.rating ?? 5.0,
       totalTrips: editingDriver?.totalTrips ?? 0,
       avatarBg: editingDriver?.avatarBg || 'bg-emerald-700',
-      isOnline: driverForm.isOnline,
+      isOnline: isVerified ? driverForm.isOnline : false,
       approxSpeedKmh: editingDriver?.approxSpeedKmh ?? 28
     };
 
@@ -994,37 +1013,43 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     { id: 'crimson', name: 'রক্তিম লাল', hex: '#dc2626', bgClass: 'bg-red-600' }
   ];
 
-  // 100% Stable Driver Sorting: Newest registered drivers first, ZERO jumping/lafalafi
+  // 100% Stable Driver Sorting: Pending drivers ALWAYS appear FIRST (newest first), then verified drivers
   const filteredDrivers = useMemo(() => {
+    const q = driverFilterQuery.trim().toLowerCase();
     return drivers.filter(d => {
+      const isAll3 = Boolean(d.licenseVerified && d.phoneVerified && d.nidVerified);
+      const matchesStatus =
+        driverStatusFilter === 'all' ||
+        (driverStatusFilter === 'pending' && !isAll3) ||
+        (driverStatusFilter === 'verified' && isAll3);
       const matchesCat = driverCatFilter === 'all' || d.category === driverCatFilter;
-      const matchesQuery = !driverFilterQuery.trim() ||
-        d.name.toLowerCase().includes(driverFilterQuery.toLowerCase()) ||
-        d.phone.includes(driverFilterQuery) ||
-        d.plateNumber.toLowerCase().includes(driverFilterQuery.toLowerCase());
-      return matchesCat && matchesQuery;
+      const matchesQuery = !q ||
+        (d.name || '').toLowerCase().includes(q) ||
+        (d.phone || '').includes(driverFilterQuery.trim()) ||
+        (d.plateNumber || '').toLowerCase().includes(q) ||
+        (d.licenseNumber || '').toLowerCase().includes(q) ||
+        (d.regAppId || '').toLowerCase().includes(q);
+      return matchesStatus && matchesCat && matchesQuery;
     }).sort((a, b) => {
+      const aVerified = Boolean(a.licenseVerified && a.phoneVerified && a.nidVerified);
+      const bVerified = Boolean(b.licenseVerified && b.phoneVerified && b.nidVerified);
+      if (aVerified !== bVerified) {
+        return aVerified ? 1 : -1;
+      }
+
       const getStableDriverTime = (d: Driver): number => {
-        // 1. Direct permanent registeredTimestamp
         if (typeof (d as any).registeredTimestamp === 'number' && (d as any).registeredTimestamp > 0) {
           return (d as any).registeredTimestamp;
         }
-        // 2. Milliseconds extracted from ID (e.g. drv-1740000000000)
         const numMatch = d.id.match(/\d{10,}/);
         if (numMatch) {
           const num = parseInt(numMatch[0], 10);
           if (!isNaN(num) && num > 1600000000000) return num;
         }
-        // 3. Permanent createdAt (DO NOT use updatedAt because GPS ticks alter updatedAt every second)
         if ((d as any).createdAt) {
           const t = new Date((d as any).createdAt).getTime();
           if (!isNaN(t) && t > 0) return t;
         }
-        // 4. Pending review drivers go above demo drivers
-        if (d.verificationStatus === 'pending' || (!d.licenseVerified && !d.nidVerified)) {
-          return 1700000000000;
-        }
-        // 5. Static initial drivers
         const anyDigits = d.id.replace(/\D/g, '');
         return parseInt(anyDigits, 10) || 0;
       };
@@ -1034,10 +1059,9 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       if (timeB !== timeA) {
         return timeB - timeA;
       }
-      // Absolute deterministic tie-breaker ensures ZERO swapping
       return a.id.localeCompare(b.id);
     });
-  }, [drivers, driverCatFilter, driverFilterQuery]);
+  }, [drivers, driverCatFilter, driverFilterQuery, driverStatusFilter]);
 
   if (!isOpen) return null;
 
@@ -1201,6 +1225,11 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
           >
             <Users className="w-3.5 h-3.5" />
             <span>👨‍✈️ চালক ভেরিফিকেশন ({drivers.length})</span>
+            {pendingDriversCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950">
+                পেন্ডিং {pendingDriversCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -1251,11 +1280,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
 
                 <button
                   type="button"
-                  onClick={handleSaveAppearance}
-                  className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-4 py-2 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition active:scale-95"
+                  disabled={isSavingSettings}
+                  onClick={() => handleSaveAppearance()}
+                  className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-extrabold px-4 py-2 rounded-xl text-xs sm:text-sm shadow-md cursor-pointer transition active:scale-95"
                 >
                   <Save className="w-4 h-4" />
-                  <span>সংরক্ষণ ও পরিবর্তন প্রয়োগ করুন</span>
+                  <span>{isSavingSettings ? 'সেভ হচ্ছে...' : 'সংরক্ষণ ও পরিবর্তন প্রয়োগ করুন'}</span>
                 </button>
               </div>
 
@@ -1477,7 +1507,10 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   rows={3}
                   maxLength={1000}
                   value={settingsDraft.announcementNotice || ''}
-                  onChange={(e) => setSettingsDraft({ ...settingsDraft, announcementNotice: e.target.value })}
+                  onChange={(e) => {
+                    const nextNotice = e.target.value;
+                    setSettingsDraft((prev) => ({ ...prev, announcementNotice: nextNotice }));
+                  }}
                   placeholder="গফরগাঁও পৌরসভা ও পাগলা থানা এলাকার নির্ভরযোগ্য নিরাপদ যাত্রা সেবা..."
                   className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs leading-relaxed"
                 />
@@ -1489,20 +1522,23 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      disabled={isSavingSettings}
                       onClick={() => {
-                        setSettingsDraft((prev) => ({ ...prev, announcementNotice: '' }));
+                        const cleared = { ...settingsDraft, announcementNotice: '' };
+                        setSettingsDraft(cleared);
                       }}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 cursor-pointer transition"
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 disabled:opacity-60 cursor-pointer transition"
                     >
                       খালি করুন
                     </button>
                     <button
                       type="button"
-                      onClick={handleSaveAppearance}
-                      className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-3.5 py-1.5 rounded-lg text-xs shadow-xs cursor-pointer transition active:scale-95"
+                      disabled={isSavingSettings}
+                      onClick={() => handleSaveAppearance(settingsDraft)}
+                      className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-black px-3.5 py-1.5 rounded-lg text-xs shadow-xs cursor-pointer transition active:scale-95"
                     >
                       <Save className="w-3.5 h-3.5" />
-                      <span>নোটিশ সেভ করুন</span>
+                      <span>{isSavingSettings ? 'সেভ হচ্ছে...' : 'নোটিশ সেভ করুন'}</span>
                     </button>
                   </div>
                 </div>
@@ -1524,11 +1560,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
               <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={handleSaveAppearance}
-                  className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-6 py-2.5 rounded-xl text-sm shadow-md cursor-pointer transition active:scale-95"
+                  disabled={isSavingSettings}
+                  onClick={() => handleSaveAppearance(settingsDraft)}
+                  className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-extrabold px-6 py-2.5 rounded-xl text-sm shadow-md cursor-pointer transition active:scale-95"
                 >
                   <Save className="w-4 h-4" />
-                  <span>সংরক্ষণ ও পরিবর্তন প্রয়োগ করুন</span>
+                  <span>{isSavingSettings ? 'সংরক্ষণ হচ্ছে...' : 'সংরক্ষণ ও পরিবর্তন প্রয়োগ করুন'}</span>
                 </button>
               </div>
             </div>
@@ -2484,9 +2521,18 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                     type="text"
                     value={driverFilterQuery}
                     onChange={(e) => setDriverFilterQuery(e.target.value)}
-                    placeholder="নাম, ফোন বা নম্বরপ্লেট..."
+                    placeholder="নাম, ফোন, রেফ. আইডি বা প্লেট..."
                     className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
+                  <select
+                    value={driverStatusFilter}
+                    onChange={(e) => setDriverStatusFilter(e.target.value as 'all' | 'pending' | 'verified')}
+                    className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800"
+                  >
+                    <option value="all">সকল অবস্থা ({drivers.length})</option>
+                    <option value="pending">⏳ পেন্ডিং ({pendingDriversCount})</option>
+                    <option value="verified">🛡️ ৩/৩ ভেরিফাইড ({drivers.length - pendingDriversCount})</option>
+                  </select>
                   <select
                     value={driverCatFilter}
                     onChange={(e) => setDriverCatFilter(e.target.value)}
@@ -2497,6 +2543,25 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                       <option key={c.id} value={c.id}>{c.nameBengali}</option>
                     ))}
                   </select>
+                  {onRefreshDrivers && (
+                    <button
+                      type="button"
+                      disabled={isRefreshingDrivers}
+                      onClick={async () => {
+                        setIsRefreshingDrivers(true);
+                        try {
+                          await onRefreshDrivers();
+                        } finally {
+                          setIsRefreshingDrivers(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer transition shrink-0 disabled:opacity-60"
+                      title="সার্ভার থেকে নতুন চালক আবেদন ও তথ্য রিফ্রেশ করুন"
+                    >
+                      <RotateCcw className={`w-3.5 h-3.5 ${isRefreshingDrivers ? 'animate-spin' : ''}`} />
+                      <span>{isRefreshingDrivers ? 'সিঙ্ক হচ্ছে...' : 'লাইভ রিফ্রেশ'}</span>
+                    </button>
+                  )}
                   {onSaveDriver && (
                     <button
                       type="button"

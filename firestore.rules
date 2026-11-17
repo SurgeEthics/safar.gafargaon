@@ -512,7 +512,7 @@ service cloud.firestore {
       allow update: if isValidId(userId)
         && (isOwner(userId) || isAdmin())
         && isValidUserProfile(incoming())
-        && incoming().uid == existing().uid
+        && (!('uid' in existing()) || incoming().uid == existing().uid)
         && incoming().updatedAt == request.time
         && (
           isAdmin() ||
@@ -581,7 +581,7 @@ service cloud.firestore {
             incoming().get('licenseVerified', false) == false &&
             incoming().get('phoneVerified', false) == false &&
             incoming().get('verificationStatus', 'pending') == 'pending' &&
-            incoming().get('rating', 5.0) == 5.0 &&
+            (incoming().get('rating', 5) == 5 || incoming().get('rating', 5.0) == 5.0) &&
             incoming().get('totalTrips', 0) == 0
           )
         );

@@ -45,6 +45,9 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          skipWaiting: true,
+          clientsClaim: true,
+          cleanupOutdatedCaches: true,
           importScripts: ['/sw-notifications.js'],
           globIgnores: ['**/assets/aistudio/**', '**/*.zip', '**/private-archives/**'],
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,

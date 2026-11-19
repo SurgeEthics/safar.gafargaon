@@ -512,6 +512,7 @@ service cloud.firestore {
       allow update: if isValidId(userId)
         && (isOwner(userId) || isAdmin())
         && isValidUserProfile(incoming())
+        && incoming().uid == userId
         && (!('uid' in existing()) || incoming().uid == existing().uid)
         && incoming().updatedAt == request.time
         && (
@@ -523,6 +524,11 @@ service cloud.firestore {
           (
             incoming().role in ['passenger', 'driver'] &&
             incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
+          ) ||
+          (
+            !('uid' in existing()) &&
+            incoming().role in ['passenger', 'driver'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
           )
         );
       allow delete: if isValidId(userId) && isAdmin();
@@ -599,7 +605,7 @@ service cloud.firestore {
             incoming().get('licenseVerified', false) == existing().get('licenseVerified', false) &&
             incoming().get('phoneVerified', false) == existing().get('phoneVerified', false) &&
             incoming().get('verificationStatus', 'pending') == existing().get('verificationStatus', 'pending') &&
-            incoming().get('rating', 5.0) == existing().get('rating', 5.0) &&
+            (incoming().get('rating', 5) == existing().get('rating', 5) || incoming().get('rating', 5.0) == existing().get('rating', 5.0)) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'isOnline', 'lat', 'lng', 'standName', 'vehicleModel',
               'driverPhoto', 'photoUrl', 'todayDate', 'todayTrips',

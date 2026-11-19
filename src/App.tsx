@@ -111,6 +111,7 @@ import {
   signOutPassengerFirebase,
   signOutDriverFirebase,
   signOutAdminFirebase,
+  ensureVerifiedAuthUser,
   handleFirestoreError,
   handleDriverFirestoreError,
   handleAdminFirestoreError,
@@ -128,7 +129,13 @@ import {
   reconcileFirestoreDriversList,
   findPassengerPendingRequestFromCloud,
   buildSafeUserProfileWritePayload,
-  resolveTripCreatedAtMs
+  resolveTripCreatedAtMs,
+  buildDriverPublicWritePayload,
+  buildDriverPrivateKycWritePayload,
+  buildRideRequestCreatePayload,
+  buildRidePrivateContactWritePayload,
+  buildRideAcceptUpdatePayload,
+  resolveTrackerTargetDriver
 } from './utils/cloudSync';
 import { SUPER_ADMIN_EMAIL, sanitizePlainText, validateSafeExternalUrl, isValidBdCoordinate, clampFiniteNumber, createRateLimiter, stripPiiFields } from './utils/security';
 import {
@@ -1158,68 +1165,11 @@ function buildCategoryFirestorePayload(c: VehicleCategoryItem) {
 }
 
 function buildDriverPublicPayload(d: Driver, ownerUid: string) {
-  const { lat, lng } = sanitizeCoord(d.lat, d.lng);
-  const licV = Boolean(d.licenseVerified);
-  const nidV = Boolean(d.nidVerified);
-  const phoneV = Boolean(d.phoneVerified);
-  const all3 = licV && nidV && phoneV;
-  const rawPhoto = typeof d.driverPhoto === 'string' && d.driverPhoto.length <= 59000 ? d.driverPhoto : '';
-  const rawAltPhoto = typeof d.photoUrl === 'string' && d.photoUrl.length <= 59000 ? d.photoUrl : rawPhoto;
-
-  return stripUndefinedFields({
-    id: sanitizePlainText(d.id, 128),
-    ownerUid: sanitizePlainText(ownerUid || d.ownerUid || '', 128),
-    name: sanitizePlainText(d.name || 'চালক', 100) || 'চালক',
-    nameBn: sanitizePlainText((d as any).nameBn || d.name || 'চালক', 100) || 'চালক',
-    category: sanitizePlainText(d.category || 'cng', 50) || 'cng',
-    categoryBengali: sanitizePlainText(d.categoryBengali || 'যানবাহন', 60),
-    vehicleModel: sanitizePlainText(d.vehicleModel || 'বাহন', 100),
-    plateNumber: sanitizePlainText(d.plateNumber || '', 50),
-    licensePlate: sanitizePlainText((d as any).licensePlate || d.plateNumber || '', 50),
-    standName: sanitizePlainText(d.standName || 'গফরগাঁও', 120) || 'গফরগাঁও',
-    lat,
-    lng,
-    rating: clampFiniteNumber(d.rating ?? 5.0, 0, 5, 5.0),
-    totalTrips: clampFiniteNumber(d.totalTrips ?? 0, 0, 1000000, 0),
-    todayDate: sanitizePlainText((d as any).todayDate || '', 20),
-    todayTrips: clampFiniteNumber((d as any).todayTrips ?? 0, 0, 500, 0),
-    todayEarnings: clampFiniteNumber((d as any).todayEarnings ?? 0, 0, 500000, 0),
-    isOnline: d.isOnline ?? true,
-    isVerified: all3,
-    nidVerified: nidV,
-    licenseVerified: licV,
-    phoneVerified: phoneV,
-    verificationStatus: d.verificationStatus === 'verified' || all3 ? 'verified' : 'pending',
-    regAppId: sanitizePlainText(d.regAppId || '', 60),
-    registeredAt: sanitizePlainText(d.registeredAt || '', 60),
-    avatarBg: sanitizePlainText(d.avatarBg || 'bg-emerald-700', 60),
-    approxSpeedKmh: clampFiniteNumber(d.approxSpeedKmh ?? 25, 5, 160, 25),
-    driverPhoto: rawPhoto,
-    photoUrl: rawAltPhoto,
-    updatedAt: serverTimestamp(),
-  });
+  return stripUndefinedFields(buildDriverPublicWritePayload(d, ownerUid, serverTimestamp()));
 }
 
 function buildDriverPrivateKycPayload(d: Driver, ownerUid: string) {
-  const digits = String(d.phone || '').replace(/[^0-9]/g, '');
-  const safePhone = sanitizePlainText(d.phone || digits || '01700000000', 20);
-  const validPhone = safePhone.length >= 5 ? safePhone : '01700000000';
-  return stripUndefinedFields({
-    ownerUid: sanitizePlainText(ownerUid || d.ownerUid || '', 128),
-    phone: validPhone,
-    licenseNumber: sanitizePlainText(d.licenseNumber || '', 60),
-    firstIssueDate: sanitizePlainText(d.firstIssueDate || '', 40),
-    licenseType: sanitizePlainText(d.licenseType || 'পেশাদার (Professional)', 60),
-    regLastFour: sanitizePlainText(d.regLastFour || '', 16),
-    manufacturingYear: sanitizePlainText(d.manufacturingYear || '', 16),
-    chassisNumber: sanitizePlainText(d.chassisNumber || '', 60),
-    engineNumber: sanitizePlainText(d.engineNumber || '', 60),
-    nidNumber: sanitizePlainText(d.nidNumber || '', 30),
-    nidFrontPhoto: typeof d.nidFrontPhoto === 'string' && d.nidFrontPhoto.length <= 118000 ? d.nidFrontPhoto : '',
-    nidBackPhoto: typeof d.nidBackPhoto === 'string' && d.nidBackPhoto.length <= 118000 ? d.nidBackPhoto : '',
-    taxTokenReceiptPhoto: typeof d.taxTokenReceiptPhoto === 'string' && d.taxTokenReceiptPhoto.length <= 118000 ? d.taxTokenReceiptPhoto : '',
-    updatedAt: serverTimestamp(),
-  });
+  return stripUndefinedFields(buildDriverPrivateKycWritePayload(d, ownerUid, serverTimestamp()));
 }
 
 // Record a completed trip into driver's persistent daily history log in Firestore (idempotent create-only)
@@ -1259,13 +1209,26 @@ function recordDriverTripLog(driverPhone: string | undefined, driverId: string |
   const canWriteWithAdminAuth = isAuthorizedAdminEmail(adminAuth.currentUser?.email, adminAuth.currentUser?.emailVerified);
   if (driverId && currentUid && (canWriteWithDriverAuth || canWriteWithAdminAuth)) {
     const targetDb = canWriteWithDriverAuth ? driverDb : adminDb;
+    const targetAuth = canWriteWithDriverAuth ? driverAuth : adminAuth;
     const tripRef = doc(targetDb, 'drivers', driverId, 'completed_trips', trip.id);
-    return getDoc(tripRef)
+    return ensureVerifiedAuthUser(targetAuth, false)
+      .then(() => getDoc(tripRef))
       .then(async (existingSnap) => {
         if (existingSnap.exists()) {
           return 'exists' as const;
         }
-        await setDoc(tripRef, entry);
+        try {
+          await setDoc(tripRef, entry);
+        } catch (writeErr: any) {
+          const code = typeof writeErr?.code === 'string' ? writeErr.code : '';
+          if (code === 'permission-denied' || code === 'unauthenticated') {
+            await ensureVerifiedAuthUser(targetAuth, true);
+            await new Promise((r) => setTimeout(r, 250));
+            await setDoc(tripRef, entry);
+          } else {
+            throw writeErr;
+          }
+        }
         return 'created' as const;
       })
       .catch((err) => {
@@ -1619,6 +1582,9 @@ export default function App() {
             lng: typeof data.lng === 'number' ? data.lng : 90.5479,
             rating: typeof data.rating === 'number' ? data.rating : 5.0,
             totalTrips: typeof data.totalTrips === 'number' ? data.totalTrips : 0,
+            todayDate: typeof data.todayDate === 'string' ? data.todayDate : '',
+            todayTrips: typeof data.todayTrips === 'number' ? data.todayTrips : 0,
+            todayEarnings: typeof data.todayEarnings === 'number' ? data.todayEarnings : 0,
             avatarBg: data.avatarBg || 'bg-emerald-700',
             isOnline: all3 ? (data.isOnline ?? true) : false,
             approxSpeedKmh: data.approxSpeedKmh || 30
@@ -2277,14 +2243,15 @@ export default function App() {
     nid: ''
   });
 
-  // Client-side lightweight image compression (zero server cost & storage burden)
+  // Client-side lightweight image compression (ensures dataUrl stays well under Firestore rule limits)
   const compressClientImage = (
     file: File,
     maxWidth: number,
     maxHeight: number,
     quality: number,
     onSuccess: (dataUrl: string, sizeKb: number) => void,
-    onFinish: () => void
+    onFinish: () => void,
+    maxChars = 105000
   ) => {
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -2307,12 +2274,25 @@ export default function App() {
           }
         }
 
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', quality);
+        const renderAtScale = (w: number, h: number, q: number): string => {
+          canvas.width = Math.max(40, Math.round(w));
+          canvas.height = Math.max(40, Math.round(h));
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return '';
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL('image/jpeg', q);
+        };
+
+        let compressed = renderAtScale(width, height, quality);
+        const qualities = [quality * 0.78, quality * 0.58, 0.35, 0.24];
+        for (const q of qualities) {
+          if (!compressed || compressed.length <= maxChars) break;
+          compressed = renderAtScale(width, height, Math.max(0.18, q));
+        }
+        if (compressed && compressed.length > maxChars) {
+          compressed = renderAtScale(width * 0.72, height * 0.72, 0.28);
+        }
+        if (compressed) {
           const sizeInKb = Math.round((compressed.length * 3) / 4 / 1024);
           onSuccess(compressed, sizeInKb);
         }
@@ -2343,7 +2323,7 @@ export default function App() {
     compressClientImage(file, 550, 550, 0.50, (dataUrl, sizeKb) => {
       setTaxTokenSizeKb(sizeKb);
       setRegisterForm(prev => ({ ...prev, taxTokenReceiptPhoto: dataUrl }));
-    }, () => setTaxTokenUploadLoading(false));
+    }, () => setTaxTokenUploadLoading(false), 105000);
   };
 
   const handleDriverPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2353,7 +2333,7 @@ export default function App() {
     compressClientImage(file, 250, 250, 0.60, (dataUrl, sizeKb) => {
       setDriverPhotoSizeKb(sizeKb);
       setRegisterForm(prev => ({ ...prev, driverPhoto: dataUrl }));
-    }, () => setDriverPhotoUploadLoading(false));
+    }, () => setDriverPhotoUploadLoading(false), 55000);
   };
 
   const handleNidFrontPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2363,7 +2343,7 @@ export default function App() {
     compressClientImage(file, 550, 380, 0.50, (dataUrl, sizeKb) => {
       setNidFrontSizeKb(sizeKb);
       setRegisterForm(prev => ({ ...prev, nidFrontPhoto: dataUrl }));
-    }, () => setNidFrontUploadLoading(false));
+    }, () => setNidFrontUploadLoading(false), 105000);
   };
 
   const handleNidBackPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2373,7 +2353,7 @@ export default function App() {
     compressClientImage(file, 550, 380, 0.50, (dataUrl, sizeKb) => {
       setNidBackSizeKb(sizeKb);
       setRegisterForm(prev => ({ ...prev, nidBackPhoto: dataUrl }));
-    }, () => setNidBackUploadLoading(false));
+    }, () => setNidBackUploadLoading(false), 105000);
   };
 
   // App User Role (Passenger vs Driver) with URL query & LocalStorage persistence
@@ -2490,7 +2470,8 @@ export default function App() {
   const ensureCloudUserDocExists = useCallback(async (
     targetDb: typeof db,
     authUser: { uid: string; email?: string | null; displayName?: string | null; photoURL?: string | null; getIdToken?: (forceRefresh?: boolean) => Promise<string> },
-    role: 'passenger' | 'driver'
+    role: 'passenger' | 'driver',
+    overrides?: { name?: string; phone?: string; homeLocation?: string }
   ): Promise<{ readSucceeded: boolean; data: Record<string, any> | null }> => {
     const key = `${role}:${authUser.uid}`;
     const existingPromise = inFlightEnsureUserDocRef.current.get(key);
@@ -2499,10 +2480,10 @@ export default function App() {
     }
 
     const promise = (async () => {
+      const targetAuth = targetDb === driverDb ? driverAuth : passengerAuth;
       const liveSessionUser =
-        typeof authUser.getIdToken === 'function'
-          ? authUser
-          : (targetDb === driverDb ? driverAuth.currentUser : passengerAuth.currentUser);
+        (await ensureVerifiedAuthUser(targetAuth, false)) ||
+        (typeof authUser.getIdToken === 'function' ? authUser : targetAuth.currentUser);
       if (liveSessionUser && typeof liveSessionUser.getIdToken === 'function') {
         await liveSessionUser.getIdToken().catch(() => {});
       }
@@ -2522,10 +2503,10 @@ export default function App() {
         if (merged.createPayload) {
           const buildPayload = () => buildSafeUserProfileWritePayload({
             uid: authUser.uid,
-            name: merged.createPayload!.name,
+            name: overrides?.name || merged.createPayload!.name,
             email: merged.createPayload!.email,
-            phone: merged.createPayload!.phone,
-            homeLocation: role === 'driver' ? 'গফরগাঁও' : merged.createPayload!.homeLocation,
+            phone: overrides?.phone ?? merged.createPayload!.phone,
+            homeLocation: overrides?.homeLocation || (role === 'driver' ? 'গফরগাঁও' : merged.createPayload!.homeLocation),
             emergencyContact: merged.createPayload!.emergencyContact,
             photoUrl: merged.createPayload!.photoUrl,
             role,
@@ -2533,7 +2514,16 @@ export default function App() {
 
           try {
             await setDoc(doc(targetDb, 'users', authUser.uid), buildPayload());
-            return { readSucceeded: true, data: { ...merged.createPayload, homeLocation: role === 'driver' ? 'গফরগাঁও' : merged.createPayload.homeLocation, role } };
+            return {
+              readSucceeded: true,
+              data: {
+                ...merged.createPayload,
+                name: overrides?.name || merged.createPayload.name,
+                phone: overrides?.phone ?? merged.createPayload.phone,
+                homeLocation: overrides?.homeLocation || (role === 'driver' ? 'গফরগাঁও' : merged.createPayload.homeLocation),
+                role,
+              }
+            };
           } catch (err: any) {
             const errCode = typeof err?.code === 'string' ? err.code : '';
             if (errCode === 'permission-denied' || errCode === 'unauthenticated' || errCode === 'already-exists') {
@@ -2547,7 +2537,16 @@ export default function App() {
               try {
                 await new Promise(r => setTimeout(r, 250));
                 await setDoc(doc(targetDb, 'users', authUser.uid), buildPayload());
-                return { readSucceeded: true, data: { ...merged.createPayload, homeLocation: role === 'driver' ? 'গফরগাঁও' : merged.createPayload.homeLocation, role } };
+                return {
+                  readSucceeded: true,
+                  data: {
+                    ...merged.createPayload,
+                    name: overrides?.name || merged.createPayload.name,
+                    phone: overrides?.phone ?? merged.createPayload.phone,
+                    homeLocation: overrides?.homeLocation || (role === 'driver' ? 'গফরগাঁও' : merged.createPayload.homeLocation),
+                    role,
+                  }
+                };
               } catch (retryErr) {
                 if (targetDb === driverDb) {
                   handleDriverFirestoreError(retryErr, 'create', `users/${authUser.uid}`);
@@ -2564,6 +2563,18 @@ export default function App() {
             }
           }
         }
+      } else if (res.readSucceeded && res.data !== null && overrides) {
+        const updatePayload = buildSafeUserProfileWritePayload({
+          uid: authUser.uid,
+          name: overrides.name || (res.data.name as string) || authUser.displayName || '',
+          email: (res.data.email as string) || authUser.email || '',
+          phone: overrides.phone || (res.data.phone as string) || '',
+          homeLocation: overrides.homeLocation || (res.data.homeLocation as string) || 'গফরগাঁও',
+          emergencyContact: (res.data.emergencyContact as string) || '',
+          photoUrl: (res.data.photoUrl as string) || authUser.photoURL || '',
+          role: (res.data.role === 'driver' || res.data.role === 'passenger' ? res.data.role : role),
+        }, serverTimestamp());
+        await setDoc(doc(targetDb, 'users', authUser.uid), updatePayload, { merge: true }).catch(() => {});
       }
       return res;
     })();
@@ -2582,34 +2593,50 @@ export default function App() {
     reqId: string,
     record: PassengerTripRecord
   ) => {
-    if (!pUid || !passengerAuth.currentUser?.emailVerified) return;
-    try {
-      if (passengerAuth.currentUser) {
-        await ensureCloudUserDocExists(db, passengerAuth.currentUser, 'passenger');
-      }
-      let resolvedPhone = record.driverPhone || '';
-      if (!resolvedPhone && reqId) {
-        try {
-          const contactSnap = await getDoc(doc(db, 'ride_requests', reqId, 'private', 'contact'));
-          if (contactSnap.exists()) {
-            resolvedPhone = contactSnap.data()?.driverPhone || '';
-          }
-        } catch {}
-      }
-      const tripRef = doc(db, 'users', pUid, 'trips', record.id);
-      const existingTrip = await getDoc(tripRef).catch(() => null);
-      if (existingTrip && existingTrip.exists()) {
-        return;
-      }
-      const payload = buildPassengerTripFirestoreDoc(
+    const activePassenger = await ensureVerifiedAuthUser(passengerAuth, false);
+    if (!pUid || !activePassenger?.emailVerified) return;
+    let resolvedPhone = record.driverPhone || '';
+    if (!resolvedPhone && reqId) {
+      try {
+        const contactSnap = await getDoc(doc(db, 'ride_requests', reqId, 'private', 'contact'));
+        if (contactSnap.exists()) {
+          resolvedPhone = contactSnap.data()?.driverPhone || '';
+        }
+      } catch {}
+    }
+    const tripRef = doc(db, 'users', pUid, 'trips', record.id);
+    const buildTripWritePayload = () => stripUndefinedFields(
+      buildPassengerTripFirestoreDoc(
         {
           ...record,
           driverPhone: resolvedPhone,
         },
         serverTimestamp()
-      );
-      await setDoc(tripRef, stripUndefinedFields(payload));
-    } catch (err) {
+      )
+    );
+    try {
+      await ensureCloudUserDocExists(db, activePassenger, 'passenger');
+      const existingTrip = await getDoc(tripRef).catch(() => null);
+      if (existingTrip && existingTrip.exists()) {
+        return;
+      }
+      await setDoc(tripRef, buildTripWritePayload());
+    } catch (err: any) {
+      const errCode = typeof err?.code === 'string' ? err.code : '';
+      if (errCode === 'permission-denied' || errCode === 'unauthenticated') {
+        try {
+          const refreshed = await ensureVerifiedAuthUser(passengerAuth, true);
+          if (refreshed) {
+            await ensureCloudUserDocExists(db, refreshed, 'passenger');
+          }
+          await new Promise(r => setTimeout(r, 250));
+          await setDoc(tripRef, buildTripWritePayload());
+          return;
+        } catch (retryErr) {
+          handleFirestoreError(retryErr, 'create', `users/${pUid}/trips/${record.id}`);
+          return;
+        }
+      }
       handleFirestoreError(err, 'create', `users/${pUid}/trips/${record.id}`);
     }
   }, [ensureCloudUserDocExists]);
@@ -2721,6 +2748,7 @@ export default function App() {
   const hydrateAuthenticatedDriverByUid = useCallback(async (uid: string) => {
     if (!uid) return null;
     try {
+      await ensureVerifiedAuthUser(driverAuth, false);
       const dq = query(collection(driverDb, 'drivers'), where('ownerUid', '==', uid));
       const dSnap = await fetchDocWithTimeout(getDocsFromServer(dq).catch(() => getDocs(dq)), 5000);
       if (!dSnap || dSnap.empty) return null;
@@ -2801,6 +2829,10 @@ export default function App() {
               nidVerified: nidV,
               verificationStatus: resolvedStatus,
               isOnline: cloudOnline,
+              driverPhoto: pub.driverPhoto || pub.photoUrl || drv.driverPhoto,
+              nidFrontPhoto: kyc.nidFrontPhoto || drv.nidFrontPhoto,
+              nidBackPhoto: kyc.nidBackPhoto || drv.nidBackPhoto,
+              taxTokenReceiptPhoto: kyc.taxTokenReceiptPhoto || drv.taxTokenReceiptPhoto,
             }
           : drv
       )));
@@ -2857,10 +2889,13 @@ export default function App() {
     return () => unsubscribe();
   }, [ensureCloudUserDocExists]);
 
-  // 1.1 Real-Time Firestore Listener for Authenticated Passenger Profile (`users/{uid}`)
+  // 1.1 Real-Time Firestore Listener for Authenticated Passenger Profile (`users/{uid}`) & Live Trip History (`users/{uid}/trips`)
   useEffect(() => {
     if (!passengerAuthUser?.uid || !passengerAuthUser?.emailVerified) return;
     const uid = passengerAuthUser.uid;
+    let isCancelled = false;
+    let unsubTrips: (() => void) | null = null;
+
     const unsubscribe = onSnapshot(doc(db, 'users', uid), (uSnap) => {
       if (!uSnap.exists()) return;
       const existingData = uSnap.data();
@@ -2886,8 +2921,51 @@ export default function App() {
     }, (err) => {
       handleFirestoreError(err, 'get', `users/${uid}`);
     });
-    return () => unsubscribe();
-  }, [passengerAuthUser?.uid, passengerAuthUser?.emailVerified]);
+
+    (async () => {
+      try {
+        await ensureCloudUserDocExists(db, passengerAuthUser, 'passenger');
+      } catch {}
+      if (isCancelled) return;
+      const tripsQuery = query(collection(db, 'users', uid, 'trips'), limit(100));
+      unsubTrips = onSnapshot(tripsQuery, (snapshot) => {
+        if (snapshot.empty && snapshot.metadata.fromCache) return;
+        const trips: PassengerTripRecord[] = [];
+        snapshot.forEach(docSnap => {
+          const d = docSnap.data();
+          const createdAtMs = resolveTripCreatedAtMs(d.createdAtMs, d.createdAt);
+          trips.push({
+            id: docSnap.id,
+            date: d.date || 'পূর্বে',
+            pickupPoint: d.pickupPoint || '',
+            destination: d.destination || '',
+            driverName: d.driverName || 'চালক',
+            driverPhone: d.driverPhone || '',
+            vehicleCategory: d.vehicleCategory || 'auto',
+            vehicleModel: d.vehicleModel || '',
+            plateNumber: d.plateNumber || '',
+            fare: Number(d.fare) || 40,
+            status: d.status || 'সম্পন্ন',
+            ratingGiven: Number(d.ratingGiven) || 5.0,
+            createdAt: d.createdAt,
+            createdAtMs
+          });
+        });
+        trips.sort((a, b) => resolveTripCreatedAtMs(b.createdAtMs, b.createdAt) - resolveTripCreatedAtMs(a.createdAtMs, a.createdAt));
+        setTripHistory(trips);
+      }, (err) => {
+        if (err?.code !== 'permission-denied') {
+          handleFirestoreError(err, 'list', `users/${uid}/trips`);
+        }
+      });
+    })();
+
+    return () => {
+      isCancelled = true;
+      unsubscribe();
+      if (unsubTrips) unsubTrips();
+    };
+  }, [passengerAuthUser?.uid, passengerAuthUser?.emailVerified, ensureCloudUserDocExists]);
 
   // 2. Driver Auth Lifecycle Listener (Isolated Session — NEVER logs in Passenger or Admin)
   useEffect(() => {
@@ -3049,7 +3127,6 @@ export default function App() {
       }
 
       setDriverAuthUser(user);
-      const safeEmail = sanitizePlainText(user.email || '', 150);
 
       // Ensure `/users/{uid}` exists cleanly on isolated driverDb WITHOUT ever blanking out saved profile fields
       await ensureCloudUserDocExists(driverDb, user, 'driver').catch(() => {});
@@ -3065,7 +3142,7 @@ export default function App() {
         }
       } else {
         if (!suppressNotRegisteredError) {
-          setDriverLoginError(`এই Google অ্যাকাউন্ট (${safeEmail}) দিয়ে এখনও কোনো চালক প্রোফাইল নিবন্ধিত নেই। "এখনই চালক নিবন্ধন করুন" বাটনে ক্লিক করে যুক্ত হন অথবা অন্য অ্যাকাউন্ট ব্যবহার করুন।`);
+          setDriverLoginError('এই Google অ্যাকাউন্ট দিয়ে এখনও কোনো চালক প্রোফাইল নিবন্ধিত নেই। "এখনই চালক নিবন্ধন করুন" বাটনে ক্লিক করে যুক্ত হন অথবা অন্য অ্যাকাউন্ট ব্যবহার করুন।');
         }
         setRegisterForm(prev => ({
           ...prev,
@@ -3179,56 +3256,8 @@ export default function App() {
     showAdminToastMessage('যাত্রী Google অ্যাকাউন্ট থেকে সফলভাবে সাইন-আউট হয়েছে');
   };
 
-  // Past Trip History (Authenticated Cloud Sync Only — zero PII fallback cache)
+  // Past Trip History (Authenticated Cloud Sync Only — handled in effect 1.1 above)
   const [tripHistory, setTripHistory] = useState<PassengerTripRecord[]>([]);
-
-  // Real-time Firestore Sync for Passenger Trip History (`users/${passengerAuthUser.uid}/trips`)
-  useEffect(() => {
-    if (!passengerAuthUser?.uid || !passengerAuthUser?.emailVerified) return;
-    const uid = passengerAuthUser.uid;
-    let isCancelled = false;
-    let unsubscribeTrips: (() => void) | null = null;
-
-    const attachTripsListener = async () => {
-      await ensureCloudUserDocExists(db, passengerAuthUser, 'passenger');
-      if (isCancelled) return;
-      unsubscribeTrips = onSnapshot(collection(db, 'users', uid, 'trips'), (snapshot) => {
-        if (snapshot.empty && snapshot.metadata.fromCache) return;
-        const cloudTrips: PassengerTripRecord[] = [];
-        snapshot.forEach((docSnap) => {
-          const d = docSnap.data();
-          const createdAtMs = resolveTripCreatedAtMs(d.createdAtMs, d.createdAt);
-          cloudTrips.push({
-            id: docSnap.id,
-            date: d.date || '',
-            pickupPoint: d.pickupPoint || '',
-            destination: d.destination || '',
-            driverName: d.driverName || '',
-            driverPhone: d.driverPhone || '',
-            vehicleCategory: d.vehicleCategory || 'bike',
-            vehicleModel: d.vehicleModel || '',
-            plateNumber: d.plateNumber || '',
-            fare: Number(d.fare) || 0,
-            status: d.status || 'সম্পন্ন',
-            ratingGiven: d.ratingGiven || 5.0,
-            createdAt: d.createdAt,
-            createdAtMs
-          });
-        });
-        cloudTrips.sort((a, b) => resolveTripCreatedAtMs(b.createdAtMs, b.createdAt) - resolveTripCreatedAtMs(a.createdAtMs, a.createdAt));
-        setTripHistory(cloudTrips);
-      }, (err) => {
-        handleFirestoreError(err, 'list', `users/${uid}/trips`);
-      });
-    };
-
-    void attachTripsListener();
-
-    return () => {
-      isCancelled = true;
-      if (unsubscribeTrips) unsubscribeTrips();
-    };
-  }, [passengerAuthUser?.uid, passengerAuthUser?.emailVerified, ensureCloudUserDocExists]);
 
 
   // Driver Cockpit States (Authenticated strictly via Firebase Google UID ownership)
@@ -3372,6 +3401,9 @@ export default function App() {
                 manufacturingYear: kyc.manufacturingYear || d.manufacturingYear,
                 chassisNumber: kyc.chassisNumber || d.chassisNumber,
                 engineNumber: kyc.engineNumber || d.engineNumber,
+                nidFrontPhoto: kyc.nidFrontPhoto || d.nidFrontPhoto,
+                nidBackPhoto: kyc.nidBackPhoto || d.nidBackPhoto,
+                taxTokenReceiptPhoto: kyc.taxTokenReceiptPhoto || d.taxTokenReceiptPhoto,
               }
             : d
         )));
@@ -4196,6 +4228,8 @@ export default function App() {
       if (!myActiveDoc && myPendingDoc) {
         if (!curPending || curPending.id !== myPendingDoc.id) {
           setPassengerPendingRequest(myPendingDoc);
+          if (myPendingDoc.pickupPoint) setPassengerPickup(prev => prev || myPendingDoc.pickupPoint);
+          if (myPendingDoc.destination) setPassengerDestination(prev => prev || myPendingDoc.destination);
           if (myPendingDoc.pickupCoords) setPickupCoords(myPendingDoc.pickupCoords);
           if (myPendingDoc.destCoords) setDestCoords(myPendingDoc.destCoords);
         }
@@ -4267,6 +4301,8 @@ export default function App() {
 
           setActiveBooking(newBooking);
           setPassengerPendingRequest(null);
+          if (myActiveDoc.pickupPoint) setPassengerPickup(prev => prev || myActiveDoc.pickupPoint);
+          if (myActiveDoc.destination) setPassengerDestination(prev => prev || myActiveDoc.destination);
           try {
             localStorage.setItem('safar_active_booking_v2', JSON.stringify(newBooking));
             localStorage.removeItem('safar_passenger_pending_v2');
@@ -4891,36 +4927,77 @@ export default function App() {
     }).catch(() => {});
 
     try {
-      await ensureCloudUserDocExists(db, {
-        uid,
-        email: passengerAuthUser?.email || passengerAuth.currentUser?.email,
-        displayName: passengerAuthUser?.displayName || passengerAuth.currentUser?.displayName,
-        photoURL: passengerAuthUser?.photoURL || passengerAuth.currentUser?.photoURL,
-      }, 'passenger');
-      await setDoc(doc(db, 'ride_requests', newRequest.id), stripUndefinedFields({
-        id: newRequest.id,
-        passengerUid: uid,
-        passengerName: newRequest.passengerName,
-        pickupPoint: newRequest.pickupPoint,
-        pickupLandmark: newRequest.pickupLandmark || '',
-        destination: newRequest.destination,
-        category: newRequest.category,
-        distanceKm: newRequest.distanceKm,
-        estFare: newRequest.estFare,
-        pickupCoords: safePickupCoords,
-        destCoords: safeDestCoords,
-        status: 'pending',
-        createdAtMs,
-        requestedAt: new Date().toISOString(),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      }));
+      const livePassengerUser =
+        (await ensureVerifiedAuthUser(passengerAuth, false)) ||
+        passengerAuthUser ||
+        passengerAuth.currentUser;
+      if (!livePassengerUser?.uid || !livePassengerUser?.emailVerified) {
+        showAdminToastMessage('অনুরোধ পাঠাতে Google সাইন-ইন সক্রিয় করুন');
+        return;
+      }
+      const verifiedUid = livePassengerUser.uid;
+      await ensureCloudUserDocExists(db, livePassengerUser, 'passenger');
 
-      await setDoc(doc(db, 'ride_requests', newRequest.id, 'private', 'contact'), stripUndefinedFields({
-        passengerUid: uid,
-        passengerPhone: activePassengerPhone,
-        updatedAt: serverTimestamp()
-      }));
+      const writeRideWithRetry = async (fn: () => Promise<void>) => {
+        try {
+          await fn();
+        } catch (err: any) {
+          const code = typeof err?.code === 'string' ? err.code : '';
+          if (code === 'permission-denied' || code === 'unauthenticated') {
+            await ensureVerifiedAuthUser(passengerAuth, true);
+            await new Promise(r => setTimeout(r, 250));
+            await fn();
+          } else {
+            throw err;
+          }
+        }
+      };
+
+      const reqRef = doc(db, 'ride_requests', newRequest.id);
+      await writeRideWithRetry(() =>
+        setDoc(
+          reqRef,
+          stripUndefinedFields(
+            buildRideRequestCreatePayload(
+              {
+                id: newRequest.id,
+                passengerUid: verifiedUid,
+                passengerName: newRequest.passengerName,
+                pickupPoint: newRequest.pickupPoint,
+                pickupLandmark: newRequest.pickupLandmark || '',
+                destination: newRequest.destination,
+                category: newRequest.category,
+                distanceKm: newRequest.distanceKm,
+                estFare: newRequest.estFare,
+                pickupCoords: safePickupCoords,
+                destCoords: safeDestCoords,
+                createdAtMs,
+                requestedAt: new Date().toISOString(),
+              },
+              serverTimestamp(),
+              serverTimestamp()
+            )
+          )
+        )
+      );
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const snap = await getDocFromServer(reqRef).catch(() => null);
+        if (snap && snap.exists()) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      await writeRideWithRetry(() =>
+        setDoc(
+          doc(db, 'ride_requests', newRequest.id, 'private', 'contact'),
+          stripUndefinedFields(
+            buildRidePrivateContactWritePayload(
+              { passengerUid: verifiedUid, passengerPhone: activePassengerPhone },
+              serverTimestamp()
+            )
+          )
+        )
+      );
     } catch (err) {
       handleFirestoreError(err, 'create', `ride_requests/${newRequest.id}`);
     }
@@ -5199,22 +5276,37 @@ export default function App() {
     }, 120);
 
     try {
-      await updateDoc(reqRef, stripUndefinedFields({
-        status: 'accepted',
-        driverId: activeDriver.id,
-        driverUid: uid,
-        driverName: activeDriver.name,
-        driverCategory: activeDriver.category,
-        driverLat: activeDriver.lat,
-        driverLng: activeDriver.lng,
-        driverVehicleModel: activeDriver.vehicleModel,
-        driverLicensePlate: activeDriver.plateNumber || activeDriver.licenseNumber,
-        driverPlateNumber: activeDriver.plateNumber,
-        driverPhoto: activeDriver.driverPhoto,
-        driverRating: activeDriver.rating,
-        acceptedAt: new Date().toISOString(),
-        updatedAt: serverTimestamp()
-      }));
+      await ensureVerifiedAuthUser(driverAuth, false);
+      const acceptPayload = stripUndefinedFields(
+        buildRideAcceptUpdatePayload(
+          {
+            driverId: activeDriver.id,
+            driverUid: uid,
+            driverName: activeDriver.name,
+            driverCategory: activeDriver.category,
+            driverLat: activeDriver.lat,
+            driverLng: activeDriver.lng,
+            driverVehicleModel: activeDriver.vehicleModel,
+            driverLicensePlate: activeDriver.plateNumber || activeDriver.licenseNumber,
+            driverPlateNumber: activeDriver.plateNumber,
+            driverPhoto: activeDriver.driverPhoto,
+            driverRating: activeDriver.rating,
+          },
+          serverTimestamp()
+        )
+      );
+      try {
+        await updateDoc(reqRef, acceptPayload);
+      } catch (acceptErr: any) {
+        const code = typeof acceptErr?.code === 'string' ? acceptErr.code : '';
+        if (code === 'permission-denied' || code === 'unauthenticated') {
+          await ensureVerifiedAuthUser(driverAuth, true);
+          await new Promise(r => setTimeout(r, 250));
+          await updateDoc(reqRef, acceptPayload);
+        } else {
+          throw acceptErr;
+        }
+      }
 
       // Store sensitive driverPhone + OTP inside participant-only subcollection
       await updateDoc(doc(driverDb, 'ride_requests', requestId, 'private', 'contact'), stripUndefinedFields({
@@ -5985,6 +6077,11 @@ export default function App() {
     if (isSubmittingDriverReg) return;
     setFormValidationNotice(null);
 
+    if (driverPhotoUploadLoading || nidFrontUploadLoading || nidBackUploadLoading || taxTokenUploadLoading) {
+      setFormValidationNotice('ছবি প্রসেসিং চলছে — অনুগ্রহ করে কয়েক সেকেন্ড অপেক্ষা করে আবার জমা দিন।');
+      return;
+    }
+
     const activeUser =
       (driverAuth.currentUser?.emailVerified ? driverAuth.currentUser : null) ||
       (driverAuthUser?.emailVerified ? driverAuthUser : null);
@@ -6065,15 +6162,12 @@ export default function App() {
     setIsSubmittingDriverReg(true);
     let writeStage = `drivers/${newDriver.id}`;
     try {
-      await driverAuth.authStateReady();
-      const liveAuthUser = driverAuth.currentUser;
+      const liveAuthUser = await ensureVerifiedAuthUser(driverAuth, true);
       if (!liveAuthUser || !liveAuthUser.emailVerified) {
         setFormValidationNotice('আপনার Google সাইন-ইন সেশন মেয়াদোত্তীর্ণ হয়েছে। অনুগ্রহ করে পুনরায় Google সাইন-ইন করে জমা দিন।');
         setIsSubmittingDriverReg(false);
         return;
       }
-      // Refresh ID token on isolated driverAuth so Firestore Security Rules immediately receive verified email & UID claims
-      await liveAuthUser.getIdToken(true);
       const verifiedUid = liveAuthUser.uid;
       newDriver.ownerUid = verifiedUid;
 
@@ -6083,7 +6177,7 @@ export default function App() {
         } catch (err: any) {
           const errCode = typeof err?.code === 'string' ? err.code : '';
           if (errCode === 'permission-denied' || errCode === 'unauthenticated') {
-            await liveAuthUser.getIdToken(true).catch(() => {});
+            await ensureVerifiedAuthUser(driverAuth, true);
             await new Promise(r => setTimeout(r, 300));
             await fn();
           } else {
@@ -6092,29 +6186,29 @@ export default function App() {
         }
       };
 
-      // Master public document MUST be persisted in Firestore before private/kyc subdocument
+      // Master public document MUST be persisted and readable on Firestore server before private/kyc subdocument
       writeStage = `drivers/${newDriver.id}`;
+      const driverPubRef = doc(driverDb, 'drivers', newDriver.id);
       await writeWithTokenRetry(() =>
-        setDoc(doc(driverDb, 'drivers', newDriver.id), buildDriverPublicPayload(newDriver, verifiedUid))
+        setDoc(driverPubRef, buildDriverPublicPayload(newDriver, verifiedUid))
       );
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const srvSnap = await getDocFromServer(driverPubRef).catch(() => null);
+        if (srvSnap && srvSnap.exists()) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+
       writeStage = `drivers/${newDriver.id}/private/kyc`;
       await writeWithTokenRetry(() =>
         setDoc(doc(driverDb, 'drivers', newDriver.id, 'private', 'kyc'), buildDriverPrivateKycPayload(newDriver, verifiedUid))
       );
-      await setDoc(
-        doc(driverDb, 'users', verifiedUid),
-        buildSafeUserProfileWritePayload({
-          uid: verifiedUid,
-          name: newDriver.name,
-          email: liveAuthUser.email || activeUser.email || '',
-          phone: newDriver.phone,
-          homeLocation: newDriver.standName,
-          emergencyContact: '',
-          photoUrl: liveAuthUser.photoURL || activeUser.photoURL || '',
-          role: 'driver',
-        }, serverTimestamp()),
-        { merge: true }
-      ).catch((uErr) => {
+
+      await ensureCloudUserDocExists(driverDb, liveAuthUser, 'driver', {
+        name: newDriver.name,
+        phone: newDriver.phone,
+        homeLocation: newDriver.standName,
+      }).catch((uErr) => {
         console.warn('Secondary user profile role sync warning:', uErr);
       });
     } catch (err: any) {
@@ -6286,32 +6380,79 @@ export default function App() {
     showAdminToastMessage(`চালক '${driver.name}'-এর কাছে আপনার অনুরোধ পাঠানো হয়েছে... চালক গ্রহণের অপেক্ষায়`);
 
     try {
-      await ensureCloudUserDocExists(db, passengerAuthUser, 'passenger');
-      await setDoc(doc(db, 'ride_requests', newRideRequest.id), stripUndefinedFields({
-        id: newRideRequest.id,
-        passengerUid: uid,
-        passengerName: newRideRequest.passengerName,
-        pickupPoint: newRideRequest.pickupPoint,
-        pickupLandmark: newRideRequest.pickupLandmark || '',
-        destination: newRideRequest.destination,
-        category: newRideRequest.category,
-        distanceKm: newRideRequest.distanceKm,
-        estFare: newRideRequest.estFare,
-        pickupCoords: { lat: pLat, lng: pLng },
-        destCoords: { lat: dLat, lng: dLng },
-        status: 'pending',
-        driverId: driver.id,
-        driverName: newRideRequest.driverName,
-        createdAtMs,
-        requestedAt: new Date().toISOString(),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      }));
-      await setDoc(doc(db, 'ride_requests', newRideRequest.id, 'private', 'contact'), stripUndefinedFields({
-        passengerUid: uid,
-        passengerPhone,
-        updatedAt: serverTimestamp()
-      }));
+      const livePassengerUser =
+        (await ensureVerifiedAuthUser(passengerAuth, false)) ||
+        passengerAuthUser ||
+        passengerAuth.currentUser;
+      if (!livePassengerUser?.uid || !livePassengerUser?.emailVerified) {
+        showAdminToastMessage('গাড়ি বুকিং করতে Google অ্যাকাউন্ট সক্রিয় করুন');
+        return;
+      }
+      const verifiedUid = livePassengerUser.uid;
+      await ensureCloudUserDocExists(db, livePassengerUser, 'passenger');
+
+      const writeBookingWithRetry = async (fn: () => Promise<void>) => {
+        try {
+          await fn();
+        } catch (err: any) {
+          const code = typeof err?.code === 'string' ? err.code : '';
+          if (code === 'permission-denied' || code === 'unauthenticated') {
+            await ensureVerifiedAuthUser(passengerAuth, true);
+            await new Promise(r => setTimeout(r, 250));
+            await fn();
+          } else {
+            throw err;
+          }
+        }
+      };
+
+      const reqRef = doc(db, 'ride_requests', newRideRequest.id);
+      await writeBookingWithRetry(() =>
+        setDoc(
+          reqRef,
+          stripUndefinedFields(
+            buildRideRequestCreatePayload(
+              {
+                id: newRideRequest.id,
+                passengerUid: verifiedUid,
+                passengerName: newRideRequest.passengerName,
+                pickupPoint: newRideRequest.pickupPoint,
+                pickupLandmark: newRideRequest.pickupLandmark || '',
+                destination: newRideRequest.destination,
+                category: newRideRequest.category,
+                distanceKm: newRideRequest.distanceKm,
+                estFare: newRideRequest.estFare,
+                pickupCoords: { lat: pLat, lng: pLng },
+                destCoords: { lat: dLat, lng: dLng },
+                driverId: driver.id,
+                driverName: newRideRequest.driverName,
+                createdAtMs,
+                requestedAt: new Date().toISOString(),
+              },
+              serverTimestamp(),
+              serverTimestamp()
+            )
+          )
+        )
+      );
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const snap = await getDocFromServer(reqRef).catch(() => null);
+        if (snap && snap.exists()) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      await writeBookingWithRetry(() =>
+        setDoc(
+          doc(db, 'ride_requests', newRideRequest.id, 'private', 'contact'),
+          stripUndefinedFields(
+            buildRidePrivateContactWritePayload(
+              { passengerUid: verifiedUid, passengerPhone },
+              serverTimestamp()
+            )
+          )
+        )
+      );
     } catch (err) {
       handleFirestoreError(err, 'create', `ride_requests/${newRideRequest.id}`);
     }
@@ -6527,17 +6668,23 @@ export default function App() {
   // ADMIN CONTROL PANEL HANDLERS (COMPULSORY GOOGLE SUPER ADMIN + HASHED PIN)
   // =========================================================================
 
-  // Hydrate Admin private KYC records (`/drivers/{id}/private/kyc`) for any newly added driver while Admin is active
-  const hydratedAdminKycIdsRef = useRef<Set<string>>(new Set());
+  // Hydrate Admin private KYC records (`/drivers/{id}/private/kyc`) for all drivers while Admin is active
+  const hydratedAdminKycIdsRef = useRef<Map<string, string>>(new Map());
   const hydrateDriversKycForAdmin = useCallback((driverList: Driver[], forceAll = false) => {
     if (!isAdminLoggedIn || !isFirebaseAdmin) return;
     driverList.forEach((drv) => {
-      if (!forceAll && hydratedAdminKycIdsRef.current.has(drv.id)) return;
-      hydratedAdminKycIdsRef.current.add(drv.id);
-      getDoc(doc(adminDb, 'drivers', drv.id, 'private', 'kyc'))
+      const kycSig = `${drv.registeredAt || ''}|${drv.verificationStatus || ''}|${drv.phone ? '1' : '0'}|${drv.nidFrontPhoto ? '1' : '0'}`;
+      if (!forceAll && hydratedAdminKycIdsRef.current.get(drv.id) === kycSig) return;
+      hydratedAdminKycIdsRef.current.set(drv.id, kycSig);
+      const kycRef = doc(adminDb, 'drivers', drv.id, 'private', 'kyc');
+      (forceAll ? getDocFromServer(kycRef).catch(() => getDoc(kycRef)) : getDocFromServer(kycRef).catch(() => getDoc(kycRef)))
         .then((kSnap) => {
           if (kSnap.exists()) {
             const kyc = kSnap.data();
+            hydratedAdminKycIdsRef.current.set(
+              drv.id,
+              `${drv.registeredAt || ''}|${drv.verificationStatus || ''}|${kyc.phone ? '1' : '0'}|${kyc.nidFrontPhoto ? '1' : '0'}`
+            );
             setDrivers((prev) =>
               prev.map((d) =>
                 d.id === drv.id
@@ -8428,7 +8575,7 @@ export default function App() {
                   {driverAuthReady && driverAuthUser?.uid && driverAuthUser?.emailVerified ? (
                     <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-900 font-semibold flex items-center justify-between gap-2 flex-wrap">
                       <span className="truncate">
-                        চালক Google সক্রিয়: <span className="font-mono font-bold">{driverAuthUser.email}</span>
+                        চালক ব্যক্তিগত Google অ্যাকাউন্ট সক্রিয় (তথ্য সুরক্ষিত)
                       </span>
                       <button
                         type="button"
@@ -10138,7 +10285,7 @@ export default function App() {
                       <div className="flex items-center gap-2 min-w-0">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                         <span className="truncate font-semibold">
-                          চালক Google যাচাইকৃত: <b className="font-mono">{driverAuthUser.email}</b>
+                          চালক ব্যক্তিগত Google অ্যাকাউন্ট যাচাইকৃত (তথ্য সুরক্ষিত)
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -10706,7 +10853,12 @@ export default function App() {
 
               {/* TAB 2: VERIFICATION STATUS TRACKER (PENDING PROCESS & SUCCESS MESSAGE SCREENS) */}
               {registerModalTab === 'status_check' && (() => {
-                const targetDriver = (activeSubmittedDriverId ? drivers.find(d => d.id === activeSubmittedDriverId) : null) || statusCheckResult;
+                const targetDriver = resolveTrackerTargetDriver({
+                  activeSubmittedDriverId,
+                  signedInDriverId: driverProfile.isRegistered ? driverProfile.id : null,
+                  drivers,
+                  statusCheckResult,
+                });
 
                 return (
                   <div className="space-y-4">
@@ -11317,7 +11469,7 @@ export default function App() {
                             </div>
                             <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
                               <Phone className="w-3 h-3 text-emerald-600" />
-                              {passengerProfile.phone || passengerProfile.email || 'নম্বর যুক্ত করুন'}
+                              {passengerProfile.phone || 'মোবাইল নম্বর যুক্ত করুন'}
                             </p>
                           </div>
                         </div>
@@ -11382,6 +11534,7 @@ export default function App() {
                               role: 'passenger',
                             }, serverTimestamp());
                             try {
+                              await ensureVerifiedAuthUser(passengerAuth, false);
                               await setDoc(doc(db, 'users', passengerAuthUser.uid), safePayload, { merge: true });
                               setPassengerProfile(updated);
                               setIsEditingProfile(false);

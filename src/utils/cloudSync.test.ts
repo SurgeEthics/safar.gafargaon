@@ -9,6 +9,12 @@ import {
   isCloudflareStaticHtmlResponse,
   buildSafeUserProfileWritePayload,
   resolveTripCreatedAtMs,
+  buildDriverPublicWritePayload,
+  buildDriverPrivateKycWritePayload,
+  buildRideRequestCreatePayload,
+  buildRidePrivateContactWritePayload,
+  buildRideAcceptUpdatePayload,
+  resolveTrackerTargetDriver,
 } from './cloudSync';
 
 test('mergePassengerProfileSafely never overwrites cloud profile on read timeout', () => {
@@ -186,3 +192,154 @@ test('resolveTripCreatedAtMs supports numeric, Timestamp-like, and ISO string da
   assert.equal(resolveTripCreatedAtMs(undefined, { seconds: 500 }), 500000);
   assert.equal(resolveTripCreatedAtMs(undefined, '2026-11-18T10:00:00.000Z'), Date.parse('2026-11-18T10:00:00.000Z'));
 });
+
+test('buildDriverPublicWritePayload & buildDriverPrivateKycWritePayload strictly match firestore.rules schema for screenshot registration inputs', () => {
+  const pub = buildDriverPublicWritePayload(
+    {
+      id: 'drv-1795064262967',
+      ownerUid: 'uid-driver-1',
+      name: 'TASNIMUL KABEER',
+      category: 'bike',
+      categoryBengali: 'মোটরসাইকেল',
+      vehicleModel: '',
+      plateNumber: '',
+      standName: 'গফরগাঁও রেলওয়ে স্টেশন স্ট্যান্ড',
+      lat: 24.4536,
+      lng: 90.5479,
+      rating: 5.0,
+      totalTrips: 0,
+      isOnline: false,
+      licenseVerified: false,
+      phoneVerified: false,
+      nidVerified: false,
+      verificationStatus: 'pending',
+      driverPhoto: 'data:image/jpeg;base64,AAAA',
+    },
+    'uid-driver-1',
+    'TS'
+  );
+
+  const allowedPublicKeys = new Set([
+    'id', 'ownerUid', 'name', 'nameBn', 'category', 'categoryBengali',
+    'vehicleModel', 'plateNumber', 'licensePlate', 'standName', 'lat', 'lng',
+    'rating', 'totalTrips', 'todayDate', 'todayTrips', 'todayEarnings',
+    'isOnline', 'isVerified', 'nidVerified', 'licenseVerified', 'phoneVerified',
+    'verificationStatus', 'regAppId', 'registeredAt', 'avatarBg', 'approxSpeedKmh',
+    'driverPhoto', 'photoUrl', 'updatedAt',
+  ]);
+  for (const k of Object.keys(pub)) {
+    assert.ok(allowedPublicKeys.has(k), `Unexpected public key: ${k}`);
+  }
+  assert.equal(pub.verificationStatus, 'pending');
+  assert.equal(pub.isVerified, false);
+  assert.equal(pub.totalTrips, 0);
+  assert.equal(pub.rating, 5);
+  assert.equal('phone' in pub, false);
+  assert.equal('nidNumber' in pub, false);
+  assert.equal('email' in pub, false);
+
+  const kyc = buildDriverPrivateKycWritePayload(
+    {
+      phone: '01304841550',
+      licenseNumber: 'MMS26010NP178',
+      firstIssueDate: '26/04/2026',
+      licenseType: 'অপেশাদার (Non-Professional)',
+      nidNumber: '7335441460',
+      nidFrontPhoto: 'data:image/jpeg;base64,FRONT',
+      nidBackPhoto: 'data:image/jpeg;base64,BACK',
+    },
+    'uid-driver-1',
+    'TS'
+  );
+
+  const allowedKycKeys = new Set([
+    'ownerUid', 'phone', 'licenseNumber', 'firstIssueDate', 'licenseType',
+    'regLastFour', 'manufacturingYear', 'chassisNumber', 'engineNumber',
+    'nidNumber', 'nidFrontPhoto', 'nidBackPhoto', 'taxTokenReceiptPhoto', 'updatedAt',
+  ]);
+  for (const k of Object.keys(kyc)) {
+    assert.ok(allowedKycKeys.has(k), `Unexpected KYC key: ${k}`);
+  }
+  assert.equal(kyc.phone, '01304841550');
+  assert.equal(kyc.licenseNumber, 'MMS26010NP178');
+  assert.equal(kyc.nidNumber, '7335441460');
+});
+
+test('buildRideRequestCreatePayload, buildRidePrivateContactWritePayload & buildRideAcceptUpdatePayload enforce rule bounds', () => {
+  const reqPayload = buildRideRequestCreatePayload(
+    {
+      id: 'req-123',
+      passengerUid: 'p-uid',
+      passengerName: 'যাত্রী',
+      pickupPoint: 'গফরগাঁও স্টেশন',
+      destination: 'পাগলা বাজার',
+      category: 'cng',
+      distanceKm: 5.5,
+      estFare: 120,
+      pickupCoords: { lat: 24.43, lng: 90.55 },
+      destCoords: { lat: 24.38, lng: 90.52 },
+      createdAtMs: 1700000000000,
+    },
+    'CREATED_TS',
+    'UPDATED_TS'
+  );
+  assert.equal(reqPayload.status, 'pending');
+  assert.equal('driverUid' in reqPayload, false);
+
+  const contact = buildRidePrivateContactWritePayload(
+    { passengerUid: 'p-uid', passengerPhone: '01711000111' },
+    'UPDATED_TS'
+  );
+  assert.deepEqual(Object.keys(contact), ['passengerUid', 'passengerPhone', 'updatedAt']);
+
+  const acceptPayload = buildRideAcceptUpdatePayload(
+    {
+      driverId: 'drv-1',
+      driverUid: 'd-uid',
+      driverName: 'করিম',
+      driverLat: 99, // invalid fallback test
+      driverLng: -10,
+      driverPhoto: 'x'.repeat(70000), // stripped cleanly above 59KB
+    },
+    'UPDATED_TS'
+  );
+  assert.equal(acceptPayload.status, 'accepted');
+  assert.equal(acceptPayload.driverLat, 24.4536);
+  assert.equal(acceptPayload.driverLng, 90.5479);
+  assert.equal(acceptPayload.driverPhoto, '');
+});
+
+test('resolveTrackerTargetDriver resolves signed-in driver across devices without localStorage id', () => {
+  const drivers = [
+    { id: 'drv-1', name: 'A' },
+    { id: 'drv-2', name: 'B' },
+  ];
+  const resolved = resolveTrackerTargetDriver({
+    activeSubmittedDriverId: null,
+    signedInDriverId: 'drv-2',
+    drivers,
+    statusCheckResult: null,
+  });
+  assert.equal(resolved?.id, 'drv-2');
+});
+
+test('buildDriverPublicWritePayload forces isOnline=false and verificationStatus=pending when 3-tier verification is incomplete', () => {
+  const pendingDrv = buildDriverPublicWritePayload(
+    {
+      id: 'drv-unverified',
+      ownerUid: 'uid-1',
+      name: 'টেস্ট চালক',
+      isOnline: true,
+      licenseVerified: true,
+      phoneVerified: true,
+      nidVerified: false,
+      verificationStatus: 'verified',
+    },
+    'uid-1',
+    'TS'
+  );
+  assert.equal(pendingDrv.isOnline, false);
+  assert.equal(pendingDrv.isVerified, false);
+  assert.equal(pendingDrv.verificationStatus, 'pending');
+});
+

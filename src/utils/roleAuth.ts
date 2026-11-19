@@ -20,7 +20,8 @@ export function resolveDriverPhoneForKyc(rawPhone: string | null | undefined): {
   digitsCount: number;
 } {
   const trimmed = typeof rawPhone === 'string' ? rawPhone.trim() : '';
-  const digitsCount = trimmed.replace(/[^0-9]/g, '').length;
+  const normalizedDigits = trimmed.replace(/[০-৯]/g, (d) => String('০১২৩৪৫৬৭৮৯'.indexOf(d)));
+  const digitsCount = normalizedDigits.replace(/[^0-9]/g, '').length;
   return {
     valid: trimmed.length >= 5 && trimmed.length <= 20 && digitsCount >= 5,
     trimmed,

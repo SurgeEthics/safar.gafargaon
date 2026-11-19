@@ -3,19 +3,47 @@ import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import './index.css';
 
-// Register Service Worker for Mobile High-Priority Push Notifications and Haptic Vibration
+// Manage Service Worker lifecycle cleanly: unregister stale SW caches in dev, auto-update in production
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-  const registerSW = () => {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      .catch(() => {
-        navigator.serviceWorker.register('/sw-notifications.js', { scope: '/' }).catch(() => {});
+  if (!import.meta.env.PROD) {
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((reg) => {
+        void reg.unregister().catch(() => {});
       });
-  };
-
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    registerSW();
+    }).catch(() => {});
+    if ('caches' in window) {
+      caches.keys().then((keys) => {
+        keys.forEach((k) => {
+          void caches.delete(k).catch(() => {});
+        });
+      }).catch(() => {});
+    }
   } else {
-    window.addEventListener('load', registerSW);
+    let reloadedOnSwChange = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloadedOnSwChange) return;
+      reloadedOnSwChange = true;
+      window.location.reload();
+    });
+
+    const registerSW = () => {
+      navigator.serviceWorker
+        .register('/sw.js', { scope: '/', updateViaCache: 'none' })
+        .then((reg) => {
+          void reg.update().catch(() => {});
+        })
+        .catch(() => {
+          navigator.serviceWorker
+            .register('/sw-notifications.js', { scope: '/', updateViaCache: 'none' })
+            .catch(() => {});
+        });
+    };
+
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      registerSW();
+    } else {
+      window.addEventListener('load', registerSW);
+    }
   }
 }
 

@@ -300,6 +300,8 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
   const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
   const [driverCoordPaste, setDriverCoordPaste] = useState('');
+  const [expandedDriverDetailsId, setExpandedDriverDetailsId] = useState<string | null>(null);
+  const [zoomedDriverDoc, setZoomedDriverDoc] = useState<{ src: string; title: string } | null>(null);
   const [driverForm, setDriverForm] = useState<{
     name: string;
     phone: string;
@@ -308,6 +310,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     vehicleModel: string;
     plateNumber: string;
     licenseNumber: string;
+    firstIssueDate: string;
+    licenseType: 'পেশাদার (Professional)' | 'অপেশাদার (Non-Professional)';
+    regLastFour: string;
+    manufacturingYear: string;
+    chassisNumber: string;
+    engineNumber: string;
     nidNumber: string;
     lat: number;
     lng: number;
@@ -321,6 +329,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     vehicleModel: '',
     plateNumber: '',
     licenseNumber: '',
+    firstIssueDate: '',
+    licenseType: 'পেশাদার (Professional)',
+    regLastFour: '',
+    manufacturingYear: '',
+    chassisNumber: '',
+    engineNumber: '',
     nidNumber: '',
     lat: 24.4536,
     lng: 90.5479,
@@ -690,7 +704,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
       vehicleModel: driverForm.vehicleModel.trim() || selectedCat?.nameBengali || 'নিবন্ধিত গাড়ি',
       plateNumber: plate,
       licenseNumber: driverForm.licenseNumber.trim() || 'BRTA-GAF-2026',
-      licenseType: editingDriver?.licenseType || 'পেশাদার (Professional)',
+      firstIssueDate: driverForm.firstIssueDate.trim(),
+      licenseType: driverForm.licenseType || editingDriver?.licenseType || 'পেশাদার (Professional)',
+      regLastFour: driverForm.regLastFour.trim() || (plate ? plate.replace(/[^0-9]/g, '').slice(-4) : ''),
+      manufacturingYear: driverForm.manufacturingYear.trim(),
+      chassisNumber: driverForm.chassisNumber.trim(),
+      engineNumber: driverForm.engineNumber.trim(),
       nidNumber: driverForm.nidNumber.trim() || '1990611280001',
       nidVerified: isVerified,
       licenseVerified: isVerified,
@@ -2578,6 +2597,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                           vehicleModel: '',
                           plateNumber: '',
                           licenseNumber: '',
+                          firstIssueDate: '',
+                          licenseType: 'পেশাদার (Professional)',
+                          regLastFour: '',
+                          manufacturingYear: '',
+                          chassisNumber: '',
+                          engineNumber: '',
                           nidNumber: '',
                           lat: defaultStand?.lat ?? 24.4536,
                           lng: defaultStand?.lng ?? 90.5479,
@@ -2653,6 +2678,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                                   vehicleModel: driver.vehicleModel || '',
                                   plateNumber: driver.plateNumber || '',
                                   licenseNumber: driver.licenseNumber || '',
+                                  firstIssueDate: driver.firstIssueDate || '',
+                                  licenseType: (driver.licenseType as any) || 'পেশাদার (Professional)',
+                                  regLastFour: driver.regLastFour || '',
+                                  manufacturingYear: driver.manufacturingYear || '',
+                                  chassisNumber: driver.chassisNumber || '',
+                                  engineNumber: driver.engineNumber || '',
                                   nidNumber: driver.nidNumber || '',
                                   lat: driver.lat ?? 24.4536,
                                   lng: driver.lng ?? 90.5479,
@@ -2688,7 +2719,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                         <div className="flex items-center justify-between gap-2 overflow-hidden">
                           <span className="text-slate-400 shrink-0">নম্বরপ্লেট:</span>
                           <span className="font-mono text-emerald-700 font-bold truncate text-right flex-1" title={driver.plateNumber}>
-                            {driver.plateNumber}
+                            {driver.plateNumber || 'দেওয়া হয়নি'}
                           </span>
                         </div>
                         <div className="flex items-center justify-between gap-2 overflow-hidden">
@@ -2700,14 +2731,95 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                         <div className="flex items-center justify-between gap-2 overflow-hidden">
                           <span className="text-slate-400 shrink-0">লাইসেন্স:</span>
                           <span className="font-mono text-slate-700 font-medium truncate text-right flex-1" title={driver.licenseNumber}>
-                            {driver.licenseNumber}
+                            {driver.licenseNumber || 'অপেক্ষমাণ'}
                           </span>
                         </div>
                         <div className="flex items-center justify-between gap-2 overflow-hidden">
                           <span className="text-slate-400 shrink-0">NID নম্বর:</span>
                           <span className="font-mono text-slate-700 font-medium truncate text-right flex-1" title={driver.nidNumber}>
-                            {driver.nidNumber}
+                            {driver.nidNumber || 'অপেক্ষমাণ'}
                           </span>
+                        </div>
+
+                        {/* Expandable Full Registration Form Details & Uploaded KYC Photos */}
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedDriverDetailsId(prev => (prev === driver.id ? null : driver.id))}
+                            className="w-full py-1.5 px-2.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-700 flex items-center justify-between cursor-pointer transition"
+                          >
+                            <span>📋 নিবন্ধন ফর্মের সম্পূর্ণ তথ্য ও ডকুমেন্ট ছবি</span>
+                            <span className="text-emerald-700">
+                              {expandedDriverDetailsId === driver.id ? 'লুকান ▲' : 'দেখুন ▼'}
+                            </span>
+                          </button>
+
+                          {expandedDriverDetailsId === driver.id && (
+                            <div className="mt-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2 text-[11px] animate-in fade-in">
+                              <div className="grid grid-cols-2 gap-1.5 text-[10.5px]">
+                                <div className="bg-white p-1.5 rounded border border-slate-200">
+                                  <span className="text-slate-400 block">আবেদন আইডি:</span>
+                                  <span className="font-mono font-bold text-slate-800">{driver.regAppId || driver.id}</span>
+                                </div>
+                                <div className="bg-white p-1.5 rounded border border-slate-200">
+                                  <span className="text-slate-400 block">লাইসেন্সের ধরন:</span>
+                                  <span className="font-bold text-slate-800">{driver.licenseType || 'পেশাদার'}</span>
+                                </div>
+                                <div className="bg-white p-1.5 rounded border border-slate-200">
+                                  <span className="text-slate-400 block">প্রথম ইস্যুর তারিখ:</span>
+                                  <span className="font-mono font-bold text-slate-800">{driver.firstIssueDate || 'দেওয়া হয়নি'}</span>
+                                </div>
+                                <div className="bg-white p-1.5 rounded border border-slate-200">
+                                  <span className="text-slate-400 block">রেজিস্ট্রেশন শেষ ৪:</span>
+                                  <span className="font-mono font-bold text-slate-800">{driver.regLastFour || 'দেওয়া হয়নি'}</span>
+                                </div>
+                                <div className="bg-white p-1.5 rounded border border-slate-200">
+                                  <span className="text-slate-400 block">উৎপাদনের বছর:</span>
+                                  <span className="font-mono font-bold text-slate-800">{driver.manufacturingYear || 'দেওয়া হয়নি'}</span>
+                                </div>
+                                <div className="bg-white p-1.5 rounded border border-slate-200">
+                                  <span className="text-slate-400 block">ফোন (WhatsApp):</span>
+                                  <span className="font-mono font-bold text-emerald-700">{driver.phone || 'লোড হচ্ছে...'}</span>
+                                </div>
+                                <div className="bg-white p-1.5 rounded border border-slate-200 col-span-2">
+                                  <span className="text-slate-400 block">চ্যাসিস ও ইঞ্জিন নম্বর:</span>
+                                  <span className="font-mono font-bold text-slate-800 break-all">
+                                    চেসিস: {driver.chassisNumber || 'দেওয়া হয়নি'} • ইঞ্জিন: {driver.engineNumber || 'দেওয়া হয়নি'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Uploaded KYC Photos Grid */}
+                              <div className="space-y-1">
+                                <span className="text-[10px] font-bold text-slate-500 block">সংযুক্ত ডকুমেন্ট ছবি (ক্লিক করে বড় করুন):</span>
+                                <div className="grid grid-cols-4 gap-1.5">
+                                  {[
+                                    { label: 'চালকের ছবি', src: driver.driverPhoto || (driver as any).photoUrl },
+                                    { label: 'NID এ পিঠ', src: driver.nidFrontPhoto },
+                                    { label: 'NID ও পিঠ', src: driver.nidBackPhoto },
+                                    { label: 'ট্যাক্স টোকেন', src: driver.taxTokenReceiptPhoto },
+                                  ].map((docImg) => (
+                                    <div key={docImg.label} className="text-center">
+                                      {docImg.src ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => setZoomedDriverDoc({ src: docImg.src!, title: `${driver.name} — ${docImg.label}` })}
+                                          className="w-full h-12 rounded-lg overflow-hidden border border-emerald-300 bg-white hover:opacity-90 cursor-pointer block"
+                                        >
+                                          <img src={docImg.src} alt={docImg.label} className="w-full h-full object-cover" />
+                                        </button>
+                                      ) : (
+                                        <div className="w-full h-12 rounded-lg border border-dashed border-slate-300 bg-white flex items-center justify-center text-[9px] text-slate-400">
+                                          নেই
+                                        </div>
+                                      )}
+                                      <span className="text-[9px] font-semibold text-slate-600 block mt-0.5 truncate">{docImg.label}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -4228,6 +4340,73 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">প্রথম ইস্যুর তারিখ:</label>
+                  <input
+                    type="text"
+                    value={driverForm.firstIssueDate}
+                    onChange={(e) => setDriverForm({ ...driverForm, firstIssueDate: e.target.value })}
+                    placeholder="DD/MM/YYYY"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">লাইসেন্সের ধরন:</label>
+                  <select
+                    value={driverForm.licenseType}
+                    onChange={(e) => setDriverForm({ ...driverForm, licenseType: e.target.value as any })}
+                    className="w-full px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="পেশাদার (Professional)">পেশাদার (Professional)</option>
+                    <option value="অপেশাদার (Non-Professional)">অপেশাদার (Non-Professional)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-[11px]">শেষ ৪ সংখ্যা:</label>
+                  <input
+                    type="text"
+                    value={driverForm.regLastFour}
+                    onChange={(e) => setDriverForm({ ...driverForm, regLastFour: e.target.value })}
+                    placeholder="৩৪৫৬"
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-[11px]">উৎপাদন বছর:</label>
+                  <input
+                    type="text"
+                    value={driverForm.manufacturingYear}
+                    onChange={(e) => setDriverForm({ ...driverForm, manufacturingYear: e.target.value })}
+                    placeholder="2022"
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-[11px]">চ্যাসিস নম্বর:</label>
+                  <input
+                    type="text"
+                    value={driverForm.chassisNumber}
+                    onChange={(e) => setDriverForm({ ...driverForm, chassisNumber: e.target.value })}
+                    placeholder="Chassis"
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-[11px]">ইঞ্জিন নম্বর:</label>
+                  <input
+                    type="text"
+                    value={driverForm.engineNumber}
+                    onChange={(e) => setDriverForm({ ...driverForm, engineNumber: e.target.value })}
+                    placeholder="Engine"
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
               {/* Google Maps Coordinates Quick Paste Helper */}
               <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
                 <label className="font-bold text-xs text-emerald-900 block mb-1">
@@ -4313,6 +4492,38 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Zoomed Driver Verification Document Lightbox */}
+      {zoomedDriverDoc && (
+        <div
+          className="fixed inset-0 z-[70] bg-slate-950/85 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setZoomedDriverDoc(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-xl w-full p-3 shadow-2xl border border-slate-200 space-y-2.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <h4 className="font-bold text-sm text-slate-900 truncate pr-2">{zoomedDriverDoc.title}</h4>
+              <button
+                type="button"
+                onClick={() => setZoomedDriverDoc(null)}
+                className="p-1 rounded-lg text-slate-500 hover:bg-slate-100 cursor-pointer"
+                aria-label="বন্ধ করুন"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-[75vh] overflow-auto rounded-xl bg-slate-100 flex items-center justify-center">
+              <img
+                src={zoomedDriverDoc.src}
+                alt={zoomedDriverDoc.title}
+                className="max-w-full max-h-[72vh] object-contain rounded-lg"
+              />
+            </div>
           </div>
         </div>
       )}

@@ -397,20 +397,13 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
     return sorted;
   }, [tripLogs, todayStr, todayBengaliStr, filterMode, selectedCustomDate]);
 
-  // Today's actual live figures
+  // Today's live figures (onSyncTodayStats is invoked strictly inside onSnapshot once server data loads)
   const todayEntry = useMemo(() => {
     return groupedData.find(g => g.date === todayStr);
   }, [groupedData, todayStr]);
 
   const liveTodayTrips = todayEntry ? todayEntry.totalTrips : 0;
   const liveTodayEarnings = todayEntry ? todayEntry.totalEarnings : 0;
-
-  // Sync today's verified actual numbers back to driver dashboard
-  useEffect(() => {
-    if (onSyncTodayStats) {
-      onSyncTodayStats(liveTodayTrips, liveTodayEarnings);
-    }
-  }, [liveTodayTrips, liveTodayEarnings, onSyncTodayStats]);
 
   // Overall statistics
   const totalReportEarnings = useMemo(() => {

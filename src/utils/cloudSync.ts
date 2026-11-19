@@ -1,4 +1,4 @@
-import { clampFiniteNumber, sanitizePlainText } from './security';
+import { clampFiniteNumber, isValidBdCoordinate, sanitizePlainText } from './security';
 
 export interface CloudUserRecordInput {
   uid: string;
@@ -314,4 +314,276 @@ export function resolveTripCreatedAtMs(
   }
   return 0;
 }
+
+export function sanitizeBdCoordPair(
+  lat: unknown,
+  lng: unknown
+): { lat: number; lng: number } {
+  const numLat = typeof lat === 'number' ? lat : Number(lat);
+  const numLng = typeof lng === 'number' ? lng : Number(lng);
+  if (isValidBdCoordinate(numLat, numLng)) {
+    return { lat: numLat, lng: numLng };
+  }
+  return { lat: 24.4536, lng: 90.5479 };
+}
+
+export interface DriverPublicWriteInput {
+  id: string;
+  ownerUid?: string;
+  name?: unknown;
+  nameBn?: unknown;
+  category?: unknown;
+  categoryBengali?: unknown;
+  vehicleModel?: unknown;
+  plateNumber?: unknown;
+  licensePlate?: unknown;
+  standName?: unknown;
+  lat?: unknown;
+  lng?: unknown;
+  rating?: unknown;
+  totalTrips?: unknown;
+  todayDate?: unknown;
+  todayTrips?: unknown;
+  todayEarnings?: unknown;
+  isOnline?: unknown;
+  licenseVerified?: unknown;
+  nidVerified?: unknown;
+  phoneVerified?: unknown;
+  verificationStatus?: unknown;
+  regAppId?: unknown;
+  registeredAt?: unknown;
+  avatarBg?: unknown;
+  approxSpeedKmh?: unknown;
+  driverPhoto?: unknown;
+  photoUrl?: unknown;
+}
+
+export function buildDriverPublicWritePayload<TUpdatedAt>(
+  d: DriverPublicWriteInput,
+  ownerUid: string,
+  updatedAtValue: TUpdatedAt
+) {
+  const { lat, lng } = sanitizeBdCoordPair(d.lat, d.lng);
+  const licV = Boolean(d.licenseVerified);
+  const nidV = Boolean(d.nidVerified);
+  const phoneV = Boolean(d.phoneVerified);
+  const all3 = licV && nidV && phoneV;
+  const rawPhoto =
+    typeof d.driverPhoto === 'string' && d.driverPhoto.length <= 118000 ? d.driverPhoto : '';
+  const rawAltPhoto =
+    typeof d.photoUrl === 'string' && d.photoUrl.length <= 118000 ? d.photoUrl : rawPhoto;
+
+  return {
+    id: sanitizePlainText(d.id, 128),
+    ownerUid: sanitizePlainText(ownerUid || d.ownerUid || '', 128),
+    name: sanitizePlainText(d.name || 'চালক', 100) || 'চালক',
+    nameBn: sanitizePlainText(d.nameBn || d.name || 'চালক', 100) || 'চালক',
+    category: sanitizePlainText(d.category || 'cng', 50) || 'cng',
+    categoryBengali: sanitizePlainText(d.categoryBengali || 'যানবাহন', 60),
+    vehicleModel: sanitizePlainText(d.vehicleModel || 'বাহন', 100),
+    plateNumber: sanitizePlainText(d.plateNumber || '', 50),
+    licensePlate: sanitizePlainText(d.licensePlate || d.plateNumber || '', 50),
+    standName: sanitizePlainText(d.standName || 'গফরগাঁও', 120) || 'গফরগাঁও',
+    lat,
+    lng,
+    rating: clampFiniteNumber(d.rating ?? 5.0, 0, 5, 5.0),
+    totalTrips: clampFiniteNumber(d.totalTrips ?? 0, 0, 1000000, 0),
+    todayDate: sanitizePlainText(d.todayDate || '', 20),
+    todayTrips: clampFiniteNumber(d.todayTrips ?? 0, 0, 500, 0),
+    todayEarnings: clampFiniteNumber(d.todayEarnings ?? 0, 0, 500000, 0),
+    isOnline: all3 ? Boolean(d.isOnline ?? true) : false,
+    isVerified: all3,
+    nidVerified: nidV,
+    licenseVerified: licV,
+    phoneVerified: phoneV,
+    verificationStatus: (all3 ? 'verified' : 'pending') as
+      | 'verified'
+      | 'pending',
+    regAppId: sanitizePlainText(d.regAppId || '', 60),
+    registeredAt: sanitizePlainText(d.registeredAt || '', 60),
+    avatarBg: sanitizePlainText(d.avatarBg || 'bg-emerald-700', 60) || 'bg-emerald-700',
+    approxSpeedKmh: clampFiniteNumber(d.approxSpeedKmh ?? 25, 5, 160, 25),
+    driverPhoto: rawPhoto,
+    photoUrl: rawAltPhoto,
+    updatedAt: updatedAtValue,
+  };
+}
+
+export interface DriverPrivateKycWriteInput {
+  ownerUid?: string;
+  phone?: unknown;
+  licenseNumber?: unknown;
+  firstIssueDate?: unknown;
+  licenseType?: unknown;
+  regLastFour?: unknown;
+  manufacturingYear?: unknown;
+  chassisNumber?: unknown;
+  engineNumber?: unknown;
+  nidNumber?: unknown;
+  nidFrontPhoto?: unknown;
+  nidBackPhoto?: unknown;
+  taxTokenReceiptPhoto?: unknown;
+}
+
+export function buildDriverPrivateKycWritePayload<TUpdatedAt>(
+  d: DriverPrivateKycWriteInput,
+  ownerUid: string,
+  updatedAtValue: TUpdatedAt
+) {
+  const rawPhoneStr = typeof d.phone === 'string' ? d.phone : '';
+  const digits = rawPhoneStr.replace(/[^0-9০-৯+]/g, '');
+  const safePhone = sanitizePlainText(rawPhoneStr || digits || '01700000000', 20);
+  const validPhone = safePhone.length >= 5 ? safePhone : '01700000000';
+
+  return {
+    ownerUid: sanitizePlainText(ownerUid || d.ownerUid || '', 128),
+    phone: validPhone,
+    licenseNumber: sanitizePlainText(d.licenseNumber || '', 60),
+    firstIssueDate: sanitizePlainText(d.firstIssueDate || '', 40),
+    licenseType: sanitizePlainText(d.licenseType || 'পেশাদার (Professional)', 60) || 'পেশাদার (Professional)',
+    regLastFour: sanitizePlainText(d.regLastFour || '', 16),
+    manufacturingYear: sanitizePlainText(d.manufacturingYear || '', 16),
+    chassisNumber: sanitizePlainText(d.chassisNumber || '', 60),
+    engineNumber: sanitizePlainText(d.engineNumber || '', 60),
+    nidNumber: sanitizePlainText(d.nidNumber || '', 30),
+    nidFrontPhoto:
+      typeof d.nidFrontPhoto === 'string' && d.nidFrontPhoto.length <= 118000 ? d.nidFrontPhoto : '',
+    nidBackPhoto:
+      typeof d.nidBackPhoto === 'string' && d.nidBackPhoto.length <= 118000 ? d.nidBackPhoto : '',
+    taxTokenReceiptPhoto:
+      typeof d.taxTokenReceiptPhoto === 'string' && d.taxTokenReceiptPhoto.length <= 118000
+        ? d.taxTokenReceiptPhoto
+        : '',
+    updatedAt: updatedAtValue,
+  };
+}
+
+export interface RideRequestCreateInput {
+  id: string;
+  passengerUid: string;
+  passengerName?: unknown;
+  pickupPoint?: unknown;
+  pickupLandmark?: unknown;
+  destination?: unknown;
+  category?: unknown;
+  distanceKm?: unknown;
+  estFare?: unknown;
+  pickupCoords?: { lat: number; lng: number } | null;
+  destCoords?: { lat: number; lng: number } | null;
+  driverId?: unknown;
+  driverName?: unknown;
+  createdAtMs: number;
+  requestedAt?: string;
+}
+
+export function buildRideRequestCreatePayload<TTimestamp>(
+  input: RideRequestCreateInput,
+  createdAtValue: TTimestamp,
+  updatedAtValue: TTimestamp
+) {
+  const payload: Record<string, any> = {
+    id: sanitizePlainText(input.id, 128),
+    passengerUid: sanitizePlainText(input.passengerUid, 128),
+    passengerName: sanitizePlainText(input.passengerName || 'সম্মানিত যাত্রী', 100) || 'সম্মানিত যাত্রী',
+    pickupPoint: sanitizePlainText(input.pickupPoint || 'পিকআপ স্থান', 180) || 'পিকআপ স্থান',
+    pickupLandmark: sanitizePlainText(input.pickupLandmark || '', 180),
+    destination: sanitizePlainText(input.destination || 'গন্তব্য স্থান', 180) || 'গন্তব্য স্থান',
+    category: sanitizePlainText(input.category || 'cng', 50) || 'cng',
+    distanceKm: clampFiniteNumber(input.distanceKm ?? 1.2, 0, 500, 1.2),
+    estFare: clampFiniteNumber(input.estFare ?? 40, 0, 50000, 40),
+    pickupCoords: input.pickupCoords
+      ? sanitizeBdCoordPair(input.pickupCoords.lat, input.pickupCoords.lng)
+      : null,
+    destCoords: input.destCoords
+      ? sanitizeBdCoordPair(input.destCoords.lat, input.destCoords.lng)
+      : null,
+    status: 'pending',
+    createdAtMs: clampFiniteNumber(input.createdAtMs, 0, 9999999999999, Date.now()),
+    requestedAt: sanitizePlainText(input.requestedAt || new Date().toISOString(), 64),
+    createdAt: createdAtValue,
+    updatedAt: updatedAtValue,
+  };
+
+  const cleanDriverId = sanitizePlainText(input.driverId || '', 128);
+  const cleanDriverName = sanitizePlainText(input.driverName || '', 100);
+  if (cleanDriverId) payload.driverId = cleanDriverId;
+  if (cleanDriverName) payload.driverName = cleanDriverName;
+
+  return payload;
+}
+
+export function buildRidePrivateContactWritePayload<TUpdatedAt>(
+  input: { passengerUid: string; passengerPhone?: unknown },
+  updatedAtValue: TUpdatedAt
+) {
+  return {
+    passengerUid: sanitizePlainText(input.passengerUid, 128),
+    passengerPhone: sanitizePlainText(input.passengerPhone || '', 20),
+    updatedAt: updatedAtValue,
+  };
+}
+
+export function buildRideAcceptUpdatePayload<TUpdatedAt>(
+  input: {
+    driverId: string;
+    driverUid: string;
+    driverName?: unknown;
+    driverCategory?: unknown;
+    driverLat?: unknown;
+    driverLng?: unknown;
+    driverVehicleModel?: unknown;
+    driverLicensePlate?: unknown;
+    driverPlateNumber?: unknown;
+    driverPhoto?: unknown;
+    driverRating?: unknown;
+    acceptedAt?: string;
+  },
+  updatedAtValue: TUpdatedAt
+) {
+  const { lat, lng } = sanitizeBdCoordPair(input.driverLat, input.driverLng);
+  const safePhoto =
+    typeof input.driverPhoto === 'string' && input.driverPhoto.length <= 59000
+      ? input.driverPhoto
+      : '';
+
+  return {
+    status: 'accepted' as const,
+    driverId: sanitizePlainText(input.driverId, 128),
+    driverUid: sanitizePlainText(input.driverUid, 128),
+    driverName: sanitizePlainText(input.driverName || 'নিবন্ধিত চালক', 100) || 'নিবন্ধিত চালক',
+    driverCategory: sanitizePlainText(input.driverCategory || 'cng', 50) || 'cng',
+    driverLat: lat,
+    driverLng: lng,
+    driverVehicleModel: sanitizePlainText(input.driverVehicleModel || 'যানবাহন', 100),
+    driverLicensePlate: sanitizePlainText(input.driverLicensePlate || '', 50),
+    driverPlateNumber: sanitizePlainText(input.driverPlateNumber || '', 50),
+    driverPhoto: safePhoto,
+    driverRating: clampFiniteNumber(input.driverRating ?? 5.0, 0, 5, 5.0),
+    acceptedAt: sanitizePlainText(input.acceptedAt || new Date().toISOString(), 64),
+    updatedAt: updatedAtValue,
+  };
+}
+
+export function resolveTrackerTargetDriver<T extends { id: string }>(params: {
+  activeSubmittedDriverId?: string | null;
+  signedInDriverId?: string | null;
+  drivers: readonly T[];
+  statusCheckResult?: T | null;
+}): T | null {
+  const { activeSubmittedDriverId, signedInDriverId, drivers, statusCheckResult } = params;
+  if (activeSubmittedDriverId) {
+    const match = drivers.find((d) => d.id === activeSubmittedDriverId);
+    if (match) return match;
+  }
+  if (signedInDriverId) {
+    const match = drivers.find((d) => d.id === signedInDriverId);
+    if (match) return match;
+  }
+  if (statusCheckResult) {
+    const liveMatch = drivers.find((d) => d.id === statusCheckResult.id);
+    return liveMatch || statusCheckResult;
+  }
+  return null;
+}
+
 

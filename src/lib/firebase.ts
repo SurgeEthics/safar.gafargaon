@@ -65,42 +65,73 @@ function createGoogleProvider(): GoogleAuthProvider {
   return provider;
 }
 
-// 1. Passenger Session ([DEFAULT] Firebase App)
+// 1. Passenger Session ([DEFAULT] Firebase App — Auth initialized before Firestore)
 export const passengerApp: FirebaseApp = app;
-export const db: Firestore = createSafeFirestore(app);
-export const passengerDb: Firestore = db;
 export const auth: Auth = getAuth(app);
 export const passengerAuth: Auth = auth;
+export const db: Firestore = createSafeFirestore(app);
+export const passengerDb: Firestore = db;
 export const googleProvider = createGoogleProvider();
 
-// 2. Driver Session (Isolated 'safar-driver' Firebase App)
+// 2. Driver Session (Isolated 'safar-driver' Firebase App — Auth initialized before Firestore)
 export { driverApp };
-export const driverDb: Firestore = createSafeFirestore(driverApp);
 export const driverAuth: Auth = getAuth(driverApp);
+export const driverDb: Firestore = createSafeFirestore(driverApp);
 const driverGoogleProvider = createGoogleProvider();
 
-// 3. Admin Session (Isolated 'safar-admin' Firebase App)
+// 3. Admin Session (Isolated 'safar-admin' Firebase App — Auth initialized before Firestore)
 export { adminApp };
-export const adminDb: Firestore = createSafeFirestore(adminApp);
 export const adminAuth: Auth = getAuth(adminApp);
+export const adminDb: Firestore = createSafeFirestore(adminApp);
 const adminGoogleProvider = createGoogleProvider();
+
+export async function ensureVerifiedAuthUser(
+  targetAuth: Auth = passengerAuth,
+  forceRefresh = false
+): Promise<User | null> {
+  try {
+    await targetAuth.authStateReady();
+  } catch {}
+  const currentUser = targetAuth.currentUser;
+  if (!currentUser) return null;
+  if (!currentUser.emailVerified) {
+    try {
+      await currentUser.reload();
+    } catch {}
+    if (!currentUser.emailVerified) return null;
+  }
+  try {
+    const tokenResult = await currentUser.getIdTokenResult(false).catch(() => null);
+    const expMs = tokenResult?.expirationTime ? Date.parse(tokenResult.expirationTime) : 0;
+    const isNearExpiry = !expMs || expMs - Date.now() < 60_000;
+    await currentUser.getIdToken(forceRefresh || isNearExpiry);
+  } catch {
+    try {
+      await currentUser.getIdToken(true);
+    } catch {}
+  }
+  return currentUser;
+}
 
 export async function signInWithPassengerGooglePopup(): Promise<User> {
   googleProvider.setCustomParameters({ prompt: 'select_account' });
   // Call signInWithPopup synchronously without prior awaits so browser user gesture is preserved
   const result = await signInWithPopup(passengerAuth, googleProvider);
+  await result.user.getIdToken(true).catch(() => {});
   return result.user;
 }
 
 export async function signInWithDriverGooglePopup(): Promise<User> {
   driverGoogleProvider.setCustomParameters({ prompt: 'select_account' });
   const result = await signInWithPopup(driverAuth, driverGoogleProvider);
+  await result.user.getIdToken(true).catch(() => {});
   return result.user;
 }
 
 export async function signInWithAdminGooglePopup(): Promise<User> {
   adminGoogleProvider.setCustomParameters({ prompt: 'select_account' });
   const result = await signInWithPopup(adminAuth, adminGoogleProvider);
+  await result.user.getIdToken(true).catch(() => {});
   return result.user;
 }
 

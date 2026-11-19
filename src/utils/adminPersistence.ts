@@ -1,8 +1,14 @@
+function isPlainObject(val: unknown): val is Record<string, any> {
+  if (val === null || typeof val !== 'object' || Array.isArray(val)) return false;
+  const proto = Object.getPrototypeOf(val);
+  return proto === Object.prototype || proto === null;
+}
+
 export function stripUndefinedFields<T extends Record<string, any>>(obj: T): T {
   const cleaned: Record<string, any> = {};
   for (const [key, val] of Object.entries(obj)) {
     if (val === undefined) continue;
-    if (val !== null && typeof val === 'object' && !Array.isArray(val) && !(val instanceof Date)) {
+    if (isPlainObject(val)) {
       cleaned[key] = stripUndefinedFields(val);
     } else {
       cleaned[key] = val;

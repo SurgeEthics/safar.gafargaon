@@ -54,7 +54,7 @@ import { GAFARGAON_UNIONS, COMPREHENSIVE_UNION_PLACES, ComprehensivePlace, Union
 import { parseGoogleMapsCoordinates, upsertPlaceCategory, removePlaceCategory } from '../utils/adminPersistence';
 import { AutoMarqueeText } from './AutoMarqueeText';
 import { PauseMarqueeText } from './PauseMarqueeText';
-import { getAuthIdToken } from '../lib/firebase';
+import { adminAuth, getAuthIdToken } from '../lib/firebase';
 import { validateSafeExternalUrl } from '../utils/security';
 
 export interface AppCustomSettings {
@@ -177,7 +177,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
 
   const fetchFreshSignedZipToken = async (forceRefreshToken = false): Promise<string | null> => {
     try {
-      const idToken = await getAuthIdToken(forceRefreshToken);
+      const idToken = await getAuthIdToken(forceRefreshToken, adminAuth);
       if (!idToken) return null;
       const tokenRes = await fetch('/api/admin/source-zip-token', {
         method: 'POST',
@@ -922,7 +922,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
     try {
       showToast('⏳ অ্যাডমিন অনুমোদন যাচাই করে প্রজেক্ট জিপ প্রস্তুত করা হচ্ছে...');
 
-      const idToken = await getAuthIdToken(true);
+      const idToken = await getAuthIdToken(true, adminAuth);
       if (!idToken) {
         throw new Error('অ্যাডমিন Google অ্যাকাউন্ট সেশন পাওয়া যায়নি।');
       }

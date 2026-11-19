@@ -14,7 +14,7 @@ import {
   HardDrive
 } from 'lucide-react';
 import { toBengaliNumber } from '../utils/calculator';
-import { getAuthIdToken } from '../lib/firebase';
+import { adminAuth, getAuthIdToken } from '../lib/firebase';
 
 interface SourceCodeDownloadModalProps {
   isOpen: boolean;
@@ -36,7 +36,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
     let active = true;
     (async () => {
       try {
-        const token = await getAuthIdToken();
+        const token = await getAuthIdToken(false, adminAuth);
         if (!token) return;
         const res = await fetch('/api/admin/source-zip', {
           method: 'HEAD',
@@ -69,7 +69,7 @@ export const SourceCodeDownloadModal: React.FC<SourceCodeDownloadModalProps> = (
     setDownloadSuccess(false);
 
     try {
-      const token = await getAuthIdToken(true);
+      const token = await getAuthIdToken(true, adminAuth);
       if (!token) {
         throw new Error('অ্যাডমিন Google অ্যাকাউন্টে সাইন-ইন থাকা আবশ্যক');
       }

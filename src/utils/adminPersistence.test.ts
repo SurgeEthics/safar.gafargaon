@@ -43,6 +43,24 @@ test('stripUndefinedFields removes undefined keys recursively without mutating d
   assert.equal('y' in result.nested, false);
 });
 
+test('stripUndefinedFields preserves Firestore FieldValue-like class instances without stripping prototype', () => {
+  class MockFieldValue {
+    readonly _methodName: string;
+    constructor(methodName: string) {
+      this._methodName = methodName;
+    }
+  }
+  const tsSentinel = new MockFieldValue('serverTimestamp');
+  const result = stripUndefinedFields({
+    uid: 'user-1',
+    optional: undefined,
+    updatedAt: tsSentinel,
+  });
+  assert.equal(result.updatedAt, tsSentinel);
+  assert.equal(result.updatedAt instanceof MockFieldValue, true);
+  assert.equal('optional' in result, false);
+});
+
 test('mergeRemoteSettingsWithDefaults preserves remote announcementNotice and custom fields over defaults', () => {
   const defaults = {
     primaryColor: 'emerald',

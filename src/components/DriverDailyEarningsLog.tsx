@@ -13,8 +13,9 @@ import {
   Wallet
 } from 'lucide-react';
 import { toBengaliNumber } from '../utils/calculator';
+import { computeDriverStatsFromCompletedTrips } from '../utils/cloudSync';
 import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
-import { db, auth, handleFirestoreError } from '../lib/firebase';
+import { driverDb, driverAuth, handleDriverFirestoreError } from '../lib/firebase';
 import { isAuthorizedAdminEmail } from '../utils/adminAuth';
 import { AutoMarqueeText } from './AutoMarqueeText';
 
@@ -35,6 +36,7 @@ export interface DriverDailyEarningsLogProps {
   driverPhone?: string;
   driverId?: string;
   driverName?: string;
+  driverAuthUid?: string | null;
   todayTrips: number;
   todayEarnings: number;
   totalTrips?: number;
@@ -46,6 +48,7 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
   driverPhone,
   driverId,
   driverName,
+  driverAuthUid,
   todayTrips,
   todayEarnings,
   totalTrips,
@@ -192,39 +195,15 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
     return [...existingList, { ...entry, id: canonicalNewId || entry.id }];
   };
 
-  // 1. Load persistent trips log with multi-source real-time Firestore sync
+  // 1. Load persistent trips log strictly from authoritative Firestore for this individual driver
   useEffect(() => {
-    if (!cleanPhone && !driverId) return;
-
-    const isTasnimul = cleanPhone.endsWith('304841550') || cleanPhone.endsWith('1711223344') || Boolean(driverName && driverName.toUpperCase().includes('TASNIMUL'));
-
-    // Initial load from localStorage cache (strip any old dummy test trips)
-    let currentTrips: DriverTripLogEntry[] = [];
-    try {
-      const localData = localStorage.getItem(`safar_driver_trip_log_${cleanPhone}`);
-      if (localData) {
-        const parsed = JSON.parse(localData);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out any legacy dummy seeded trips with hardcoded IDs
-          currentTrips = parsed
-            .filter((p: any) => p && p.id && !p.id.startsWith('trip-tasnimul-'))
-            .map((p: any) => ({
-              ...p,
-              id: getCanonicalTripId(p.id),
-              time: formatBengaliTime(p.time, p.createdAtMs),
-              date: getLocalDateKey(p.createdAtMs, p.date)
-            }));
-        }
-      }
-    } catch {}
-
-    if (currentTrips.length > 0) {
-      setTripLogs(currentTrips);
+    const targetDriverKey = driverId || cleanPhone;
+    if (!targetDriverKey) {
+      setTripLogs([]);
+      return;
     }
 
-    const unsubs: (() => void)[] = [];
-
-    // Helper to re-sort and persist
+    const cacheKey = `safar_driver_trip_log_${cleanPhone || targetDriverKey}`;
     const saveTripsState = (list: DriverTripLogEntry[]) => {
       const sorted = [...list].sort((a, b) => {
         const aMs = a.createdAtMs || 0;
@@ -234,94 +213,82 @@ export const DriverDailyEarningsLog: React.FC<DriverDailyEarningsLogProps> = ({
       });
       setTripLogs(sorted);
       try {
-        localStorage.setItem(`safar_driver_trip_log_${cleanPhone}`, JSON.stringify(sorted));
+        if (sorted.length > 0) {
+          localStorage.setItem(cacheKey, JSON.stringify(sorted));
+        } else {
+          localStorage.removeItem(cacheKey);
+        }
       } catch {}
     };
 
-    // Merge syncedTrips (passenger history on same device for this driver)
-    if (Array.isArray(syncedTrips) && syncedTrips.length > 0) {
-      syncedTrips.forEach((st: any) => {
-        if (!st) return;
-        const stDriverPhone = (st.driverPhone || '').replace(/[^0-9]/g, '');
-        const stDriverName = st.driverName || '';
-        const matches = (cleanPhone && stDriverPhone && (cleanPhone === stDriverPhone || cleanPhone.endsWith(stDriverPhone) || stDriverPhone.endsWith(cleanPhone))) ||
-                        (driverName && stDriverName && driverName === stDriverName) ||
-                        (isTasnimul && stDriverName.toUpperCase().includes('TASNIMUL'));
-        if (matches) {
-          const dateKey = getLocalDateKey(st.createdAtMs, st.date);
-          const timeFormatted = formatBengaliTime(st.time || st.date, st.createdAtMs);
-          const entry: DriverTripLogEntry = {
-            id: getCanonicalTripId(st.id),
-            date: dateKey,
-            dateBengali: formatBengaliDate(dateKey),
-            time: timeFormatted,
-            pickup: st.pickupPoint || 'পিকআপ স্থান',
-            destination: st.destination || 'গন্তব্য স্থান',
-            fare: Number(st.fare) || 30,
-            distanceKm: st.distanceKm,
-            passengerName: 'সম্মানিত যাত্রী',
-            createdAtMs: st.createdAtMs || Date.now()
-          };
-          currentTrips = upsertTripEntry(currentTrips, entry);
-        }
-      });
-      saveTripsState(currentTrips);
-    }
-
-    // Listener A & B require authenticated Firebase user (satisfies secure Firestore allow list rules)
-    const currentUser = auth.currentUser;
+    const currentUser = driverAuth.currentUser;
     const isAdminUser = isAuthorizedAdminEmail(currentUser?.email, currentUser?.emailVerified);
-    const driverKeys = new Set<string>();
-    if (cleanPhone) driverKeys.add(cleanPhone);
-    if (driverId) driverKeys.add(driverId);
 
-    if (currentUser?.emailVerified) {
-      driverKeys.forEach((docKey) => {
-        try {
-          const path = `drivers/${docKey}/completed_trips`;
-          const qTrips = isAdminUser
-            ? query(collection(db, 'drivers', docKey, 'completed_trips'), orderBy('createdAtMs', 'desc'), limit(100))
-            : query(collection(db, 'drivers', docKey, 'completed_trips'), where('ownerUid', '==', currentUser.uid), limit(100));
-
-          unsubs.push(
-            onSnapshot(
-              qTrips,
-              (snap) => {
-                if (!snap.empty) {
-                  snap.forEach((docSnap) => {
-                    const d = docSnap.data();
-                    const dateKey = getLocalDateKey(d.createdAtMs, d.date);
-                    const timeFormatted = formatBengaliTime(d.time, d.createdAtMs);
-                    const entry: DriverTripLogEntry = {
-                      id: getCanonicalTripId(docSnap.id),
-                      date: dateKey,
-                      dateBengali: d.dateBengali || formatBengaliDate(dateKey),
-                      time: timeFormatted,
-                      pickup: d.pickup || d.pickupPoint || 'পিকআপ স্থান',
-                      destination: d.destination || 'গন্তব্য স্থান',
-                      fare: Number(d.fare) || 30,
-                      distanceKm: d.distanceKm,
-                      passengerName: d.passengerName || 'সম্মানিত যাত্রী',
-                      createdAtMs: d.createdAtMs || Date.now(),
-                    };
-                    currentTrips = upsertTripEntry(currentTrips, entry);
-                  });
-                  saveTripsState(currentTrips);
-                }
-              },
-              (err) => {
-                handleFirestoreError(err, 'list', path);
-              }
-            )
-          );
-        } catch {}
-      });
+    if (!currentUser?.emailVerified || (driverAuthUid && currentUser.uid !== driverAuthUid)) {
+      setTripLogs([]);
+      return;
     }
+
+    const path = `drivers/${targetDriverKey}/completed_trips`;
+    const qTrips = isAdminUser
+      ? query(collection(driverDb, 'drivers', targetDriverKey, 'completed_trips'), orderBy('createdAtMs', 'desc'), limit(100))
+      : query(collection(driverDb, 'drivers', targetDriverKey, 'completed_trips'), where('ownerUid', '==', currentUser.uid), limit(100));
+
+    const unsubscribe = onSnapshot(
+      qTrips,
+      (snap) => {
+        if (snap.empty) {
+          if (!snap.metadata.fromCache) {
+            saveTripsState([]);
+            if (onSyncTodayStats) {
+              const now = new Date();
+              const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+              const stats = computeDriverStatsFromCompletedTrips([], todayKey);
+              onSyncTodayStats(stats.todayTrips, stats.todayEarnings);
+            }
+          }
+          return;
+        }
+
+        let firestoreTrips: DriverTripLogEntry[] = [];
+        snap.forEach((docSnap) => {
+          const d = docSnap.data();
+          const dateKey = getLocalDateKey(d.createdAtMs, d.date);
+          const timeFormatted = formatBengaliTime(d.time, d.createdAtMs);
+          const entry: DriverTripLogEntry = {
+            id: getCanonicalTripId(docSnap.id),
+            date: dateKey,
+            dateBengali: d.dateBengali || formatBengaliDate(dateKey),
+            time: timeFormatted,
+            pickup: d.pickup || d.pickupPoint || 'পিকআপ স্থান',
+            destination: d.destination || 'গন্তব্য স্থান',
+            fare: Number(d.fare) || 30,
+            distanceKm: d.distanceKm,
+            passengerName: d.passengerName || 'সম্মানিত যাত্রী',
+            createdAtMs: d.createdAtMs || Date.now(),
+          };
+          firestoreTrips = upsertTripEntry(firestoreTrips, entry);
+        });
+
+        saveTripsState(firestoreTrips);
+        if (onSyncTodayStats && !snap.metadata.fromCache) {
+          const now = new Date();
+          const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const stats = computeDriverStatsFromCompletedTrips(firestoreTrips, todayKey);
+          if (stats.todayTrips > 0 || stats.todayEarnings > 0) {
+            onSyncTodayStats(stats.todayTrips, stats.todayEarnings);
+          }
+        }
+      },
+      (err) => {
+        handleDriverFirestoreError(err, 'list', path);
+      }
+    );
 
     return () => {
-      unsubs.forEach(u => u());
+      unsubscribe();
     };
-  }, [cleanPhone, driverId, driverName, syncedTrips]);
+  }, [cleanPhone, driverId, driverAuthUid]);
 
   // Current today's date formatted
   const [todayStr, setTodayStr] = useState(() => {

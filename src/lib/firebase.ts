@@ -28,7 +28,17 @@ export const firebaseConfig = {
     import.meta.env.VITE_FIRESTORE_DATABASE_ID || firebaseAppletConfig.firestoreDatabaseId,
 };
 
-const app: FirebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+function getOrCreateNamedApp(name?: string): FirebaseApp {
+  if (!name) {
+    return !getApps().length ? initializeApp(firebaseConfig) : getApp();
+  }
+  const existing = getApps().find((a) => a.name === name);
+  return existing || initializeApp(firebaseConfig, name);
+}
+
+const app: FirebaseApp = getOrCreateNamedApp();
+const driverApp: FirebaseApp = getOrCreateNamedApp('safar-driver');
+const adminApp: FirebaseApp = getOrCreateNamedApp('safar-admin');
 
 function createSafeFirestore(firebaseApp: FirebaseApp): Firestore {
   const dbId = firebaseConfig.firestoreDatabaseId;
@@ -47,18 +57,55 @@ function createSafeFirestore(firebaseApp: FirebaseApp): Firestore {
   }
 }
 
-export const db: Firestore = createSafeFirestore(app);
-export const auth: Auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.addScope('email');
-googleProvider.addScope('profile');
-googleProvider.setCustomParameters({ prompt: 'select_account' });
+function createGoogleProvider(): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider();
+  provider.addScope('email');
+  provider.addScope('profile');
+  provider.setCustomParameters({ prompt: 'select_account' });
+  return provider;
+}
 
-export async function signInWithGooglePopup(): Promise<User> {
+// 1. Passenger Session ([DEFAULT] Firebase App)
+export const passengerApp: FirebaseApp = app;
+export const db: Firestore = createSafeFirestore(app);
+export const passengerDb: Firestore = db;
+export const auth: Auth = getAuth(app);
+export const passengerAuth: Auth = auth;
+export const googleProvider = createGoogleProvider();
+
+// 2. Driver Session (Isolated 'safar-driver' Firebase App)
+export { driverApp };
+export const driverDb: Firestore = createSafeFirestore(driverApp);
+export const driverAuth: Auth = getAuth(driverApp);
+const driverGoogleProvider = createGoogleProvider();
+
+// 3. Admin Session (Isolated 'safar-admin' Firebase App)
+export { adminApp };
+export const adminDb: Firestore = createSafeFirestore(adminApp);
+export const adminAuth: Auth = getAuth(adminApp);
+const adminGoogleProvider = createGoogleProvider();
+
+export async function signInWithPassengerGooglePopup(): Promise<User> {
   googleProvider.setCustomParameters({ prompt: 'select_account' });
   // Call signInWithPopup synchronously without prior awaits so browser user gesture is preserved
-  const result = await signInWithPopup(auth, googleProvider);
+  const result = await signInWithPopup(passengerAuth, googleProvider);
   return result.user;
+}
+
+export async function signInWithDriverGooglePopup(): Promise<User> {
+  driverGoogleProvider.setCustomParameters({ prompt: 'select_account' });
+  const result = await signInWithPopup(driverAuth, driverGoogleProvider);
+  return result.user;
+}
+
+export async function signInWithAdminGooglePopup(): Promise<User> {
+  adminGoogleProvider.setCustomParameters({ prompt: 'select_account' });
+  const result = await signInWithPopup(adminAuth, adminGoogleProvider);
+  return result.user;
+}
+
+export async function signInWithGooglePopup(): Promise<User> {
+  return signInWithPassengerGooglePopup();
 }
 
 export function isFirebaseAuthError(err: unknown): boolean {
@@ -123,12 +170,24 @@ export function formatGoogleAuthError(err: unknown): string {
   }
 }
 
-export async function signOutFirebase(): Promise<void> {
-  await signOut(auth);
+export async function signOutPassengerFirebase(): Promise<void> {
+  await signOut(passengerAuth);
 }
 
-export async function getAuthIdToken(forceRefresh = false): Promise<string | null> {
-  const currentUser = auth.currentUser;
+export async function signOutDriverFirebase(): Promise<void> {
+  await signOut(driverAuth);
+}
+
+export async function signOutAdminFirebase(): Promise<void> {
+  await signOut(adminAuth);
+}
+
+export async function signOutFirebase(): Promise<void> {
+  await signOutPassengerFirebase();
+}
+
+export async function getAuthIdToken(forceRefresh = false, targetAuth: Auth = passengerAuth): Promise<string | null> {
+  const currentUser = targetAuth.currentUser;
   if (!currentUser) return null;
   try {
     return await currentUser.getIdToken(forceRefresh);
@@ -147,7 +206,9 @@ async function testConnection() {
   }
 }
 if (typeof window !== 'undefined') {
-  void auth.authStateReady().catch(() => {});
+  void passengerAuth.authStateReady().catch(() => {});
+  void driverAuth.authStateReady().catch(() => {});
+  void adminAuth.authStateReady().catch(() => {});
   void testConnection();
 }
 
@@ -173,18 +234,20 @@ export interface FirestoreErrorInfo {
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
-  path: string | null = null
+  path: string | null = null,
+  targetAuth: Auth = passengerAuth
 ) {
+  const currentUser = targetAuth.currentUser;
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
+      userId: currentUser?.uid,
+      email: currentUser?.email,
+      emailVerified: currentUser?.emailVerified,
+      isAnonymous: currentUser?.isAnonymous,
+      tenantId: currentUser?.tenantId,
       providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
+        currentUser?.providerData?.map((provider) => ({
           providerId: provider.providerId,
           email: provider.email,
         })) || [],
@@ -194,4 +257,20 @@ export function handleFirestoreError(
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   return new Error(JSON.stringify(errInfo));
+}
+
+export function handleDriverFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null = null
+) {
+  return handleFirestoreError(error, operationType, path, driverAuth);
+}
+
+export function handleAdminFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null = null
+) {
+  return handleFirestoreError(error, operationType, path, adminAuth);
 }

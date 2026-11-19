@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { X, Cloud, Check, Wifi, Globe, Server, RefreshCw } from 'lucide-react';
+import { doc, getDocFromServer } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { liveLocationService } from '../services/liveLocationService';
 import { validateSafeExternalUrl } from '../utils/security';
+import { isCloudflareStaticHtmlResponse } from '../utils/cloudSync';
 
 interface CloudflareSettingsModalProps {
   isOpen: boolean;
@@ -54,8 +57,9 @@ export const CloudflareSettingsModal: React.FC<CloudflareSettingsModalProps> = (
     setIsTesting(true);
     setTestStatus(null);
 
+    const hasCustomWorker = workerUrl.trim().length > 0;
     let cleanUrl = window.location.origin;
-    if (workerUrl.trim()) {
+    if (hasCustomWorker) {
       const check = validateSafeExternalUrl(workerUrl);
       if (!check.ok || !check.normalizedUrl) {
         setTestStatus(`❌ ${check.error || 'নিরাপদ HTTPS Worker URL দিন'}`);
@@ -64,21 +68,44 @@ export const CloudflareSettingsModal: React.FC<CloudflareSettingsModalProps> = (
       }
       cleanUrl = check.normalizedUrl;
     }
-    const endpoint = `${cleanUrl}/api/live/health`;
 
     try {
       const start = Date.now();
-      const res = await fetch(endpoint, { cache: 'no-store' });
-      const elapsed = Date.now() - start;
-
-      if (res.ok) {
-        const data = await res.json();
-        setTestStatus(`✅ সফল! সার্ভার রেসপন্স টাইম: ${elapsed}ms (${data.server || data.edgeServer || 'Active'})`);
+      if (hasCustomWorker) {
+        const res = await fetch(`${cleanUrl}/api/live/health`, { cache: 'no-store' });
+        const elapsed = Date.now() - start;
+        const contentType = res.headers.get('content-type');
+        if (isCloudflareStaticHtmlResponse(contentType)) {
+          setTestStatus(`⚠️ প্রদত্ত URL-এ API Worker পাওয়া যায়নি (HTML পাওয়া গেছে)। সঠিক Cloudflare Worker URL দিন।`);
+        } else if (res.ok) {
+          const data = await res.json();
+          setTestStatus(`✅ সফল! Cloudflare Worker রেসপন্স: ${elapsed}ms (${data.server || data.edgeServer || 'Active'})`);
+        } else {
+          setTestStatus(`⚠️ সার্ভার রেসপন্স কোড: ${res.status}`);
+        }
       } else {
-        setTestStatus(`⚠️ সার্ভার রেসপন্স কোড: ${res.status}`);
+        // Check local Express backend first; if hosted statically on Cloudflare Pages (HTML SPA fallback), verify live Firestore server ping cleanly
+        let resolvedViaEdge = false;
+        try {
+          const res = await fetch(`${cleanUrl}/api/live/health`, { cache: 'no-store' });
+          const contentType = res.headers.get('content-type');
+          if (res.ok && !isCloudflareStaticHtmlResponse(contentType)) {
+            const data = await res.json();
+            const elapsed = Date.now() - start;
+            setTestStatus(`✅ সফল! সার্ভার রেসপন্স টাইম: ${elapsed}ms (${data.server || data.edgeServer || 'Active'})`);
+            resolvedViaEdge = true;
+          }
+        } catch {}
+
+        if (!resolvedViaEdge) {
+          const fsStart = Date.now();
+          await getDocFromServer(doc(db, 'settings', 'app_config'));
+          const fsElapsed = Date.now() - fsStart;
+          setTestStatus(`✅ সংযুক্ত! Cloudflare Pages + Firebase Firestore লাইভ সিঙ্ক সক্রিয় (${fsElapsed}ms)`);
+        }
       }
     } catch (e: any) {
-      setTestStatus(`❌ সংযোগ ব্যর্থ: ${e.message || 'সার্ভার পাওয়া যায়নি'}`);
+      setTestStatus(`❌ সংযোগ ব্যর্থ: ${e?.message || 'সার্ভার পাওয়া যায়নি'}`);
     } finally {
       setIsTesting(false);
     }

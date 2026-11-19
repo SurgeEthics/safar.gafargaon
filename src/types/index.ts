@@ -62,6 +62,9 @@ export interface Driver {
   rating: number;
   reviewCount?: number;
   totalTrips?: number;
+  todayDate?: string;
+  todayTrips?: number;
+  todayEarnings?: number;
   avatarBg?: string;
   isAvailable?: boolean;
   isOnline?: boolean;

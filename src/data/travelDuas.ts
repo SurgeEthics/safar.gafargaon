@@ -233,3 +233,69 @@ export function formatDuaForCopy(dua: {
   if (dua.reference) parts.push(dua.reference);
   return parts.join('\n\n');
 }
+
+export interface TravelDuaSlide {
+  id: string;
+  parentNumberBn: string;
+  serialBn: string;
+  title: string;
+  subTitle?: string;
+  arabic?: string;
+  transliteration?: string;
+  translation?: string;
+  narration?: string;
+  context?: string;
+  reference?: string;
+}
+
+/**
+ * Flattened sequential slides from 1 to 12, including both sub-duas of #1 (01.1, 01.2)
+ * and both sub-duas of #7 (07.1, 07.2), giving 14 ordered sticker slides.
+ */
+export const TRAVEL_DUA_SLIDES: TravelDuaSlide[] = TRAVEL_DUAS.flatMap((item): TravelDuaSlide[] => {
+  if (item.hasSubmenu && item.subItems && item.subItems.length > 0) {
+    return item.subItems.map((sub) => ({
+      id: sub.id,
+      parentNumberBn: item.serialNumberBn,
+      serialBn: sub.serialBn,
+      title: sub.title,
+      subTitle: sub.subTitle,
+      arabic: sub.arabic,
+      transliteration: sub.transliteration,
+      translation: sub.translation,
+      narration: sub.narration,
+      reference: sub.reference,
+    }));
+  }
+
+  return [
+    {
+      id: item.id,
+      parentNumberBn: item.serialNumberBn,
+      serialBn: item.serialNumberBn,
+      title: `[${item.serialNumberBn}] ${item.title}`,
+      subTitle: item.subTitle,
+      arabic: item.arabic,
+      transliteration: item.transliteration,
+      translation: item.translation,
+      narration: item.narration,
+      context: item.context,
+      reference: item.reference,
+    },
+  ];
+});
+
+export function getDuaSlideIndexById(id: string): number {
+  return TRAVEL_DUA_SLIDES.findIndex((slide) => slide.id === id);
+}
+
+export function getWrappedDuaSlideIndex(
+  currentIndex: number,
+  delta: number,
+  total: number = TRAVEL_DUA_SLIDES.length
+): number {
+  if (total <= 0) return 0;
+  const safeCurrent = ((currentIndex % total) + total) % total;
+  return (((safeCurrent + delta) % total) + total) % total;
+}
+

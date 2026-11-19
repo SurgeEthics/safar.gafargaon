@@ -32,8 +32,8 @@
         "registeredAt": { "type": "string", "maxLength": 60 },
         "avatarBg": { "type": "string", "maxLength": 60 },
         "approxSpeedKmh": { "type": "number" },
-        "driverPhoto": { "type": "string", "maxLength": 60000 },
-        "photoUrl": { "type": "string", "maxLength": 60000 },
+        "driverPhoto": { "type": "string", "maxLength": 120000 },
+        "photoUrl": { "type": "string", "maxLength": 120000 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "ownerUid", "name", "category", "standName", "lat", "lng"]

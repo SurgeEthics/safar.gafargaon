@@ -101,3 +101,11 @@ test('Dirty Dozen #11 & #12: No blanket client-delegated list queries or legacy 
   assert.ok(!rulesText.includes('match /passengers/'), 'Obsolete passengers collection must stay denied');
   assert.ok(!rulesText.includes('match /whatsapp_verifications/'), 'Obsolete whatsapp_verifications must stay denied');
 });
+
+test('Rules safety: safe token claim guards, explicit key checks without .get(), and non-admin isOnline guards', () => {
+  assert.ok(rulesText.includes("('email_verified' in request.auth.token)"));
+  assert.ok(rulesText.includes("('email' in request.auth.token)"));
+  assert.ok(!rulesText.includes('.get('), 'Use explicit key membership checks instead of .get()');
+  assert.ok(rulesText.includes("!('isOnline' in incoming()) || incoming().isOnline == false"));
+  assert.ok(rulesText.includes("('isVerified' in existing()) && existing().isVerified == true"));
+});

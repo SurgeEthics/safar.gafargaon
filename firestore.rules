@@ -27,7 +27,7 @@ service cloud.firestore {
     }
 
     function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn() && ('email_verified' in request.auth.token) && request.auth.token.email_verified == true;
     }
 
     function isOwner(uid) {
@@ -36,7 +36,7 @@ service cloud.firestore {
 
     // Cost-safe admin check (no DB read) for use inside allow list queries
     function isBootstrappedAdmin() {
-      return isVerifiedUser() && request.auth.token.email == 'safar.gafargaon@gmail.com';
+      return isVerifiedUser() && ('email' in request.auth.token) && request.auth.token.email == 'safar.gafargaon@gmail.com';
     }
 
     // Full RBAC admin check for single-document read/write gates
@@ -260,8 +260,8 @@ service cloud.firestore {
         && isOptStr(data, 'registeredAt', 60)
         && isOptStr(data, 'avatarBg', 60)
         && isOptNum(data, 'approxSpeedKmh', 5, 160)
-        && isOptStr(data, 'driverPhoto', 60000)
-        && isOptStr(data, 'photoUrl', 60000)
+        && isOptStr(data, 'driverPhoto', 120000)
+        && isOptStr(data, 'photoUrl', 120000)
         && ('updatedAt' in data) && data.updatedAt is timestamp;
     }
 
@@ -502,34 +502,36 @@ service cloud.firestore {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isBootstrappedAdmin();
       allow create: if isValidId(userId)
-        && (isOwner(userId) || isAdmin())
         && isValidUserProfile(incoming())
         && incoming().uid == userId
-        && (isAdmin() || incoming().role in ['passenger', 'driver'])
         && incoming().keys().hasAll(['uid', 'name', 'role', 'updatedAt'])
         && incoming().keys().hasOnly(['uid', 'name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && ((isOwner(userId) && incoming().role in ['passenger', 'driver']) || isAdmin());
       allow update: if isValidId(userId)
-        && (isOwner(userId) || isAdmin())
         && isValidUserProfile(incoming())
         && incoming().uid == userId
         && (!('uid' in existing()) || incoming().uid == existing().uid)
         && incoming().updatedAt == request.time
         && (
-          isAdmin() ||
           (
-            incoming().role == existing().role &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'updatedAt'])
-          ) ||
-          (
-            incoming().role in ['passenger', 'driver'] &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
-          ) ||
-          (
-            !('uid' in existing()) &&
-            incoming().role in ['passenger', 'driver'] &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
-          )
+            isOwner(userId) && (
+              (
+                ('role' in existing()) &&
+                incoming().role == existing().role &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'updatedAt'])
+              ) ||
+              (
+                incoming().role in ['passenger', 'driver'] &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
+              ) ||
+              (
+                !('uid' in existing()) &&
+                incoming().role in ['passenger', 'driver'] &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'name', 'email', 'phone', 'homeLocation', 'emergencyContact', 'photoUrl', 'role', 'updatedAt'])
+              )
+            )
+          ) || isAdmin()
         );
       allow delete: if isValidId(userId) && isAdmin();
 
@@ -537,13 +539,13 @@ service cloud.firestore {
       match /trips/{tripId} {
         allow get: if isValidId(userId)
           && isValidId(tripId)
-          && exists(/databases/$(database)/documents/users/$(userId))
-          && (isOwner(userId) || isAdmin());
+          && (isOwner(userId) || isAdmin())
+          && exists(/databases/$(database)/documents/users/$(userId));
         allow list: if isOwner(userId) || isBootstrappedAdmin();
         allow create: if isValidId(userId)
           && isValidId(tripId)
-          && exists(/databases/$(database)/documents/users/$(userId))
           && (isOwner(userId) || isAdmin())
+          && exists(/databases/$(database)/documents/users/$(userId))
           && isValidPassengerTrip(incoming())
           && incoming().keys().hasAll(['id', 'pickupPoint', 'destination', 'fare', 'status', 'createdAt'])
           && incoming().keys().hasOnly(['id', 'date', 'pickupPoint', 'destination', 'driverName', 'driverPhone', 'vehicleCategory', 'vehicleModel', 'plateNumber', 'fare', 'status', 'ratingGiven', 'createdAt', 'createdAtMs'])
@@ -556,8 +558,8 @@ service cloud.firestore {
           && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'ratingGiven']);
         allow delete: if isValidId(userId)
           && isValidId(tripId)
-          && exists(/databases/$(database)/documents/users/$(userId))
-          && (isOwner(userId) || isAdmin());
+          && (isOwner(userId) || isAdmin())
+          && exists(/databases/$(database)/documents/users/$(userId));
       }
     }
 
@@ -580,16 +582,17 @@ service cloud.firestore {
           'driverPhoto', 'photoUrl', 'updatedAt'
         ])
         && (
-          isAdmin() || (
+          (
             incoming().ownerUid == request.auth.uid &&
-            incoming().get('isVerified', false) == false &&
-            incoming().get('nidVerified', false) == false &&
-            incoming().get('licenseVerified', false) == false &&
-            incoming().get('phoneVerified', false) == false &&
-            incoming().get('verificationStatus', 'pending') == 'pending' &&
-            (incoming().get('rating', 5) == 5 || incoming().get('rating', 5.0) == 5.0) &&
-            incoming().get('totalTrips', 0) == 0
-          )
+            (!('isOnline' in incoming()) || incoming().isOnline == false) &&
+            (!('isVerified' in incoming()) || incoming().isVerified == false) &&
+            (!('nidVerified' in incoming()) || incoming().nidVerified == false) &&
+            (!('licenseVerified' in incoming()) || incoming().licenseVerified == false) &&
+            (!('phoneVerified' in incoming()) || incoming().phoneVerified == false) &&
+            (!('verificationStatus' in incoming()) || incoming().verificationStatus == 'pending') &&
+            (!('rating' in incoming()) || incoming().rating == 5 || incoming().rating == 5.0) &&
+            (!('totalTrips' in incoming()) || incoming().totalTrips == 0)
+          ) || isAdmin()
         );
       allow update: if isValidId(driverId)
         && isVerifiedUser()
@@ -597,21 +600,23 @@ service cloud.firestore {
         && (!('id' in existing()) || incoming().id == existing().id)
         && incoming().updatedAt == request.time
         && (
-          isAdmin() || (
+          (
+            ('ownerUid' in existing()) &&
             existing().ownerUid == request.auth.uid &&
             incoming().ownerUid == existing().ownerUid &&
-            incoming().get('isVerified', false) == existing().get('isVerified', false) &&
-            incoming().get('nidVerified', false) == existing().get('nidVerified', false) &&
-            incoming().get('licenseVerified', false) == existing().get('licenseVerified', false) &&
-            incoming().get('phoneVerified', false) == existing().get('phoneVerified', false) &&
-            incoming().get('verificationStatus', 'pending') == existing().get('verificationStatus', 'pending') &&
-            (incoming().get('rating', 5) == existing().get('rating', 5) || incoming().get('rating', 5.0) == existing().get('rating', 5.0)) &&
+            (!('isVerified' in existing()) ? (!('isVerified' in incoming()) || incoming().isVerified == false) : (('isVerified' in incoming()) && incoming().isVerified == existing().isVerified)) &&
+            (!('nidVerified' in existing()) ? (!('nidVerified' in incoming()) || incoming().nidVerified == false) : (('nidVerified' in incoming()) && incoming().nidVerified == existing().nidVerified)) &&
+            (!('licenseVerified' in existing()) ? (!('licenseVerified' in incoming()) || incoming().licenseVerified == false) : (('licenseVerified' in incoming()) && incoming().licenseVerified == existing().licenseVerified)) &&
+            (!('phoneVerified' in existing()) ? (!('phoneVerified' in incoming()) || incoming().phoneVerified == false) : (('phoneVerified' in incoming()) && incoming().phoneVerified == existing().phoneVerified)) &&
+            (!('verificationStatus' in existing()) ? (!('verificationStatus' in incoming()) || incoming().verificationStatus == 'pending') : (('verificationStatus' in incoming()) && incoming().verificationStatus == existing().verificationStatus)) &&
+            (!('rating' in existing()) ? (!('rating' in incoming()) || incoming().rating == 5 || incoming().rating == 5.0) : (('rating' in incoming()) && incoming().rating == existing().rating)) &&
+            (!('isOnline' in incoming()) || incoming().isOnline == false || (('isVerified' in existing()) && existing().isVerified == true)) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'isOnline', 'lat', 'lng', 'standName', 'vehicleModel',
               'driverPhoto', 'photoUrl', 'todayDate', 'todayTrips',
               'todayEarnings', 'totalTrips', 'updatedAt'
             ])
-          )
+          ) || isAdmin()
         );
       allow delete: if isValidId(driverId) && isAdmin();
 
@@ -631,14 +636,20 @@ service cloud.firestore {
             'regLastFour', 'manufacturingYear', 'chassisNumber', 'engineNumber',
             'nidNumber', 'nidFrontPhoto', 'nidBackPhoto', 'taxTokenReceiptPhoto', 'updatedAt'
           ])
-          && (isAdmin() || (incoming().ownerUid == request.auth.uid && isDriverOwner(driverId)))
+          && ((incoming().ownerUid == request.auth.uid && isDriverOwner(driverId)) || isAdmin())
           && incoming().updatedAt == request.time;
         allow update: if isValidId(driverId)
           && docId == 'kyc'
           && isVerifiedUser()
           && isValidDriverPrivateKyc(incoming())
-          && incoming().ownerUid == existing().ownerUid
-          && (isAdmin() || isDriverOwner(driverId))
+          && (
+            (
+              ('ownerUid' in existing()) &&
+              existing().ownerUid == request.auth.uid &&
+              incoming().ownerUid == existing().ownerUid &&
+              isDriverOwner(driverId)
+            ) || isAdmin()
+          )
           && incoming().diff(existing()).affectedKeys().hasOnly([
             'phone', 'licenseNumber', 'firstIssueDate', 'licenseType',
             'regLastFour', 'manufacturingYear', 'chassisNumber', 'engineNumber',
@@ -665,7 +676,7 @@ service cloud.firestore {
             'id', 'ownerUid', 'date', 'dateBengali', 'time',
             'pickup', 'destination', 'fare', 'distanceKm', 'passengerName', 'createdAtMs'
           ])
-          && (isAdmin() || (incoming().ownerUid == request.auth.uid && isDriverOwner(driverId)));
+          && ((incoming().ownerUid == request.auth.uid && isDriverOwner(driverId)) || isAdmin());
         allow update: if isValidId(driverId)
           && isValidId(tripId)
           && isAdmin()
@@ -679,7 +690,7 @@ service cloud.firestore {
     match /ride_requests/{requestId} {
       allow get: if isValidId(requestId) && isVerifiedUser() && (
         existing().passengerUid == request.auth.uid ||
-        existing().get('driverUid', '') == request.auth.uid ||
+        (('driverUid' in existing()) && existing().driverUid == request.auth.uid) ||
         existing().status == 'pending' ||
         isAdmin()
       );
@@ -719,7 +730,7 @@ service cloud.firestore {
         && incoming().createdAtMs == existing().createdAtMs
         && incoming().updatedAt == request.time
         && (
-          isAdmin() || (
+          (
             // Terminal State Locking: completed/cancelled/declined cannot be changed by non-admins
             !(existing().status in ['completed', 'cancelled', 'declined']) && (
               // Action 1: Driver Accepts Pending Ride
@@ -736,7 +747,8 @@ service cloud.firestore {
               // Action 2: Driver Updates Live Location during Active Ride
               (
                 (existing().status in ['accepted', 'in_transit']) &&
-                existing().get('driverUid', '') == request.auth.uid &&
+                ('driverUid' in existing()) &&
+                existing().driverUid == request.auth.uid &&
                 incoming().driverUid == existing().driverUid &&
                 incoming().status == existing().status &&
                 incoming().diff(existing()).affectedKeys().hasOnly(['driverLat', 'driverLng', 'updatedAt'])
@@ -745,16 +757,18 @@ service cloud.firestore {
               (
                 existing().status == 'accepted' &&
                 incoming().status == 'in_transit' &&
+                ('driverUid' in existing()) &&
                 incoming().driverUid == existing().driverUid &&
-                (existing().get('driverUid', '') == request.auth.uid || existing().passengerUid == request.auth.uid) &&
+                (existing().driverUid == request.auth.uid || existing().passengerUid == request.auth.uid) &&
                 incoming().diff(existing()).affectedKeys().hasOnly(['status', 'driverLat', 'driverLng', 'boardedAt', 'updatedAt'])
               ) ||
               // Action 4: Complete Active Ride
               (
                 (existing().status in ['accepted', 'in_transit']) &&
                 incoming().status == 'completed' &&
+                ('driverUid' in existing()) &&
                 incoming().driverUid == existing().driverUid &&
-                (existing().get('driverUid', '') == request.auth.uid || existing().passengerUid == request.auth.uid) &&
+                (existing().driverUid == request.auth.uid || existing().passengerUid == request.auth.uid) &&
                 incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'updatedAt'])
               ) ||
               // Action 5: Passenger Cancels Own Pending/Accepted Ride
@@ -768,7 +782,8 @@ service cloud.firestore {
               (
                 (
                   (
-                    existing().get('driverUid', '') == request.auth.uid &&
+                    ('driverUid' in existing()) &&
+                    existing().driverUid == request.auth.uid &&
                     (existing().status in ['accepted', 'in_transit'])
                   ) || (
                     existing().status == 'pending' &&
@@ -782,7 +797,7 @@ service cloud.firestore {
                 incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt', 'declinedAt', 'updatedAt'])
               )
             )
-          )
+          ) || isAdmin()
         );
       allow delete: if isValidId(requestId)
         && isVerifiedUser()
@@ -812,13 +827,13 @@ service cloud.firestore {
           && incoming().passengerUid == existing().passengerUid
           && incoming().updatedAt == request.time
           && (
-            isAdmin() || (
+            (
               (
-                get(/databases/$(database)/documents/ride_requests/$(requestId)).data.driverUid == request.auth.uid ||
-                existing().passengerUid == request.auth.uid
+                existing().passengerUid == request.auth.uid ||
+                get(/databases/$(database)/documents/ride_requests/$(requestId)).data.driverUid == request.auth.uid
               ) &&
               incoming().diff(existing()).affectedKeys().hasOnly(['driverUid', 'driverPhone', 'otp', 'passengerPhone', 'updatedAt'])
-            )
+            ) || isAdmin()
           );
         allow delete: if isValidId(requestId) && isValidId(docId) && isAdmin();
       }

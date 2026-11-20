@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import fs from 'fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -620,10 +621,24 @@ app.post('/api/live/remove', writeRateLimiter, requireFirebaseAuth, (req: Authed
   return res.json({ success: true });
 });
 
+function ensureCleanSourceZipArchive(forceRebuild = false): string | null {
+  const zipPath = path.resolve(__dirname, 'private-archives', 'safar-gafargaon-clean-source.zip');
+  const scriptPath = path.resolve(__dirname, 'scripts', 'create-clean-zip.mjs');
+  if ((forceRebuild || !fs.existsSync(zipPath)) && fs.existsSync(scriptPath)) {
+    try {
+      execFileSync(process.execPath, [scriptPath], { cwd: __dirname, stdio: 'pipe', timeout: 15000 });
+    } catch (err) {
+      console.error('Failed to build clean source archive:', err);
+    }
+  }
+  return fs.existsSync(zipPath) ? zipPath : null;
+}
+
 // Mint 5-minute HMAC signed download link strictly for authenticated Super Admin
 app.post('/api/admin/source-zip-token', adminRateLimiter, requireFirebaseAdmin, (req: AuthedRequest, res: Response) => {
-  const zipPath = path.resolve(__dirname, 'private-archives', 'safar-gafargaon-clean-source.zip');
-  if (!fs.existsSync(zipPath)) {
+  const forceFresh = req.query.fresh === '1';
+  const zipPath = ensureCleanSourceZipArchive(forceFresh);
+  if (!zipPath) {
     return res.status(404).json({ error: 'সোর্স জিপ প্যাকেজ এখনো তৈরি হয়নি।' });
   }
   const stat = fs.statSync(zipPath);
@@ -658,8 +673,8 @@ async function handleAdminZipDownload(req: AuthedRequest, res: Response) {
     return res.status(401).json({ error: 'অ্যাডমিন Google অনুমোদন প্রয়োজন।' });
   }
 
-  const zipPath = path.resolve(__dirname, 'private-archives', 'safar-gafargaon-clean-source.zip');
-  if (!fs.existsSync(zipPath)) {
+  const zipPath = ensureCleanSourceZipArchive(false);
+  if (!zipPath) {
     return res.status(404).send('ZIP file not found');
   }
 

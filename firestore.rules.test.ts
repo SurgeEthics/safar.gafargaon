@@ -53,20 +53,24 @@ test('Dirty Dozen #2 & #10: Strict hasAll / hasOnly schema guards and boundary c
   assert.ok(!rulesText.includes('allow read, write: if true'), 'Forbidden open rule found');
   assert.ok(!rulesText.includes('allow write: if isSignedIn()'), 'Forbidden blanket signedIn write found');
   assert.ok(rulesText.includes('isValidId('), 'Missing ID poisoning regex guard');
-  assert.ok(rulesText.includes('incoming().keys().hasAll('), 'Missing hasAll create guard');
-  assert.ok(rulesText.includes('incoming().keys().hasOnly('), 'Missing hasOnly shadow-field guard');
+  assert.match(rulesText, /(?:incoming\(\)|d)\.keys\(\)\.hasAll\(/, 'Missing hasAll create guard');
+  assert.match(rulesText, /(?:incoming\(\)|d)\.keys\(\)\.hasOnly\(/, 'Missing hasOnly shadow-field guard');
   assert.ok(rulesText.includes('affectedKeys().hasOnly('), 'Missing update affectedKeys guard');
 });
 
 test('Dirty Dozen #4, #5, #6: PII & admin secrets isolated from public documents', () => {
-  // Public drivers match block must not allow nidNumber, licenseNumber, phone, nidFrontPhoto
+  // Public drivers match block + helper must not allow nidNumber, licenseNumber, phone, nidFrontPhoto
   const driversSectionStart = rulesText.indexOf('match /drivers/{driverId}');
   const driversPrivateStart = rulesText.indexOf('match /private/{docId}', driversSectionStart);
   const driversPublicBlock = rulesText.slice(driversSectionStart, driversPrivateStart);
+  const driverHelpersBlock = rulesText.slice(
+    rulesText.indexOf('function isValidDriverCoreFields'),
+    rulesText.indexOf('function isValidDriverPrivateKyc')
+  );
 
   for (const piiKey of ["'phone'", "'nidNumber'", "'licenseNumber'", "'nidFrontPhoto'", "'taxTokenReceiptPhoto'"]) {
     assert.ok(
-      !driversPublicBlock.includes(piiKey),
+      !driversPublicBlock.includes(piiKey) && !driverHelpersBlock.includes(piiKey),
       `Public /drivers rule must NOT accept PII key ${piiKey}`
     );
   }
@@ -75,10 +79,14 @@ test('Dirty Dozen #4, #5, #6: PII & admin secrets isolated from public documents
   const ridesStart = rulesText.indexOf('match /ride_requests/{requestId}');
   const ridesPrivateStart = rulesText.indexOf('match /private/{docId}', ridesStart);
   const ridesPublicBlock = rulesText.slice(ridesStart, ridesPrivateStart);
+  const rideHelpersBlock = rulesText.slice(
+    rulesText.indexOf('function isValidRideCreateFields'),
+    rulesText.indexOf('function isValidRidePrivateContact')
+  );
 
   for (const ridePii of ["'passengerPhone'", "'driverPhone'", "'otp'"]) {
     assert.ok(
-      !ridesPublicBlock.includes(ridePii),
+      !ridesPublicBlock.includes(ridePii) && !rideHelpersBlock.includes(ridePii),
       `Public /ride_requests rule must NOT accept PII key ${ridePii}`
     );
   }
@@ -88,12 +96,12 @@ test('Dirty Dozen #4, #5, #6: PII & admin secrets isolated from public documents
 });
 
 test('Dirty Dozen #7, #8, #9: State machine integrity, terminal state locking & identity binding', () => {
-  assert.ok(rulesText.includes("!(existing().status in ['completed', 'cancelled', 'declined'])"));
-  assert.ok(rulesText.includes("incoming().passengerUid == request.auth.uid"));
-  assert.ok(rulesText.includes("incoming().ownerUid == request.auth.uid"));
-  assert.ok(rulesText.includes("incoming().authorUid == request.auth.uid"));
-  assert.ok(rulesText.includes("incoming().createdAt == request.time"));
-  assert.ok(rulesText.includes("incoming().updatedAt == request.time"));
+  assert.match(rulesText, /!\((?:existing\(\)|prev)\.status in \['completed', 'cancelled', 'declined'\]\)/);
+  assert.match(rulesText, /(?:incoming\(\)|d)\.passengerUid == request\.auth\.uid/);
+  assert.match(rulesText, /(?:incoming\(\)|d)\.ownerUid == request\.auth\.uid/);
+  assert.match(rulesText, /(?:incoming\(\)|d)\.authorUid == request\.auth\.uid/);
+  assert.match(rulesText, /(?:incoming\(\)|d)\.createdAt == request\.time/);
+  assert.match(rulesText, /(?:incoming\(\)|d)\.updatedAt == request\.time/);
 });
 
 test('Dirty Dozen #11 & #12: No blanket client-delegated list queries or legacy shadow collections', () => {
@@ -106,6 +114,96 @@ test('Rules safety: safe token claim guards, explicit key checks without .get(),
   assert.ok(rulesText.includes("('email_verified' in request.auth.token)"));
   assert.ok(rulesText.includes("('email' in request.auth.token)"));
   assert.ok(!rulesText.includes('.get('), 'Use explicit key membership checks instead of .get()');
-  assert.ok(rulesText.includes("!('isOnline' in incoming()) || incoming().isOnline == false"));
-  assert.ok(rulesText.includes("('isVerified' in existing()) && existing().isVerified == true"));
+  assert.match(rulesText, /!\('isOnline' in (?:incoming\(\)|d)\)\s*\|\|\s*(?:incoming\(\)|d)\.isOnline == false/);
+  assert.match(rulesText, /\('isVerified' in (?:existing\(\)|prev)\)\s*&&\s*(?:existing\(\)|prev)\.isVerified == true/);
 });
+
+test('Firestore 1000-expression runtime limit regression guard: single-execution paths stay far below 1000 CEL nodes', () => {
+  const fnRe = /function\s+(\w+)\s*\([^)]*\)\s*\{/g;
+  const fns: Record<string, string> = {};
+  let m: RegExpExecArray | null;
+  while ((m = fnRe.exec(rulesText)) !== null) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    while (i < rulesText.length && depth > 0) {
+      if (rulesText[i] === '{') depth++;
+      else if (rulesText[i] === '}') depth--;
+      i++;
+    }
+    fns[m[1]] = rulesText.slice(m.index + m[0].length, i - 1);
+  }
+
+  function countStrictCel(expr: string, fnStack: string[] = []): number {
+    let s = expr.replace(/\/\/.*$/gm, '');
+    let count = 0;
+    const strs = s.match(/'[^']*'/g);
+    count += strs ? strs.length : 0;
+    s = s.replace(/'[^']*'/g, ' ');
+    const nums = s.match(/\b\d+(\.\d+)?\b/g);
+    count += nums ? nums.length : 0;
+    s = s.replace(/\b\d+(\.\d+)?\b/g, ' ');
+    const ops = s.match(/&&|\|\||==|!=|<=|>=|<|>|!|\?|:|\bin\b|\bis\b/g);
+    count += ops ? ops.length : 0;
+    const paths = s.match(/\/databases\/[^\s)]+/g);
+    if (paths) count += paths.length * 4;
+    s = s.replace(/\/databases\/[^\s)]+/g, ' ');
+    const ids = s.match(/\b[a-zA-Z_]\w*\b/g) || [];
+    for (const id of ids) {
+      if (id === 'return' || id === 'in' || id === 'is' || id === 'if') continue;
+      if (fns[id] && !fnStack.includes(id)) {
+        count += 1 + countStrictCel(fns[id], [...fnStack, id]);
+      } else {
+        count += 1;
+      }
+    }
+    const selects = s.match(/\.|\[/g);
+    count += selects ? selects.length : 0;
+    return count;
+  }
+
+  // Extract all allow rule expressions
+  const lines = rulesText.split('\n');
+  let matchPath = '';
+  let curAllow: { op: string; match: string; expr: string } | null = null;
+  const worstStaticNonBranching: Array<{ label: string; count: number }> = [];
+
+  for (const line of lines) {
+    const mm = line.match(/^\s*match\s+(\S+)\s*\{/);
+    if (mm) matchPath = mm[1];
+    const am = line.match(/^\s*allow\s+([^:]+):/);
+    if (am) curAllow = { op: am[1].trim(), match: matchPath, expr: '' };
+    if (curAllow) {
+      curAllow.expr += line + '\n';
+      if (line.includes(';')) {
+        const semiIdx = curAllow.expr.indexOf(';');
+        const cond = curAllow.expr.slice(curAllow.expr.indexOf('if') + 2, semiIdx);
+        worstStaticNonBranching.push({
+          label: `${curAllow.match} ${curAllow.op}`,
+          count: countStrictCel(cond),
+        });
+        curAllow = null;
+      }
+    }
+  }
+
+  // Every non-OR-heavy rule must stay < 950 statically; ride_requests update runs only 1 of 6 OR actions
+  for (const item of worstStaticNonBranching) {
+    if (item.label !== '/ride_requests/{requestId} update') {
+      assert.ok(
+        item.count < 950,
+        `${item.label} strict CEL count (${item.count}) too close to 1000 limit`
+      );
+    }
+  }
+
+  // Non-admin driver registration create runtime path (short-circuits before isAdmin() branch)
+  const nonAdminCreateExpr = `canCreateDriver(driverId, incoming())`;
+  const fullCreateCount = countStrictCel(nonAdminCreateExpr);
+  const skippedAdminBranch = countStrictCel('isAdmin() && isValidDriverStatusAndStats(d)');
+  const nonAdminRuntimeCount = fullCreateCount - skippedAdminBranch;
+  assert.ok(
+    nonAdminRuntimeCount < 650,
+    `Non-admin driver create runtime CEL count (${nonAdminRuntimeCount}) must stay well below 1000`
+  );
+});
+

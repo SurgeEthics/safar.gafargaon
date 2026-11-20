@@ -2429,14 +2429,21 @@ export default function App() {
   };
 
   // Helper timeout wrapper for non-blocking Firestore reads
-  const fetchDocWithTimeout = async <T,>(promise: Promise<T>, timeoutMs = 2000): Promise<T | null> => {
+  const fetchDocWithTimeout = async <T,>(
+    promise: Promise<T>,
+    timeoutMs = 2000,
+    onError?: (err: unknown) => void
+  ): Promise<T | null> => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       return null;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        promise.catch(() => null),
+        promise.catch((err) => {
+          if (onError) onError(err);
+          return null;
+        }),
         new Promise<null>((resolve) => {
           timer = setTimeout(() => resolve(null), timeoutMs);
         })
@@ -2449,18 +2456,36 @@ export default function App() {
   // Definitive read of `/users/{uid}` (tries server first, never fabricates !exists on timeout/offline)
   const readCloudUserDocDefinitive = useCallback(async (targetDb: typeof db, uid: string): Promise<{ readSucceeded: boolean; data: Record<string, any> | null }> => {
     const userRef = doc(targetDb, 'users', uid);
+    const logReadErr = (phase: string, err: unknown) => {
+      const code = (err as { code?: string })?.code;
+      if (code === 'permission-denied') {
+        console.warn(`Firestore read ${phase} permission-denied for users/${uid}:`, err);
+      }
+    };
     try {
-      const serverSnap = await fetchDocWithTimeout(getDocFromServer(userRef), 6000);
+      const serverSnap = await fetchDocWithTimeout(
+        getDocFromServer(userRef),
+        6000,
+        (err) => logReadErr('server', err)
+      );
       if (serverSnap !== null) {
         return { readSucceeded: true, data: serverSnap.exists() ? serverSnap.data() : null };
       }
-    } catch {}
+    } catch (err) {
+      logReadErr('server', err);
+    }
     try {
-      const snap = await fetchDocWithTimeout(getDoc(userRef), 5000);
+      const snap = await fetchDocWithTimeout(
+        getDoc(userRef),
+        5000,
+        (err) => logReadErr('cache', err)
+      );
       if (snap !== null) {
         return { readSucceeded: true, data: snap.exists() ? snap.data() : null };
       }
-    } catch {}
+    } catch (err) {
+      logReadErr('cache', err);
+    }
     return { readSucceeded: false, data: null };
   }, []);
 
@@ -11447,34 +11472,36 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
                           {passengerProfile.photoUrl ? (
                             <img
                               src={passengerProfile.photoUrl}
                               alt={passengerProfile.name}
-                              className="w-11 h-11 rounded-2xl object-cover border-2 border-emerald-500 shadow-md"
+                              className="w-11 h-11 rounded-2xl object-cover border-2 border-emerald-500 shadow-md shrink-0"
                             />
                           ) : (
-                            <div className="w-11 h-11 rounded-2xl bg-emerald-600 text-white font-bold text-lg flex items-center justify-center shadow-md">
+                            <div className="w-11 h-11 rounded-2xl bg-emerald-600 text-white font-bold text-lg flex items-center justify-center shadow-md shrink-0">
                               👤
                             </div>
                           )}
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <h4 className="font-bold text-slate-900 text-sm sm:text-base">{passengerProfile.name}</h4>
-                              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <h4 className="font-bold text-slate-900 text-sm sm:text-base leading-snug break-words">
+                                {passengerProfile.name}
+                              </h4>
+                              <span className="inline-flex items-center shrink-0 whitespace-nowrap bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200/80">
                                 Google সক্রিয়
                               </span>
                             </div>
-                            <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                              <Phone className="w-3 h-3 text-emerald-600" />
-                              {passengerProfile.phone || 'মোবাইল নম্বর যুক্ত করুন'}
+                            <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-1 min-w-0">
+                              <Phone className="w-3 h-3 text-emerald-600 shrink-0" />
+                              <span className="truncate">{passengerProfile.phone || 'মোবাইল নম্বর যুক্ত করুন'}</span>
                             </p>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center justify-end sm:justify-start gap-2 pt-2.5 border-t border-slate-100 sm:pt-0 sm:border-t-0 shrink-0">
                           <button
                             type="button"
                             onClick={() => {
@@ -11486,14 +11513,14 @@ export default function App() {
                               });
                               setIsEditingProfile(!isEditingProfile);
                             }}
-                            className="text-[11px] font-bold px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 cursor-pointer transition-colors"
+                            className="text-[11px] font-bold px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 cursor-pointer transition-colors whitespace-nowrap shrink-0"
                           >
                             {isEditingProfile ? 'বাতিল' : '✏️ তথ্য পরিবর্তন'}
                           </button>
                           <button
                             type="button"
                             onClick={handlePassengerLogout}
-                            className="text-[11px] font-bold px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg border border-red-200 cursor-pointer transition-colors"
+                            className="text-[11px] font-bold px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg border border-red-200 cursor-pointer transition-colors whitespace-nowrap shrink-0"
                             title="লগআউট করুন"
                           >
                             লগআউট

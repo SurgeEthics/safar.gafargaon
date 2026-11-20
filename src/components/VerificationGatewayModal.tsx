@@ -7,10 +7,8 @@ import {
   Phone,
   MessageCircle,
   Clock,
-  Send,
   Copy,
   Check,
-  KeyRound,
   Car,
   FileText,
   Calendar,
@@ -78,32 +76,12 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
   // Zoomed image modal
   const [zoomedImage, setZoomedImage] = useState<{ src: string; title: string } | null>(null);
 
-  // WhatsApp & OTP specific
-  const [otpCode, setOtpCode] = useState<string>('');
-  const [enteredOtp, setEnteredOtp] = useState<string>('');
-  const [isOtpSent, setIsOtpSent] = useState(false);
-  const [otpTimer, setOtpTimer] = useState(60);
-  const [otpError, setOtpError] = useState<string | null>(null);
-
   // Sync verification checkboxes whenever target driver or modal type changes
   useEffect(() => {
     setBrtaLicenseChecked(Boolean(driver?.licenseVerified));
     setBrtaVehicleChecked(Boolean(driver?.licenseVerified));
     setNidManualChecked(Boolean(driver?.nidVerified));
-    setIsOtpSent(false);
-    setEnteredOtp('');
-    setOtpError(null);
-    setOtpTimer(60);
   }, [driver?.id, type, driver?.licenseVerified, driver?.nidVerified]);
-
-  // Countdown timer for OTP
-  useEffect(() => {
-    let interval: any;
-    if (isOtpSent && otpTimer > 0) {
-      interval = setInterval(() => setOtpTimer((prev) => prev - 1), 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isOtpSent, otpTimer]);
 
   if (!type || !driver) return null;
 
@@ -148,24 +126,6 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
   };
 
   // 2. WhatsApp & Phone Verification Flow
-  const handleSendOtp = () => {
-    const randomOtp = Math.floor(1000 + Math.random() * 9000).toString();
-    setOtpCode(randomOtp);
-    setIsOtpSent(true);
-    setOtpTimer(60);
-    setOtpError(null);
-  };
-
-  const handleVerifyOtp = () => {
-    if (enteredOtp.trim() === otpCode || enteredOtp.trim() === '1234') {
-      onApprove(driver.id, 'wa');
-      triggerConfettiAndSuccess('wa');
-      onClose();
-    } else {
-      setOtpError('ভুল ওটিপি কোড! অনুগ্রহ করে চালকের মোবাইলে পাঠানো ৪-ডিজিটের কোড দিন।');
-    }
-  };
-
   const handleDirectWaApproval = () => {
     onApprove(driver.id, 'wa');
     triggerConfettiAndSuccess('wa');
@@ -614,7 +574,7 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
                     হোয়াটসঅ্যাপ ও মোবাইল নম্বর ভেরিফিকেশন
                   </h3>
                   <p className="text-xs text-emerald-100/90 mt-0.5">
-                    সরাসরি কল, হোয়াটসঅ্যাপ মেসেজ ও ওটিপি (OTP) যাচাই
+                    সরাসরি কল ও হোয়াটসঅ্যাপ মেসেজের মাধ্যমে নম্বর যাচাই
                   </p>
                 </div>
               </div>
@@ -661,16 +621,16 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
                 </div>
               </div>
 
-              {/* Method 1: Direct WhatsApp Chat & Call */}
+              {/* Direct WhatsApp Chat & Call */}
               <div className="p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/60 space-y-2.5">
                 <h4 className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
                   <MessageCircle className="w-4 h-4 text-emerald-600" />
-                  <span>পদ্ধতি ১: হোয়াটসঅ্যাপ ও সরাসরি ফোনে যোগাযোগ</span>
+                  <span>হোয়াটসঅ্যাপে মেসেজ অথবা সরাসরি ফোনে যোগাযোগ</span>
                 </h4>
                 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <a
-                    href={`https://wa.me/880${cleanPhone}?text=সালাম%20${encodeURIComponent(driver.name)}%2C%20সফর%20(Safar)%20অ্যাপে%20আপনার%20চালক%20নিবন্ধন%20যাচাইকরণ%20কোড:%20${otpCode || '5892'}`}
+                    href={`https://wa.me/880${cleanPhone}?text=${encodeURIComponent(`প্রিয় ${driver.name}, সফর (Safar) অ্যাপে আপনার চালক নিবন্ধন যাচাইকরণ কোড: 5892`)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow-xs"
@@ -687,67 +647,6 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
                     <span>সরাসরি কল দিন</span>
                   </a>
                 </div>
-              </div>
-
-              {/* Method 2: 4-Digit OTP Code Verification */}
-              <div className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/80 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                    <KeyRound className="w-4 h-4 text-amber-600" />
-                    <span>পদ্ধতি ২: ৪-ডিজিটের সিকিউরিটি ওটিপি (OTP) যাচাই</span>
-                  </h4>
-                  {isOtpSent && (
-                    <span className="text-[11px] font-mono text-emerald-700 font-bold">
-                      {otpTimer > 0 ? `০:${otpTimer < 10 ? '০' : ''}${otpTimer}` : 'সময় শেষ'}
-                    </span>
-                  )}
-                </div>
-
-                {!isOtpSent ? (
-                  <button
-                    type="button"
-                    onClick={handleSendOtp}
-                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition shadow-xs cursor-pointer"
-                  >
-                    <Send className="w-4 h-4 text-amber-400" />
-                    <span>৪-ডিজিটের ওটিপি (OTP) পাঠান</span>
-                  </button>
-                ) : (
-                  <div className="space-y-2.5">
-                    <div className="p-2 bg-emerald-100/70 border border-emerald-300 rounded-xl text-xs text-emerald-900 flex items-center justify-between">
-                      <span>সফর টেস্ট ওটিপি কোড: <strong className="font-mono text-sm tracking-widest">{otpCode}</strong></span>
-                      <button
-                        type="button"
-                        onClick={() => setEnteredOtp(otpCode)}
-                        className="text-[10px] bg-white text-emerald-800 font-bold px-2 py-0.5 rounded border border-emerald-200 hover:bg-emerald-50 cursor-pointer"
-                      >
-                        স্বয়ংক্রিয় বসান
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        maxLength={4}
-                        value={enteredOtp}
-                        onChange={(e) => setEnteredOtp(e.target.value)}
-                        placeholder="৪ ডিজিটের ওটিপি লিখুন..."
-                        className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-center text-sm font-mono font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleVerifyOtp}
-                        className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer"
-                      >
-                        যাচাই করুন
-                      </button>
-                    </div>
-
-                    {otpError && (
-                      <p className="text-[11px] text-red-600 font-medium">{otpError}</p>
-                    )}
-                  </div>
-                )}
               </div>
 
               {/* Action Buttons */}
@@ -770,7 +669,7 @@ export const VerificationGatewayModal: React.FC<VerificationGatewayModalProps> =
                     className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <CheckCircle className="w-4 h-4" />
-                    <span>হোয়াটসঅ্যাপ ও ফোন সরাসরি অনুমোদন করুন</span>
+                    <span>হোয়াটসঅ্যাপ নাম্বার সরাসরি অনুমোদন করুন</span>
                   </button>
                 )}
               </div>

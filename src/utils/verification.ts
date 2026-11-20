@@ -107,5 +107,5 @@ export function generateDriverVerificationSuccessMessage(
  * Generates WhatsApp direct chat verification request link message.
  */
 export function generateWhatsAppVerificationMessage(driverName: string, otpCode: string): string {
-  return `সালাম ${driverName}, সফর (Safar) অ্যাপে আপনার চালক নিবন্ধন যাচাইকরণ কোড: ${otpCode}। অনুগ্রহ করে অ্যাডমিনকে এই কোডটি নিশ্চিত করুন।`;
+  return `প্রিয় ${driverName}, সফর (Safar) অ্যাপে আপনার চালক নিবন্ধন যাচাইকরণ কোড: ${otpCode}। অনুগ্রহ করে অ্যাডমিনকে এই কোডটি নিশ্চিত করুন।`;
 }

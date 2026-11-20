@@ -83,17 +83,47 @@ export function validateSafeExternalUrl(
   return { ok: true, normalizedUrl: normalized };
 }
 
+const utf8Encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+
 /**
- * Strips HTML tags, angle brackets, and ASCII control characters from untrusted text.
+ * Returns exact UTF-8 byte length matching Firestore Rules string.size().
  */
-export function sanitizePlainText(raw: unknown, maxLength = 200): string {
+export function utf8ByteLength(text: string): number {
+  if (!text) return 0;
+  if (utf8Encoder) return utf8Encoder.encode(text).length;
+  return unescape(encodeURIComponent(text)).length;
+}
+
+/**
+ * Truncates text cleanly along UTF-16 code-point boundaries without exceeding maxBytes UTF-8 bytes.
+ */
+export function truncateUtf8Bytes(input: string, maxBytes: number): string {
+  if (!input || maxBytes <= 0) return '';
+  if (utf8ByteLength(input) <= maxBytes) return input;
+  let bytes = 0;
+  let endIdx = 0;
+  for (const ch of input) {
+    const chBytes = utf8ByteLength(ch);
+    if (bytes + chBytes > maxBytes) break;
+    bytes += chBytes;
+    endIdx += ch.length;
+  }
+  return input.slice(0, endIdx).trim();
+}
+
+/**
+ * Strips HTML tags, angle brackets, and ASCII control characters from untrusted text
+ * while guaranteeing both JS character cap and Firestore UTF-8 byte-length bounds.
+ */
+export function sanitizePlainText(raw: unknown, maxLength = 200, maxBytes = maxLength * 3): string {
   if (typeof raw !== 'string') return '';
   const cleaned = raw
     .replace(/[\u0000-\u001F\u007F]/g, ' ')
     .replace(/[<>]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return cleaned.length > maxLength ? cleaned.slice(0, maxLength).trim() : cleaned;
+  const charClamped = cleaned.length > maxLength ? cleaned.slice(0, maxLength).trim() : cleaned;
+  return truncateUtf8Bytes(charClamped, maxBytes);
 }
 
 /**

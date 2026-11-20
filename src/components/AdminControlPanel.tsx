@@ -175,11 +175,12 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
   const [showPinCharacters, setShowPinCharacters] = useState(false);
   const [pinChangeFeedback, setPinChangeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const fetchFreshSignedZipToken = async (forceRefreshToken = false): Promise<string | null> => {
+  const fetchFreshSignedZipToken = async (forceRefreshToken = false, forceRebuildZip = false): Promise<string | null> => {
     try {
       const idToken = await getAuthIdToken(forceRefreshToken, adminAuth);
       if (!idToken) return null;
-      const tokenRes = await fetch('/api/admin/source-zip-token', {
+      const tokenUrl = forceRebuildZip ? '/api/admin/source-zip-token?fresh=1' : '/api/admin/source-zip-token';
+      const tokenRes = await fetch(tokenUrl, {
         method: 'POST',
         cache: 'no-store',
         headers: { Authorization: `Bearer ${idToken}` },
@@ -1137,6 +1138,23 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('backup');
+                  fetchFreshSignedZipToken(true, true);
+                  setTimeout(() => {
+                    const zipEl = document.getElementById('admin-fresh-zip-yellow-box');
+                    if (zipEl) zipEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 60);
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[11px] sm:text-xs font-black shadow-xs cursor-pointer transition active:scale-95 whitespace-nowrap"
+                title="সম্পূর্ণ প্রজেক্ট জিপ (.ZIP) ডাউনলোড লিংক"
+              >
+                <Download className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-950 shrink-0" />
+                <span>প্রজেক্ট জিপ (.ZIP)</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
@@ -3440,7 +3458,7 @@ export const AdminControlPanel: React.FC<AdminControlPanelProps> = ({
                         disabled={isRefreshingZipLink}
                         onClick={async () => {
                           setIsRefreshingZipLink(true);
-                          const token = await fetchFreshSignedZipToken(true);
+                          const token = await fetchFreshSignedZipToken(true, true);
                           setIsRefreshingZipLink(false);
                           if (token) {
                             showToast('🔄 নতুন ৫-মিনিট মেয়াদী ডাইরেক্ট ডাউনলোড লিঙ্ক তৈরি হয়েছে!');

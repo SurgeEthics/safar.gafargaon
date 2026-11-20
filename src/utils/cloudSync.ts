@@ -1,4 +1,4 @@
-import { clampFiniteNumber, isValidBdCoordinate, sanitizePlainText } from './security';
+import { clampFiniteNumber, isValidBdCoordinate, sanitizePlainText, utf8ByteLength } from './security';
 
 export interface CloudUserRecordInput {
   uid: string;
@@ -369,9 +369,9 @@ export function buildDriverPublicWritePayload<TUpdatedAt>(
   const phoneV = Boolean(d.phoneVerified);
   const all3 = licV && nidV && phoneV;
   const rawPhoto =
-    typeof d.driverPhoto === 'string' && d.driverPhoto.length <= 118000 ? d.driverPhoto : '';
+    typeof d.driverPhoto === 'string' && utf8ByteLength(d.driverPhoto) <= 118000 ? d.driverPhoto : '';
   const rawAltPhoto =
-    typeof d.photoUrl === 'string' && d.photoUrl.length <= 118000 ? d.photoUrl : rawPhoto;
+    typeof d.photoUrl === 'string' && utf8ByteLength(d.photoUrl) <= 118000 ? d.photoUrl : rawPhoto;
 
   return {
     id: sanitizePlainText(d.id, 128),
@@ -447,11 +447,11 @@ export function buildDriverPrivateKycWritePayload<TUpdatedAt>(
     engineNumber: sanitizePlainText(d.engineNumber || '', 60),
     nidNumber: sanitizePlainText(d.nidNumber || '', 30),
     nidFrontPhoto:
-      typeof d.nidFrontPhoto === 'string' && d.nidFrontPhoto.length <= 118000 ? d.nidFrontPhoto : '',
+      typeof d.nidFrontPhoto === 'string' && utf8ByteLength(d.nidFrontPhoto) <= 118000 ? d.nidFrontPhoto : '',
     nidBackPhoto:
-      typeof d.nidBackPhoto === 'string' && d.nidBackPhoto.length <= 118000 ? d.nidBackPhoto : '',
+      typeof d.nidBackPhoto === 'string' && utf8ByteLength(d.nidBackPhoto) <= 118000 ? d.nidBackPhoto : '',
     taxTokenReceiptPhoto:
-      typeof d.taxTokenReceiptPhoto === 'string' && d.taxTokenReceiptPhoto.length <= 118000
+      typeof d.taxTokenReceiptPhoto === 'string' && utf8ByteLength(d.taxTokenReceiptPhoto) <= 118000
         ? d.taxTokenReceiptPhoto
         : '',
     updatedAt: updatedAtValue,
@@ -542,7 +542,7 @@ export function buildRideAcceptUpdatePayload<TUpdatedAt>(
 ) {
   const { lat, lng } = sanitizeBdCoordPair(input.driverLat, input.driverLng);
   const safePhoto =
-    typeof input.driverPhoto === 'string' && input.driverPhoto.length <= 59000
+    typeof input.driverPhoto === 'string' && utf8ByteLength(input.driverPhoto) <= 59000
       ? input.driverPhoto
       : '';
 

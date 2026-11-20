@@ -8,7 +8,8 @@ import {
   getDriverCockpitStage,
   canOpenAdminVerificationGateway,
   validateVerificationOtp,
-  generateDriverVerificationSuccessMessage
+  generateDriverVerificationSuccessMessage,
+  generateWhatsAppVerificationMessage
 } from './verification';
 
 test('checkAllVerificationsPassed returns true only when all 3 are true', () => {
@@ -108,4 +109,11 @@ test('generateDriverVerificationSuccessMessage produces formatted Bengali messag
   assert.match(msg, /MYM-HA-11-5206/);
   assert.match(msg, /৩-স্তরের যাচাইকরণ/);
   assert.match(msg, /সক্রিয় \(Active\)/);
+});
+
+test('generateWhatsAppVerificationMessage greets with প্রিয় and omits সালাম', () => {
+  const msg = generateWhatsAppVerificationMessage('Tasnimul Kabeer', '5892');
+  assert.ok(msg.startsWith('প্রিয় Tasnimul Kabeer'));
+  assert.equal(msg.includes('সালাম'), false);
+  assert.match(msg, /5892/);
 });
